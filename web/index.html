@@ -1,0 +1,512 @@
+<title>SYNTH CITY</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Geraetefront: feste Zonen - Kopf, Spurleiste links, Arbeitsflaeche, Performance-Leiste unten.
+   Bewusst nur ein Erscheinungsbild: das hier ist ein Instrument, kein Dokument. */
+:root {
+  color-scheme: dark;
+  --panel: #0a0e11;       /* Gehaeuse */
+  --surface: #141b20;     /* Flaechen darauf */
+  --raised: #1d262c;      /* Tasten */
+  --line: #2a363e;
+  --fg: #dde5e9;
+  --dim: #7b8d98;
+  --amber: #ffb020;       /* laeuft gerade */
+  --lock: #ff4d9d;        /* gelockt */
+  --ok: #4fd6a0;
+  --font: 'Archivo', system-ui, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, monospace;
+  --rail: 76px;
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { height: 100%; }
+body {
+  margin: 0; background: var(--panel); color: var(--fg);
+  font-family: var(--font); overflow: hidden;
+  touch-action: manipulation;
+}
+#app {
+  height: 100%; display: grid; grid-template-rows: auto 1fr auto;
+  padding-left: max(0px, env(safe-area-inset-left, 0px));
+  padding-right: max(0px, env(safe-area-inset-right, 0px));
+}
+.lbl { font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); font-weight: 600; }
+.val { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+/* --- Kopfzeile --- */
+header {
+  display: flex; align-items: center; gap: 10px; padding: 8px max(10px, env(safe-area-inset-left, 0px));
+  border-bottom: 1px solid var(--line); background: var(--surface); min-height: 52px;
+}
+.brand { font-weight: 700; letter-spacing: .18em; font-size: 13px; }
+.brand span { color: var(--amber); }
+button {
+  font-family: var(--font); font-weight: 600; color: var(--fg); background: var(--raised);
+  border: 1px solid var(--line); border-radius: 6px; padding: 0 12px; min-height: 40px;
+  font-size: 12px; letter-spacing: .08em; cursor: pointer;
+}
+button:active { background: #27333b; }
+button.on { background: var(--amber); color: #15100a; border-color: var(--amber); }
+button:focus-visible { outline: 2px solid var(--ok); outline-offset: 2px; }
+.spacer { flex: 1; }
+.tempo { display: flex; align-items: center; gap: 6px; }
+.tempo .v { font-family: var(--mono); font-size: 18px; min-width: 46px; text-align: right; }
+.tiny { min-height: 34px; padding: 0 9px; font-size: 11px; }
+.klang { display: flex; align-items: center; gap: 5px; font-size: 10px; letter-spacing: .12em;
+         color: var(--dim); font-weight: 600; }
+.klang i { width: 7px; height: 7px; border-radius: 50%; background: #39474f; }
+.klang.on { color: var(--ok); }
+.klang.on i { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+
+/* --- Mitte: Spurleiste + Arbeitsflaeche --- */
+.main { display: grid; grid-template-columns: var(--rail) 1fr; min-height: 0; }
+.rail { border-right: 1px solid var(--line); background: var(--surface); overflow-y: auto; }
+.trk {
+  display: flex; align-items: center; gap: 6px; padding: 7px 6px 7px 8px;
+  border-bottom: 1px solid var(--line); cursor: pointer; min-height: 46px;
+}
+.trk .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--c); }
+.trk .nm { font-size: 11px; font-weight: 600; letter-spacing: .06em; flex: 1; }
+.trk.sel { background: #1f2a31; box-shadow: inset 3px 0 0 var(--c); }
+.trk.muted .nm, .trk.muted .dot { opacity: .3; }
+.trk .m {
+  font-size: 9px; font-weight: 700; color: var(--dim); border: 1px solid var(--line);
+  border-radius: 4px; width: 20px; height: 20px; display: grid; place-items: center; flex: none;
+}
+.trk.muted .m { background: var(--lock); color: #230a17; border-color: var(--lock); opacity: 1; }
+
+.work { display: grid; grid-template-rows: auto 1fr; min-height: 0; min-width: 0; }
+
+/* --- Steps: die Reihe verschwindet nie --- */
+.pads { padding: 10px; border-bottom: 1px solid var(--line); }
+.padhead { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+.padgrid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; }
+.pad {
+  position: relative; aspect-ratio: 1; border-radius: 7px; border: 1px solid var(--line);
+  background: var(--raised); display: grid; place-items: center; cursor: pointer;
+  font-family: var(--mono); font-size: 11px; color: var(--dim); user-select: none;
+}
+.pad.beat { border-color: #3a4850; }
+.pad.on { background: var(--c); color: #0b0f12; border-color: var(--c); font-weight: 600; }
+.pad.trigless { background: color-mix(in srgb, var(--c) 35%, var(--raised)); color: var(--fg); }
+/* Eigener Name: '.play' gehoert dem Transportknopf - sonst faerbt dessen Regel den Pad. */
+.pad.now { box-shadow: 0 0 0 2px var(--amber); }
+.pad.out { opacity: .25; }
+.pad .lk {
+  position: absolute; right: 4px; top: 4px; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--lock);
+}
+.pad.held { outline: 2px solid var(--lock); outline-offset: 2px; }
+
+/* --- Regler der gewaehlten Spur --- */
+.params { overflow-y: auto; overscroll-behavior: contain; padding-bottom: 8px; }
+.grp { padding: 10px 12px 4px; position: sticky; top: 0; background: var(--panel); z-index: 1; }
+.row {
+  display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 10px;
+  padding: 9px 12px; min-height: 46px; border-bottom: 1px solid #1a2228;
+  touch-action: pan-y; cursor: ew-resize; position: relative;
+}
+.row .bar {
+  position: absolute; left: 0; bottom: 0; height: 2px; background: var(--dim); transition: width .05s linear;
+}
+.row.locked .bar { background: var(--lock); }
+.row .nm { font-size: 12px; font-weight: 600; letter-spacing: .06em; }
+.row .nm small { display: block; font-weight: 400; letter-spacing: 0; color: var(--dim); font-size: 10px; font-family: var(--mono); }
+.row .v { font-family: var(--mono); font-size: 13px; color: var(--fg); }
+.row.locked .v { color: var(--lock); }
+.row .x {
+  font-size: 10px; color: var(--lock); border: 1px solid var(--lock); border-radius: 4px;
+  padding: 2px 5px; margin-left: 8px;
+}
+
+/* --- Lock-Band --- */
+.lockbar {
+  display: flex; align-items: center; gap: 8px; padding: 7px 12px;
+  background: var(--lock); color: #230a17; font-size: 11px; font-weight: 700; letter-spacing: .1em;
+}
+.lockbar button { background: #230a17; color: #ffd9ea; border-color: #230a17; min-height: 32px; }
+
+/* --- Performance-Leiste unten --- */
+footer {
+  border-top: 1px solid var(--line); background: var(--surface);
+  padding: 8px max(10px, env(safe-area-inset-left, 0px)) max(8px, env(safe-area-inset-bottom, 0px));
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.morph { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 150px; }
+.morph input { flex: 1; accent-color: var(--amber); min-width: 80px; }
+.play { min-width: 92px; }
+.play.on { background: var(--ok); border-color: var(--ok); color: #06231a; }
+
+/* --- Dokument --- */
+dialog {
+  border: 1px solid var(--line); background: var(--surface); color: var(--fg);
+  border-radius: 10px; width: min(560px, 92vw); padding: 0;
+}
+dialog::backdrop { background: #000a; }
+.dlg { padding: 14px; display: grid; gap: 10px; }
+textarea {
+  width: 100%; height: 42vh; background: var(--panel); color: var(--fg); border: 1px solid var(--line);
+  border-radius: 6px; font-family: var(--mono); font-size: 11px; padding: 8px; resize: vertical;
+}
+.hint { font-size: 11px; color: var(--dim); line-height: 1.5; }
+.err { padding: 14px; color: var(--lock); font-size: 13px; line-height: 1.6; }
+
+@media (max-width: 560px) {
+  :root { --rail: 62px; }
+  .padgrid { grid-template-columns: repeat(4, 1fr); }
+  .brand { font-size: 11px; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div id="app">
+  <header>
+    <div class="brand">SYNTH <span>CITY</span></div>
+    <div class="spacer"></div>
+    <div class="tempo">
+      <button class="tiny" id="bpmDn" aria-label="Tempo runter">&minus;</button>
+      <div class="v val" id="bpm">124</div>
+      <span class="lbl">bpm</span>
+      <button class="tiny" id="bpmUp" aria-label="Tempo hoch">+</button>
+    </div>
+    <span class="klang" id="klang" title="Klang-Kern"><i></i>KLANG</span>
+    <button class="tiny" id="docBtn">DOK</button>
+  </header>
+
+  <div class="main">
+    <div class="rail" id="rail"></div>
+    <div class="work">
+      <div class="pads">
+        <div class="lockbar" id="lockbar" hidden>
+          <span id="lockTxt">LOCK &middot; STEP 1</span>
+          <button class="tiny" id="lockPrev">&#9664;</button>
+          <button class="tiny" id="lockNext">&#9654;</button>
+          <div class="spacer"></div>
+          <button class="tiny" id="lockDone">FERTIG</button>
+        </div>
+        <div class="padhead">
+          <span class="lbl" id="padTitle">Spur 1 &middot; 16 Steps</span>
+          <div class="spacer"></div>
+          <button class="tiny" id="lenDn" aria-label="Spur kuerzer">&minus;</button>
+          <button class="tiny" id="lenUp" aria-label="Spur laenger">+</button>
+        </div>
+        <div class="padgrid" id="pads"></div>
+      </div>
+      <div class="params" id="params"></div>
+    </div>
+  </div>
+
+  <footer>
+    <button class="play" id="play">PLAY</button>
+    <button id="fill">FILL</button>
+    <div class="morph">
+      <span class="lbl">Morph A&ndash;B</span>
+      <input type="range" id="morph" min="0" max="100" value="0" aria-label="Morph zwischen Scene A und B">
+    </div>
+  </footer>
+</div>
+
+<dialog id="doc">
+  <div class="dlg">
+    <div class="lbl">Projekt als Dokument</div>
+    <p class="hint">Dieselben Zeilen stehen in der Projektdatei und im Plugin-Zustand: eine
+      stabile ID je Wert. Text ersetzen und <b>Laden</b> druecken, um ein Projekt zu uebernehmen.</p>
+    <textarea id="docText" spellcheck="false"></textarea>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button id="docLoad">LADEN</button>
+      <button id="docCopy">KOPIEREN</button>
+      <div class="spacer"></div>
+      <button id="docClose">SCHLIESSEN</button>
+    </div>
+  </div>
+</dialog>
+
+<script>
+(() => {
+'use strict';
+const HUE = ['#5ec8ff', '#ffb020', '#ff4d9d', '#4fd6a0', '#b68cff', '#ff7a5c', '#8ad94f', '#5cc9c9'];
+const GROUP = {note: 'Anschlag', vel: 'Anschlag', len: 'Anschlag', prob: 'Anschlag',
+               cond: 'Anschlag', micro: 'Anschlag', ratchet: 'Anschlag',
+               machine: 'Quelle', src: 'Quelle', flt: 'Filter',
+               amp: 'Huellkurve', vol: 'Ausgang', pan: 'Ausgang', send: 'Ausgang'};
+
+let X = null;                 // der Kern im Hauptfaden: Modell, Texte, Speichern
+let ctx = null, node = null;  // der Kern im Audio-Faden
+let sel = 0, lockStep = -1, playing = false;
+let posSteps = new Array(8).fill(-1);
+const P = [];                 // Parametertabelle, aus dem Kern gelesen
+const el = id => document.getElementById(id);
+
+// --- Kern laden -------------------------------------------------------------------------------
+const str = p => {
+  const b = new Uint8Array(X.memory.buffer);
+  let e = p; while (b[e]) e++;
+  return new TextDecoder().decode(b.slice(p, e));
+};
+// Jeder Befehl geht an BEIDE Kerne: der eine zeigt an, der andere klingt.
+const cmd = (fn, ...args) => {
+  X[fn](...args);
+  if (node) node.port.postMessage({fn, args});
+};
+
+async function boot() {
+  try {
+    const bytes = await fetch('synthcity.wasm').then(r => r.arrayBuffer());
+    const mod = await WebAssembly.compile(bytes);
+
+    const inst = await WebAssembly.instantiate(mod, {});
+    X = inst.exports;
+    X.__wasm_call_ctors();
+    X.scInit(48000);
+    X.scDemo();
+    for (let i = 0; i < X.scNParams(); i++) {
+      P.push({i, id: str(X.scParamId(i)), name: str(X.scParamName(i)),
+              scope: X.scParamScope(i), slot: X.scParamSlot(i),
+              lo: X.scParamLo(i), hi: X.scParamHi(i), flags: X.scParamFlags(i)});
+    }
+    buildRail(); buildPads(); buildParams(); tick();
+  } catch (e) {
+    document.getElementById('app').innerHTML =
+      '<div class="err">Der Kern liess sich nicht laden: ' + e.message + '</div>';
+  }
+}
+
+// --- Audio erst auf Druck: Browser lassen Klang nicht von selbst zu ----------------------------
+async function audioOn() {
+  if (ctx) return;
+  ctx = new (window.AudioContext || window.webkitAudioContext)();
+  await ctx.audioWorklet.addModule(WORKLET_URL);
+  node = new AudioWorkletNode(ctx, 'synthcity', {
+    numberOfInputs: 0, outputChannelCount: [2],
+    processorOptions: {bytes: await fetch('synthcity.wasm').then(r => r.arrayBuffer()),
+                       doc: new TextEncoder().encode(str(X.scSave()))}
+  });
+  node.onprocessorerror = e => console.error('Audio-Kern:', e);
+  node.port.onmessage = e => {
+    if (e.data.type === 'pos') posSteps = e.data.steps;
+    if (e.data.type === 'ready') el('klang').classList.add('on');
+    if (e.data.type === 'fehler') console.error('Audio-Kern:', e.data.text);
+  };
+  node.connect(ctx.destination);
+}
+
+// --- Spurleiste --------------------------------------------------------------------------------
+function buildRail() {
+  const r = el('rail');
+  r.innerHTML = '';
+  for (let t = 0; t < X.scNTracks(); t++) {
+    const d = document.createElement('div');
+    d.className = 'trk';
+    d.style.setProperty('--c', HUE[t]);
+    d.innerHTML = `<span class="dot"></span><span class="nm">SPUR ${t + 1}</span><span class="m">M</span>`;
+    d.onclick = ev => {
+      if (ev.target.classList.contains('m')) { cmd('scMute', t, X.scIsMute(t) ? 0 : 1); return; }
+      sel = t; lockStep = -1; buildPads(); buildParams();
+    };
+    r.appendChild(d);
+  }
+}
+
+// --- Steps ---------------------------------------------------------------------------------------
+function buildPads() {
+  const g = el('pads');
+  g.innerHTML = '';
+  g.style.setProperty('--c', HUE[sel]);
+  for (let s = 0; s < 16; s++) {
+    const p = document.createElement('div');
+    p.className = 'pad' + (s % 4 === 0 ? ' beat' : '');
+    p.dataset.s = s;
+    p.innerHTML = `${s + 1}<span class="lk" hidden></span>`;
+    let timer = null, moved = false, x0 = 0, y0 = 0;
+    p.addEventListener('pointerdown', e => {
+      moved = false; x0 = e.clientX; y0 = e.clientY;
+      timer = setTimeout(() => { timer = null; openLock(s); }, 350);   // halten = Lock-Modus
+    }, {passive: true});
+    p.addEventListener('pointermove', e => {
+      if (Math.abs(e.clientX - x0) > 10 || Math.abs(e.clientY - y0) > 10) moved = true;
+    }, {passive: true});
+    const up = () => {
+      if (timer === null) return;                 // der lange Druck hat schon gewirkt
+      clearTimeout(timer); timer = null;
+      if (moved) return;
+      if (lockStep >= 0) { openLock(s); return; } // im Lock-Modus: Step wechseln
+      cmd('scStepSet', sel, s, X.scStepGet(sel, s) ? 0 : 1);
+      if (!X.scStepGet(sel, s)) clearLocks(s);
+    };
+    p.addEventListener('pointerup', up);
+    p.addEventListener('pointercancel', () => { clearTimeout(timer); timer = null; });
+    g.appendChild(p);
+  }
+  el('padTitle').textContent = `Spur ${sel + 1} \u00b7 ${X.scTrackLen(sel)} Steps`;
+}
+function clearLocks(s) {
+  for (const p of P) if (p.scope === 1) cmd('scLockClear', sel, s, p.slot);
+}
+function openLock(s) {
+  lockStep = s;
+  el('lockbar').hidden = false;
+  el('lockTxt').textContent = `LOCK \u00b7 STEP ${s + 1}`;
+  buildParams();
+}
+function closeLock() { lockStep = -1; el('lockbar').hidden = true; buildParams(); }
+// Nur zu Steps springen, auf denen ein Trig sitzt - alles andere waere Blindflug.
+function jumpTrig(dir) {
+  const len = X.scTrackLen(sel);
+  for (let k = 1; k <= len; k++) {
+    const s = ((lockStep + dir * k) % len + len) % len;
+    if (X.scStepGet(sel, s)) { openLock(s); return; }
+  }
+}
+
+// --- Reglerliste: entsteht aus der Parametertabelle -----------------------------------------------
+function buildParams() {
+  const box = el('params');
+  box.innerHTML = '';
+  let group = '';
+  for (const p of P) {
+    if (p.scope !== 1) continue;
+    const key = p.id.split('.')[1];
+    const g = GROUP[key] || key.toUpperCase();
+    if (g !== group) {
+      group = g;
+      const h = document.createElement('div');
+      h.className = 'grp lbl';
+      h.textContent = g;
+      box.appendChild(h);
+    }
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.innerHTML = `<div class="nm">${p.name}<small>${p.id}</small></div>
+                     <div style="display:flex;align-items:center"><span class="v"></span></div>
+                     <div class="bar"></div>`;
+    row.dataset.p = p.i;
+    dragRow(row, p);
+    box.appendChild(row);
+  }
+  paint();
+}
+const valueOf = p => {
+  if (lockStep >= 0) {
+    const l = X.scLockGet(sel, lockStep, p.slot);
+    if (l !== -32768) return {v: l, locked: true};
+  }
+  return {v: X.scGet(sel, p.slot), locked: false};
+};
+function writeValue(p, v) {
+  v = Math.max(p.lo, Math.min(p.hi, Math.round(v)));
+  if (lockStep >= 0) {
+    if (!X.scStepGet(sel, lockStep)) cmd('scStepSet', sel, lockStep, 2);  // trigless: nur Werte
+    cmd('scLockSet', sel, lockStep, p.slot, v, 0);
+  } else cmd('scSet', sel, p.slot, v);
+}
+// Erst die Richtung entscheiden, dann handeln: sonst verstellt man beim Blaettern Werte.
+function dragRow(row, p) {
+  let id = null, x0 = 0, y0 = 0, start = 0, mode = 0;
+  row.addEventListener('pointerdown', e => {
+    if (e.target.classList.contains('x')) return;
+    id = e.pointerId; x0 = e.clientX; y0 = e.clientY; mode = 0;
+    start = valueOf(p).v;
+  }, {passive: true});
+  row.addEventListener('pointermove', e => {
+    if (id === null || e.pointerId !== id) return;
+    const dx = e.clientX - x0, dy = e.clientY - y0;
+    if (mode === 0) {
+      if (Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy)) { mode = 1; row.setPointerCapture(id); }
+      else if (Math.abs(dy) > 8) { mode = 2; }
+      else return;
+    }
+    if (mode !== 1) return;
+    e.preventDefault();
+    writeValue(p, start + (dx / 180) * (p.hi - p.lo));
+    paint();
+  });
+  const end = () => { id = null; mode = 0; };
+  row.addEventListener('pointerup', end);
+  row.addEventListener('pointercancel', end);
+}
+
+// --- Bild auffrischen -----------------------------------------------------------------------------
+function paint() {
+  const rail = el('rail').children;
+  for (let t = 0; t < rail.length; t++) {
+    rail[t].classList.toggle('sel', t === sel);
+    rail[t].classList.toggle('muted', !!X.scIsMute(t));
+  }
+  const len = X.scTrackLen(sel);
+  const pads = el('pads').children;
+  for (let s = 0; s < pads.length; s++) {
+    const on = X.scStepGet(sel, s);
+    pads[s].classList.toggle('on', on === 1);
+    pads[s].classList.toggle('trigless', on === 2);
+    pads[s].classList.toggle('out', s >= len);
+    pads[s].classList.toggle('now', playing && posSteps[sel] === s);
+    pads[s].classList.toggle('held', s === lockStep);
+    pads[s].querySelector('.lk').hidden = X.scNLocks(sel, s) === 0;
+  }
+  for (const row of el('params').querySelectorAll('.row')) {
+    const p = P[+row.dataset.p];
+    const {v, locked} = valueOf(p);
+    row.classList.toggle('locked', locked);
+    row.querySelector('.v').textContent = str(X.scParamText(p.i, v));
+    row.querySelector('.bar').style.width = ((v - p.lo) / (p.hi - p.lo) * 100) + '%';
+    let x = row.querySelector('.x');
+    if (locked && !x) {
+      x = document.createElement('span');
+      x.className = 'x'; x.textContent = 'LOCK \u00d7';
+      x.onclick = () => { cmd('scLockClear', sel, lockStep, p.slot); paint(); };
+      row.children[1].appendChild(x);
+    } else if (!locked && x) x.remove();
+  }
+  el('padTitle').textContent = `Spur ${sel + 1} \u00b7 ${len} Steps`;
+  el('bpm').textContent = X.scGet(-1, bpmSlot());
+}
+const bpmSlot = () => P.find(p => p.id === 'bpm').slot;
+function tick() { paint(); requestAnimationFrame(tick); }
+
+// --- Bedienung unten -------------------------------------------------------------------------------
+el('play').onclick = async () => {
+  try { await audioOn(); } catch (e) { console.error('Audio-Start:', e && e.message, e); return; }
+  if (ctx.state === 'suspended') await ctx.resume();
+  playing = !playing;
+  cmd(playing ? 'scStart' : 'scStop');
+  el('play').classList.toggle('on', playing);
+  el('play').textContent = playing ? 'STOP' : 'PLAY';
+};
+const fillBtn = el('fill');
+const fillOn = v => { cmd('scFill', v ? 1 : 0); fillBtn.classList.toggle('on', v); };
+fillBtn.addEventListener('pointerdown', () => fillOn(1));
+fillBtn.addEventListener('pointerup', () => fillOn(0));
+fillBtn.addEventListener('pointercancel', () => fillOn(0));
+fillBtn.addEventListener('pointerleave', () => fillOn(0));
+el('morph').oninput = e => cmd('scSetMorph', e.target.value / 100);
+el('bpmUp').onclick = () => cmd('scSet', -1, bpmSlot(), Math.min(300, X.scGet(-1, bpmSlot()) + 1));
+el('bpmDn').onclick = () => cmd('scSet', -1, bpmSlot(), Math.max(30, X.scGet(-1, bpmSlot()) - 1));
+el('lenUp').onclick = () => cmd('scSetTrackLen', sel, Math.min(16, X.scTrackLen(sel) + 1));
+el('lenDn').onclick = () => cmd('scSetTrackLen', sel, Math.max(1, X.scTrackLen(sel) - 1));
+el('lockDone').onclick = closeLock;
+el('lockPrev').onclick = () => jumpTrig(-1);
+el('lockNext').onclick = () => jumpTrig(1);
+
+el('docBtn').onclick = () => { el('docText').value = str(X.scSave()); el('doc').showModal(); };
+el('docClose').onclick = () => el('doc').close();
+el('docLoad').onclick = () => {
+  const t = el('docText').value;
+  const b = new TextEncoder().encode(t + '\0');
+  const p = X.scAlloc(b.length);
+  new Uint8Array(X.memory.buffer, p, b.length).set(b);
+  X.scLoad(p);
+  if (node) node.port.postMessage({fn: 'scLoad', doc: new TextEncoder().encode(t)});
+  el('doc').close();
+  buildPads(); buildParams();
+};
+el('docCopy').onclick = async () => {
+  try { await navigator.clipboard.writeText(el('docText').value); el('docCopy').textContent = 'KOPIERT'; }
+  catch (e) { el('docText').select(); }
+  setTimeout(() => el('docCopy').textContent = 'KOPIEREN', 1200);
+};
+
+const WORKLET_URL = 'worklet.js';
+boot();
+})();
+</script>

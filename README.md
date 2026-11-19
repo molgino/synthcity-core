@@ -5,7 +5,7 @@ Konzept: `../r36-groovebox/docs/konzept-neu.md`.
 
 Kein Framework, keine Abhängigkeiten, keine STL-Container im Kern — C++17 und fertig.
 
-## Stand: Meilenstein 4 — das CLAP-Plugin
+## Stand: Meilenstein 5 — die Oberfläche
 
 | Baustein | Datei | Zustand |
 | --- | --- | --- |
@@ -19,10 +19,12 @@ Kein Framework, keine Abhängigkeiten, keine STL-Container im Kern — C++17 und
 | Stimmen, Filter, Hüllkurve, Panorama, Summe | `src/engine.h` | steht |
 | Slides als Rampen, Scenes + Morph, Mute, Step-Loop | `src/engine.h`, `src/model.h` | steht |
 | CLAP-Plugin (Parameter, Zustand, Noten, Transport) | `plugin/clap_plugin.cpp` | steht |
+| Oberfläche (WebAssembly + Touch), baut sich aus der Tabelle | `web/` | steht |
 | Effekte, Sends, Sampler | — | später |
 
 ```
-make test        # 60 + 25 + 73 Prüfungen
+make test        # 60 + 25 + 73 + 19 Prüfungen
+make web         # baut web/synthcity.wasm (clang, ohne Werkzeugkette von außen)
 make plugin      # baut build/synthcity.clap
 make SAN=1 test  # mit Address-/UB-Sanitizer
 make bench       # Last: Faktor gegenüber Echtzeit
@@ -48,6 +50,42 @@ Drei Entscheidungen, die den Rest tragen:
   „jedes Sample neu“ rund 65 % mehr Luft, ohne hörbaren Unterschied.
 - **Der P-Lock-Schnappschuss wird beim Anschlag genommen.** Die Stimme trägt ihre eigenen Werte
   mit sich; was danach am Regler passiert, ändert sie nicht mehr — genau wie bei der Hardware.
+
+## Die Oberfläche
+
+`web/index.html` ist die dritte Hülle: derselbe Kern als WebAssembly, einmal im Hauptfaden
+(Modell, Texte, Speichern) und einmal im Audio-Faden (Klang) — das ist die Thread-Grenze aus dem
+Konzept, hier als `postMessage` statt als Queue. Jeder Griff geht an beide.
+
+**Die Reglerliste wird nicht geschrieben, sie entsteht.** Das JavaScript fragt den Kern nach
+`scNParams()` und baut daraus Zeilen mit Name, ID, Bereich und Anzeigetext. Ein neuer Parameter in
+`src/param.h` erscheint ohne eine Zeile JavaScript — in der Liste, mit Einheit, lockbar.
+
+**Eine Geste für das Häufigste**: Step lange drücken → Lock-Modus (rosa Band, ◀ ▶ springen nur zu
+Steps mit Trig), dann einen Regler ziehen = P-Lock auf diesem Step. Beim Ziehen entscheidet die
+erste Richtung, ob gescrollt oder verstellt wird — sonst verstellt man beim Blättern Werte.
+
+**Ohne Werkzeugkette von außen.** Emscripten ließ sich hier nicht installieren, also baut `clang`
+direkt nach `wasm32`; die fehlende libc (Mathematik, `snprintf`, Speicher) steht in
+`web/freestanding.*`, rund 200 Zeilen. Der Browser-Bau hat damit seine **eigene** Mathematik —
+`tests/web.js` misst deshalb nach, dass Tonhöhe (440 Hz), dB-, Hz- und ms-Anzeige dort dasselbe
+ergeben wie nativ.
+
+### Was dabei schiefging
+
+Drei Fehler, die nur die laufende Oberfläche zeigt:
+
+- **Der Audio-Kern startete stumm.** Im Audio-Thread gibt es kein `TextEncoder`; das Laden des
+  Projekts warf, und die Ausnahme verschwand in einer Promise. Jetzt meldet der Worklet Fehler
+  über seinen Port, und der Text kommt fertig als Bytes herüber.
+- **Befehle gingen verloren**, die ankamen, bevor der Kern im Audio-Faden fertig geladen war —
+  darunter `scStart`. Sie werden jetzt gepuffert.
+- **`.pad.play` traf die Regel des PLAY-Knopfs** (`.play.on`) und färbte den Zeiger grün. Der
+  Zustand heißt jetzt `.pad.now`.
+
+Dazu zwei Anzeigefehler, die erst im Bild auffielen: LEN wurde als Millisekunden angezeigt
+(es sind Zwölftel eines Steps), und bipolare Regler rechneten die Mitte immer als 64 statt als
+Mitte ihres eigenen Bereichs — MTIM stand dadurch auf „-40“ statt „±0.00 Steps“.
 
 ## Der Prüfstein: was das Plugin gekostet hat
 
@@ -132,8 +170,8 @@ Last (x86, ein Kern): 1400× Echtzeit mit einer Spur, 36× im schlimmsten Fall m
 
 ## Als Nächstes
 
-5. Oberfläche gegen das Modell.
 6. Gerät: R36S-Build, Sampler, Dateien.
+7. Effekte und Sends, zweite Machine, Sampler im Kern.
 
 Offen aus Meilenstein 2: das DSP ist **neu geschrieben**, nicht aus SYNTH CITY portiert — ein
 Bit-Vergleich gegen den alten Render steht deshalb aus. Die Referenz-WAV sichert ab jetzt den

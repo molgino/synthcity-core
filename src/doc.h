@@ -46,6 +46,8 @@ struct Doc {
     int32_t get(const char* k, int32_t def) const { int at = find(k); return at < 0 ? def : e[at].v; }
     bool has(const char* k) const { return find(k) >= 0; }
 
+    // Dateien gibt es nur dort, wo es ein Dateisystem gibt - der Browser-Bau laesst sie weg.
+#ifndef SC_NO_FILES
     bool save(const char* path) const {
         FILE* f = fopen(path, "w");
         if (!f) return false;
@@ -73,6 +75,7 @@ struct Doc {
         fclose(f);
         return true;
     }
+#endif
 };
 
 // Schluessel bauen - eine Stelle, damit Schreiben und Lesen nicht auseinanderlaufen.

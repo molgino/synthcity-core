@@ -2,6 +2,7 @@
 // stimmt etwas am Kern nicht. Die Parameterliste wird AUS der Tabelle erzeugt, der Zustand
 // IST das Dokument - beides steht nur einmal im Projekt.
 #include "../src/engine.h"
+#include "../src/text.h"
 #include <clap/clap.h>
 #include <stdio.h>
 #include <string.h>
@@ -127,30 +128,7 @@ static bool paText(const clap_plugin_t*, clap_id id, double v, char* out, uint32
     if (p->kind == PX_MORPH) { snprintf(out, n, "%.0f %%", v * 100.0); return true; }
     if (p->kind == PX_FILL || p->kind == PX_MUTE) { snprintf(out, n, v > 0.5 ? "AN" : "AUS"); return true; }
     if (p->kind == PX_FOCUS) { snprintf(out, n, "SPUR %d", (int)(v + 0.5)); return true; }
-    const ParamDef& d = PARAMS[p->pidx];
-    switch (d.kind) {
-    case PK_LEVEL: {
-        float lin = pLevel((float)v);
-        if (lin <= 0.0f) snprintf(out, n, "-oo dB");
-        else snprintf(out, n, "%.1f dB", 20.0f * log10f(lin));
-        break; }
-    case PK_TIME: {
-        float s = pTime((float)v);
-        if (s < 1.0f) snprintf(out, n, "%.0f ms", s * 1000.0f);
-        else snprintf(out, n, "%.2f s", s);
-        break; }
-    case PK_NOTE: {
-        static const char* nm[12] = {"C","C#","D","D#","E","F","F#","G","G#","A","A#","B"};
-        int k = (int)(v + 0.5);
-        snprintf(out, n, "%s%d", nm[k % 12], k / 12 - 1);
-        break; }
-    case PK_BIP:   snprintf(out, n, "%+.0f", (double)(v - 64)); break;
-    case PK_ONOFF: snprintf(out, n, v > 0.5 ? "AN" : "AUS"); break;
-    default:
-        if (!strcmp(d.id, "trk.flt.freq")) snprintf(out, n, "%.0f Hz", (double)pFreq((float)v));
-        else if (d.unit && d.unit[0])      snprintf(out, n, "%.0f %s", v, d.unit);
-        else                               snprintf(out, n, "%.0f", v);
-    }
+    paramText(PARAMS[p->pidx], (float)v, out, (int)n);
     return true;
 }
 static bool paFromText(const clap_plugin_t*, clap_id id, const char* txt, double* out) {

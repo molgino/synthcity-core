@@ -7,13 +7,17 @@ ifeq ($(SAN),1)
 CXXFLAGS += -fsanitize=address,undefined -fno-omit-frame-pointer -g -O1
 endif
 
-BINS = tests/unit tests/render tests/plugin tools/bench tools/demo build/synthcity.clap
+WASMFLAGS = --target=wasm32 -O2 -std=c++17 -nostdlib -ffreestanding -fno-exceptions -fno-rtti \
+            -fno-threadsafe-statics -DSC_NO_FILES -Iweb/stub -include web/freestanding.h \
+            -Wl,--no-entry -Wl,--export-all -Wl,--initial-memory=33554432
+BINS = tests/unit tests/render tests/plugin tools/bench tools/demo build/synthcity.clap web/synthcity.wasm
 HDRS = $(wildcard src/*.h)
 
-test: tests/unit tests/render tests/plugin build/synthcity.clap
+test: tests/unit tests/render tests/plugin build/synthcity.clap web/synthcity.wasm
 	./tests/unit
 	./tests/render
 	./tests/plugin build/synthcity.clap
+	node tests/web.js web/synthcity.wasm
 
 bench: tools/bench
 	./tools/bench 64
@@ -22,6 +26,11 @@ demo: tools/demo
 	./tools/demo demo.wav
 
 plugin: build/synthcity.clap
+
+# Browser-Bau: clang kann wasm32 von Haus aus; die fehlende libc steht in web/freestanding.*
+web: web/synthcity.wasm
+web/synthcity.wasm: web/bridge.cpp web/freestanding.cpp web/freestanding.h $(HDRS)
+	clang++ $(WASMFLAGS) -o $@ web/bridge.cpp web/freestanding.cpp
 
 tests/unit:   tests/unit.cpp   $(HDRS) ; $(CXX) $(CXXFLAGS) -o $@ $< $(LDLIBS)
 tests/render: tests/render.cpp $(HDRS) ; $(CXX) $(CXXFLAGS) -o $@ $< $(LDLIBS)
@@ -38,4 +47,4 @@ tests/plugin: tests/plugin.cpp
 clean:
 	rm -f $(BINS)
 
-.PHONY: test bench demo plugin clean
+.PHONY: test bench demo plugin web clean
