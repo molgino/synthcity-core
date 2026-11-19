@@ -275,6 +275,65 @@ int main() {
         chk(rms(b, N) > 0.01f, "das Fenster wiederholt sich hoerbar");
     }
 
+    grp("Ein gedrehter Regler wirkt auf den klingenden Ton");
+    {
+        const int N = 24000;
+        static float b[24000 * 2];
+        e.prepare(48000.0f); setupBeat(e, 45);
+        Track& t = e.P.pat[0].t[0];
+        t.p[SL("trk.flt.freq")] = 127; t.p[SL("trk.amp.sus")] = 100;
+        t.p[SL("trk.amp.dec")] = 127; t.p[SL("trk.len")] = 127;
+        e.start();
+        e.render(b, 12000);
+        e.P.pat[0].t[0].p[SL("trk.flt.freq")] = 30;        // mitten im Ton zudrehen
+        e.render(b + 12000 * 2, 12000);
+        float offen = bin(b + 2000 * 2, 8000, 4000.0f, 48000.0f);
+        float zu    = bin(b + 14000 * 2, 8000, 4000.0f, 48000.0f);
+        chk(zu < offen * 0.2f, "der Filterregler bleibt am laufenden Ton wirkungslos");
+
+        // Gegenprobe: was dieser Step gelockt hat, bleibt stehen - sonst waeren P-Locks wertlos.
+        static float c[24000 * 2];
+        e.prepare(48000.0f); setupBeat(e, 45);
+        Track& t2 = e.P.pat[0].t[0];
+        t2.p[SL("trk.flt.freq")] = 127; t2.p[SL("trk.amp.sus")] = 100;
+        t2.p[SL("trk.amp.dec")] = 127; t2.p[SL("trk.len")] = 127;
+        t2.s[0].setLock(SL("trk.flt.freq"), 127);
+        e.start();
+        e.render(c, 12000);
+        e.P.pat[0].t[0].p[SL("trk.flt.freq")] = 30;
+        e.render(c + 12000 * 2, 12000);
+        float vorher  = bin(c + 2000 * 2, 8000, 4000.0f, 48000.0f);
+        float nachher = bin(c + 14000 * 2, 8000, 4000.0f, 48000.0f);
+        chk(nachher > vorher * 0.4f, "der P-Lock laesst sich vom Spurregler wegdrehen");
+
+        // Ein trigless gesetzter Wert gilt weiter, auch wenn die Spur etwas anderes sagt.
+        static float tl[24000 * 2];
+        e.prepare(48000.0f); setupBeat(e, 45);
+        Track& t4 = e.P.pat[0].t[0];
+        t4.p[SL("trk.flt.freq")] = 127; t4.p[SL("trk.amp.sus")] = 100;
+        t4.p[SL("trk.amp.dec")] = 127; t4.p[SL("trk.len")] = 127;
+        t4.s[1].on = 2;                                   // trigless: nur Werte, kein Anschlag
+        t4.s[1].setLock(SL("trk.flt.freq"), 30);
+        e.start();
+        e.render(tl, 24000);
+        chk(bin(tl + 1000 * 2, 4000, 4000.0f, 48000.0f)
+                > bin(tl + 10000 * 2, 4000, 4000.0f, 48000.0f) * 4.0f,
+            "der trigless gesetzte Wert haelt nicht");
+
+        // Und die Note bleibt die Note: sie gehoert zum Anschlag, nicht zum Dauerzustand.
+        static float d[24000 * 2];
+        e.prepare(48000.0f); setupBeat(e, 45);
+        Track& t3 = e.P.pat[0].t[0];
+        t3.p[SL("trk.flt.freq")] = 127; t3.p[SL("trk.amp.sus")] = 100;
+        t3.p[SL("trk.amp.dec")] = 127; t3.p[SL("trk.len")] = 127;
+        e.start();
+        e.render(d, 6000);
+        e.P.pat[0].t[0].p[SL("trk.note")] = 69;
+        e.render(d + 6000 * 2, 6000);
+        chk(bin(d + 7000 * 2, 4000, 110.0f, 48000.0f) > bin(d + 7000 * 2, 4000, 440.0f, 48000.0f),
+            "der klingende Ton springt auf die neue Note");
+    }
+
     grp("Zweite und dritte Machine");
     {
         const int N = 24000;

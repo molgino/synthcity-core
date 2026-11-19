@@ -22,6 +22,7 @@ struct Voice {
     float    hz = 0.0f, vel = 0.0f;
     int64_t  left = 0;          // Samples bis Note-Off
     float    pf[64];            // wirksame Werte DIESER Stimme (Lock -> Scene -> Grundwert)
+    uint64_t locked = 0;        // welche Slots dieser Step festgelegt hat - sie folgen nicht mehr
     Ramp     rmp[NRAMP];
     int      nRamp = 0;
     MState   ms;
@@ -31,6 +32,19 @@ struct Voice {
     float    base = 1000.0f, q = 0.7f, envAmt = 0.0f, gain = 1.0f;
     FltType  ft = FLT_LP;
     const Machine* mach = nullptr;
+
+    // Welche Regler waehrend eines Tons weiterwirken: alles, was als modulierbar
+    // gekennzeichnet ist (Filter, Pegel, Panorama, Sends, die Regler der Machine).
+    // Note, Velocity, Laenge und Bedingung gehoeren dagegen zum Anschlag und stehen fest.
+    struct Live { int n; int slot[32]; };
+    static const Live& liveSlots() {
+        static Live L = {0, {0}};
+        if (!L.n)
+            for (int i = 0; i < NPARAMS; i++)
+                if (PARAMS[i].scope == PS_TRACK && (PARAMS[i].flags & PF_MOD) && L.n < 32)
+                    L.slot[L.n++] = paramSlot(i);
+        return L;
+    }
 
     // Slots einmalig nachschlagen - Namen sind die Wahrheit, Zahlen nur die Abkuerzung.
     struct Slots { int note, atk, dec, sus, rel, fFreq, fReso, fType, fEnv, vol, pan; };
@@ -46,15 +60,17 @@ struct Voice {
     }
 
     void start(const Machine* mc, int tr, int st, const float* pp, float v,
-               int64_t lenSamples, float sr, uint64_t when) {
+               int64_t lenSamples, float sr, uint64_t when, uint64_t lockMask, const float* live) {
         mach = mc; track = (uint8_t)tr; step = (uint8_t)st; born = when;
         for (int i = 0; i < 64; i++) pf[i] = pp[i];
+        locked = lockMask;
         nRamp = 0; vel = v; left = lenSamples; used = true; age = 0;
+        liveFollow(live);
         const Slots& s = S();
         flt.reset();
         env.setup(pTime(pf[s.atk]), pTime(pf[s.dec]), pLevel(pf[s.sus]), pTime(pf[s.rel]), sr);
         env.kill(); env.gate();
-        ctl(sr);
+        ctl(sr, live);
         mach->start(ms, hz, vel, pf, sr);
     }
     void release() { env.release(); left = -1; }
@@ -67,8 +83,23 @@ struct Voice {
         if (nRamp < NRAMP) rmp[nRamp++] = {(int16_t)slot, to, (to - from) / samples, samples};
     }
 
+    // Ein Regler, der nicht auf diesem Step gelockt ist und gerade nicht gleitet, folgt der
+    // Spur weiter - sonst waere jeder Griff waehrend eines Tons wirkungslos.
+    void liveFollow(const float* live) {
+        if (!live) return;
+        const Live& L = liveSlots();
+        for (int i = 0; i < L.n; i++) {
+            int sl = L.slot[i];
+            if (locked & (1ull << sl)) continue;
+            bool ramping = false;
+            for (int r = 0; r < nRamp; r++) if (rmp[r].slot == sl) { ramping = true; break; }
+            if (!ramping) pf[sl] = live[sl];
+        }
+    }
+
     // Steuerrate: hier werden Rampen bewegt und alle teuren Werte EINMAL gerechnet.
-    void ctl(float sr) {
+    void ctl(float sr, const float* live) {
+        liveFollow(live);
         for (int i = 0; i < nRamp; ) {
             Ramp& r = rmp[i];
             r.left -= CTL;
@@ -91,7 +122,7 @@ struct Voice {
     // damit ein P-Lock auf S.A auch wirklich nur diesen Anschlag weiterschickt.
     struct Mix { float *dL, *dR, *aL, *aR, *bL, *bR; };
 
-    void run(const Mix& mx, int n, float sr) {
+    void run(const Mix& mx, int n, float sr, const float* live) {
         if (!used) return;
         static const int slotSA = paramSlot(paramFind("trk.send.a"));
         static const int slotSB = paramSlot(paramFind("trk.send.b"));
@@ -107,7 +138,7 @@ struct Voice {
                 // Gezaehlt wird an der STIMME, nicht am Block - sonst haengt der Klang davon ab,
                 // wie der Host die Bloecke schneidet.
                 if ((age & (CTL - 1)) == 0) {
-                    ctl(sr);
+                    ctl(sr, live);
                     flt.set(base * exp2f(envAmt * e * 6.0f), q, sr);   // bis zu sechs Oktaven
                 }
                 age++;
@@ -134,7 +165,7 @@ struct Engine : Sink {
     // --- Performance-Ebene: wirkt sofort, steht in keiner Datei ---------------------------
     bool  mute[NTRACKS] = {false};
     float morph = 0.0f;           // 0 = Scene A, 1 = Scene B
-    float morphDone = -1.0f;
+    float live[NTRACKS][64];      // was die Spur GERADE sagt - klingende Stimmen folgen dem
     // Fuer Slides: wo die Spur gerade steht. Nicht aus der klingenden Stimme gelesen - die
     // kann laengst verklungen sein, wenn der naechste Trig kommt.
     float trkVal[NTRACKS][64];
@@ -161,7 +192,6 @@ struct Engine : Sink {
         for (int i = 0; i < NVOICES; i++) { v[i].used = false; v[i].env.kill(); }
         delay.reset(); reverb.reset();
         resetTrackValues();
-        morphDone = -1.0f;
     }
     void start() { seq.bpm = P.g[paramSlot(paramFind("bpm"))]; seq.start(); }
     void stop()  { seq.stop(); for (int i = 0; i < NVOICES; i++) v[i].release(); }
@@ -199,6 +229,9 @@ struct Engine : Sink {
                 if (!v[i].used || v[i].track != e.track) continue;
                 for (int li = 0; li < tr.s[e.step].nLock; li++) {
                     const Lock& l = tr.s[e.step].lock[li];
+                    // Auch ein trigless gesetzter Wert ist festgelegt - sonst holt ihn die
+                    // Spur beim naechsten Steuertakt wieder zurueck.
+                    v[i].locked |= 1ull << l.slot;
                     if (l.slide) v[i].slide(l.slot, trkVal[e.track][l.slot], (float)l.val, glide);
                     else         v[i].pf[l.slot] = (float)l.val;
                 }
@@ -210,33 +243,26 @@ struct Engine : Sink {
         for (int i = 0; i < 64; i++) { from[i] = trkVal[e.track][i]; trkVal[e.track][i] = snap[i]; }
         if (mute[e.track]) return;           // stumm heisst: kein Klang, der Lauf geht weiter
 
+        uint64_t lockMask = 0;
+        for (int li = 0; li < tr.s[e.step].nLock; li++) lockMask |= 1ull << tr.s[e.step].lock[li].slot;
         int mi = tr.p[paramSlot(paramFind("trk.machine"))];
         int i = pick();
-        v[i].start(machineAt(mi), e.track, e.step, snap, e.vel / 127.0f, e.len, sr, clock++);
+        v[i].start(machineAt(mi), e.track, e.step, snap, e.vel / 127.0f, e.len, sr, clock++,
+                   lockMask, live[e.track]);
         for (int li = 0; li < tr.s[e.step].nLock; li++) {    // Slides: von dort, wo die Spur steht
             const Lock& l = tr.s[e.step].lock[li];
             if (l.slide) v[i].slide(l.slot, from[l.slot], (float)l.val, glide);
         }
-        if (v[i].nRamp) v[i].ctl(sr);
+        if (v[i].nRamp) v[i].ctl(sr, live[e.track]);
     }
 
-    // Der Morph-Regler wirkt auch auf klingende Stimmen - wie ein Crossfader an der Hardware.
-    void applyMorph() {
-        if (morph == morphDone) return;
-        morphDone = morph;
+    // Was die Spuren gerade sagen - einmal je Block, nicht je Stimme. Darueber wirken
+    // sowohl ein gedrehter Regler als auch der Morph-Regler auf schon klingende Toene.
+    void updateLive() {
         const Pattern& pt = P.pat[pat];
-        for (int i = 0; i < NVOICES; i++) {
-            if (!v[i].used) continue;
-            int t = v[i].track;
-            for (int k = 0; k < NSCENES; k++)
-                for (int j = 0; j < pt.sc[k][t].n; j++) {
-                    int sl = pt.sc[k][t].v[j].slot;
-                    if (pt.t[t].s[v[i].step].findLock(sl)) continue;   // Lock schlaegt Scene
-                    bool ramping = false;
-                    for (int r = 0; r < v[i].nRamp; r++) if (v[i].rmp[r].slot == sl) ramping = true;
-                    if (!ramping) v[i].pf[sl] = sceneValue(pt, t, sl, morph);
-                }
-        }
+        const Voice::Live& L = Voice::liveSlots();
+        for (int t = 0; t < NTRACKS; t++)
+            for (int i = 0; i < L.n; i++) live[t][L.slot[i]] = sceneValue(pt, t, L.slot[i], morph);
     }
 
     // out ist stereo-verschraenkt (L,R,L,R...) und wird ueberschrieben.
@@ -244,7 +270,7 @@ struct Engine : Sink {
         for (int i = 0; i < frames * 2; i++) out[i] = 0.0f;
         nq = 0;
         seq.process(P, pat, frames, *this);
-        applyMorph();
+        updateLive();
         float master = pLevel(P.g[paramSlot(paramFind("master.vol"))]);
 
         // Effekte: Einstellungen einmal je Block, nicht je Sample.
@@ -276,7 +302,7 @@ struct Engine : Sink {
                 bufB[0][i] = bufB[1][i] = 0.0f;
             }
             Voice::Mix mx{bufD[0], bufD[1], bufA[0], bufA[1], bufB[0], bufB[1]};
-            for (int i = 0; i < NVOICES; i++) v[i].run(mx, c, sr);
+            for (int i = 0; i < NVOICES; i++) v[i].run(mx, c, sr, live[v[i].track]);
             delay.run(bufA[0], bufA[1], bufD[0], bufD[1], c, fb, tone, aVol);
             reverb.run(bufB[0], bufB[1], bufD[0], bufD[1], c, dec, damp, bVol);
             for (int i = 0; i < c; i++) {

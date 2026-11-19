@@ -49,8 +49,12 @@ Drei Entscheidungen, die den Rest tragen:
   Samples neu gerechnet (`tanf` ist teuer) — gezählt wird ab dem Anschlag der Stimme. Hinge der
   Zähler am Block, klänge dieselbe Note je nach Blockgröße anders. Das brachte gegenüber
   „jedes Sample neu“ rund 65 % mehr Luft, ohne hörbaren Unterschied.
-- **Der P-Lock-Schnappschuss wird beim Anschlag genommen.** Die Stimme trägt ihre eigenen Werte
-  mit sich; was danach am Regler passiert, ändert sie nicht mehr — genau wie bei der Hardware.
+- **Der Anschlag wird eingefroren, der Regler nicht.** Note, Velocity, Länge und Bedingung
+  gehören zum Trig und stehen danach fest. Alles, was die Tabelle als *modulierbar* führt —
+  Filter, Pegel, Panorama, Sends, die beiden Regler der Machine — **folgt der Spur weiter**,
+  solange dieser Step es nicht gelockt hat und gerade kein Slide darauf läuft.
+  Das war zuerst falsch: der Schnappschuss fror alles ein, und ein gedrehter Filterregler
+  blieb am klingenden Ton wirkungslos.
 
 ## Machines und Effekte
 
@@ -181,6 +185,9 @@ läuft dabei ungerührt weiter.
 - **Das Filter nimmt die Höhen weg**, der Grundton bleibt.
 - **P-Locks wirken je Step**: der Grundton der Spur verschwindet auf dem gelockten Step.
 - **32 Stimmen gleichzeitig** erzeugen keine Aussetzer; der Ausgang bleibt immer in den Grenzen.
+- **Ein gedrehter Regler wirkt sofort**, auch mitten im Ton (4 kHz fallen um das Achtzehnfache) —
+  **aber** ein P-Lock auf diesem Step bleibt stehen, ein trigless gesetzter Wert auch, und die
+  Note springt nicht um. Vier Prüfungen, die zusammen erst die Regel ergeben.
 - **Slide**: zu Beginn des Steps klingt noch die alte Note, am Ende die neue.
 - **Scenes**: A dumpf, B offen, Morph 0,5 messbar dazwischen — und der Crossfader öffnet auch
   einen Ton, der schon läuft.
@@ -189,7 +196,7 @@ läuft dabei ungerührt weiter.
 - **Referenz-Aufnahme**: zwei Sekunden eines Patterns werden gegen `tests/ref/pattern.wav`
   verglichen — jede ungewollte Klangänderung fällt auf.
 
-Last (x86, ein Kern): 620× Echtzeit mit einer Spur, 35× im schlimmsten Fall mit allen
+Last (x86, ein Kern): 580× Echtzeit mit einer Spur, 33× im schlimmsten Fall mit allen
 32 Stimmen und 32stel-Noten auf acht Spuren — die Effekte laufen dabei mit.
 
 ## Als Nächstes
