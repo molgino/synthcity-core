@@ -81,7 +81,12 @@ struct Plug {
             eng.P.g[p.slot] = (int16_t)(v + 0.5);
             if (!strcmp(PARAMS[p.pidx].id, "bpm")) eng.seq.bpm = v;
             break;
-        case PX_TRACK: eng.P.pat[eng.pat].t[focus].p[p.slot] = (int16_t)(v + 0.5); break;
+        case PX_TRACK:
+            if (!strcmp(PARAMS[p.pidx].id, "trk.machine")) {
+                machineSelect(eng.P.pat[eng.pat].t[focus].p, (int)(v + 0.5));
+                needRescan = true;              // die beiden Quellregler stehen jetzt anders
+            } else eng.P.pat[eng.pat].t[focus].p[p.slot] = (int16_t)(v + 0.5);
+            break;
         case PX_MORPH: eng.morph = (float)v; break;
         case PX_FILL:  eng.seq.fill = v > 0.5; break;
         case PX_MUTE:  eng.mute[p.slot] = v > 0.5; break;

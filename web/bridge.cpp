@@ -59,6 +59,9 @@ void scSet(int track, int slot, int v) {
     } else gEng.P.pat[gEng.pat].t[track].p[slot] = (int16_t)v;
 }
 
+// Machine wechseln: die beiden Quellregler fangen bei den Grundwerten DIESER Machine an.
+void scSetMachine(int t, int m) { machineSelect(gEng.P.pat[gEng.pat].t[t].p, m); }
+
 // --- Steps und Locks ---------------------------------------------------------------------------
 int  scStepGet(int t, int s) { return gEng.P.pat[gEng.pat].t[t].s[s].on; }
 void scStepSet(int t, int s, int on) { gEng.P.pat[gEng.pat].t[t].s[s].on = (uint8_t)on; }
@@ -134,24 +137,36 @@ float scSmpRate(int i)    { return (i >= 0 && i < SMP_SLOTS) ? gEng.pool.s[i].ra
 int   scSmpLoop(int i)    { return (i >= 0 && i < SMP_SLOTS) ? gEng.pool.s[i].loop : 0; }
 const char* scSmpName(int i) { return (i >= 0 && i < SMP_SLOTS) ? gEng.pool.s[i].name : ""; }
 int   scSmpFree()         { return gEng.pool.freeFrames(); }
+int   scSmpWanted(int i)  { return gEng.pool.wanted(i) ? 1 : 0; }
+int   scSmpCh(int i)      { return (i >= 0 && i < SMP_SLOTS) ? gEng.pool.s[i].ch : 1; }
 // Zeiger auf die Samples selbst - die Oberflaeche liest sie zurueck, um sie dem Audio-Faden
 // nachzureichen (und spaeter, um die Wellenform zu zeichnen).
 const float* scSmpData(int i) {
     return (i >= 0 && i < SMP_SLOTS) ? gEng.pool.data + gEng.pool.s[i].at : gEng.pool.data;
 }
 void  scSmpClear()        { gEng.pool.clear(); }
-int   scSmpSet(int slot, const float* d, int n, float rate, const char* name, int loop) {
-    return gEng.pool.set(slot, d, n, rate, name, loop != 0) ? 1 : 0;
+int   scSmpSet(int slot, const float* d, int n, float rate, const char* name, int loop, int ch) {
+    return gEng.pool.set(slot, d, n, rate, name, loop != 0, ch) ? 1 : 0;
 }
+// Aufnahme: nimmt auf, was hinten herauskommt.
+int   scRecStart(int slot, float seconds, const char* name, int ch) {
+    return gEng.recStart(slot, seconds, name, ch);
+}
+void  scRecStop()   { gEng.recStop(); }
+int   scRecOn()     { return gEng.recOn ? 1 : 0; }
+int   scRecFrames() { return gEng.recFrames(); }
 
 // --- Dokument: dieselben Zeilen wie die Datei und wie der Plugin-Zustand ------------------------
 const char* scSave() {
     static Doc d;
     d.clear();
     projectToDoc(gEng.P, d);
+    poolToDoc(gEng.pool, d);
     int at = 0;
     for (int i = 0; i < d.n && at < (int)sizeof gDoc - 64; i++)
         at += snprintf(gDoc + at, sizeof gDoc - at, "%s = %d\n", d.e[i].k, d.e[i].v);
+    for (int i = 0; i < d.ns && at < (int)sizeof gDoc - 64; i++)
+        at += snprintf(gDoc + at, sizeof gDoc - at, "%s = %s\n", d.se[i].k, d.se[i].v);
     gDoc[at] = 0;
     return gDoc;
 }
@@ -169,11 +184,18 @@ void scLoad(const char* text) {
             *eq = 0;
             char* end = eq - 1;
             while (end > line && (*end == ' ' || *end == '\t')) *end-- = 0;
-            d.set(line, (int32_t)strtol(eq + 1, nullptr, 10));
+            char* v = eq + 1;
+            while (*v == ' ' || *v == '\t') v++;
+            char* ve = v;
+            while (*ve) ve++;
+            while (ve > v && (ve[-1] == ' ' || ve[-1] == '\r')) *--ve = 0;
+            if (Doc::isNumber(v)) d.set(line, (int32_t)strtol(v, nullptr, 10));
+            else                  d.setStr(line, v);
         }
         line = nl ? nl + 1 : nullptr;
     }
     projectFromDoc(d, gEng.P);
+    poolFromDoc(d, gEng.pool);
     gEng.seq.bpm = gEng.P.g[paramSlot(paramFind("bpm"))];
     gEng.resetTrackValues();
 }

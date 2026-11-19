@@ -26,7 +26,7 @@ struct Voice {
     Ramp     rmp[NRAMP];
     int      nRamp = 0;
     MState   ms;
-    Svf      flt;
+    Svf      flt, fltR;         // der zweite nur fuer Stereo-Quellen
     Env      env;
     float    panL = 0.7071f, panR = 0.7071f;
     float    base = 1000.0f, q = 0.7f, envAmt = 0.0f, gain = 1.0f;
@@ -69,7 +69,7 @@ struct Voice {
         nRamp = 0; vel = v; left = lenSamples; used = true; age = 0;
         liveFollow(live);
         const Slots& s = S();
-        flt.reset();
+        flt.reset(); fltR.reset();
         env.setup(pTime(pf[s.atk]), pTime(pf[s.dec]), pLevel(pf[s.sus]), pTime(pf[s.rel]), sr);
         env.kill(); env.gate();
         ctl(sr, live);
@@ -129,11 +129,12 @@ struct Voice {
         static const int slotSA = paramSlot(paramFind("trk.send.a"));
         static const int slotSB = paramSlot(paramFind("trk.send.b"));
         float sa = pLevel(pf[slotSA]), sb = pLevel(pf[slotSB]);
-        float buf[MACH_CHUNK];
+        float buf[MACH_CHUNK], bufR[MACH_CHUNK];
+        const bool st = mach->stereo(pf, *pool);
         int done = 0;
         while (done < n) {
             int c = n - done; if (c > MACH_CHUNK) c = MACH_CHUNK;
-            mach->render(ms, pf, hz, buf, c, sr, *pool);
+            mach->render(ms, pf, hz, buf, st ? bufR : nullptr, c, sr, *pool);
             for (int i = 0; i < c; i++) {
                 if (left > 0) { if (--left == 0) release(); }
                 float e = env.tick();
@@ -142,10 +143,13 @@ struct Voice {
                 if ((age & (CTL - 1)) == 0) {
                     ctl(sr, live);
                     flt.set(base * exp2f(envAmt * e * 6.0f), q, sr);   // bis zu sechs Oktaven
+                    if (st) { fltR.a1 = flt.a1; fltR.a2 = flt.a2; fltR.a3 = flt.a3; fltR.k = flt.k; }
                 }
                 age++;
-                float x = flt.run(buf[i], ft) * e * gain;
-                float xl = x * panL, xr = x * panR;
+                float eg = e * gain;
+                float xl, xr;
+                if (st) { xl = flt.run(buf[i], ft) * eg * panL; xr = fltR.run(bufR[i], ft) * eg * panR; }
+                else    { float x = flt.run(buf[i], ft) * eg; xl = x * panL; xr = x * panR; }
                 mx.dL[done + i] += xl;        mx.dR[done + i] += xr;
                 mx.aL[done + i] += xl * sa;   mx.aR[done + i] += xr * sa;
                 mx.bL[done + i] += xl * sb;   mx.bR[done + i] += xr * sb;
@@ -176,6 +180,12 @@ struct Engine : Sink {
     Reverb     reverb;
     SamplePool pool;
 
+    // --- Aufnahme in einen Platz des Vorrats -----------------------------------------------
+    // Aufgenommen wird, was hinten herauskommt. Am Geraet kommt spaeter der Eingang als
+    // zweite Quelle dazu; der Weg hier bleibt derselbe.
+    bool  recOn = false;
+    int   recSlot = -1, recMax = 0, recCh = 2;
+
     Ev   q[256];
     int  qoff[256];
     int  nq = 0;
@@ -197,6 +207,18 @@ struct Engine : Sink {
         resetTrackValues();
     }
     void start() { seq.bpm = P.g[paramSlot(paramFind("bpm"))]; seq.start(); }
+
+    // Platz reservieren und scharf stellen. Gibt die moegliche Laenge in Bildern zurueck, 0 = kein Platz.
+    int recStart(int slot, float seconds, const char* name, int ch = 2) {
+        recStop();
+        int frames = (int)(seconds * sr);
+        if (frames < 1) frames = 1;
+        if (pool.reserve(slot, frames, sr, name, ch) < 0) return 0;
+        recSlot = slot; recMax = frames; recCh = ch < 2 ? 1 : 2; recOn = true;
+        return frames;
+    }
+    void recStop() { recOn = false; recSlot = -1; }
+    int  recFrames() const { return (recSlot >= 0) ? pool.s[recSlot].n : 0; }
     void stop()  { seq.stop(); for (int i = 0; i < NVOICES; i++) v[i].release(); }
 
     void ev(const Ev& e, int offset) override {
@@ -268,6 +290,18 @@ struct Engine : Sink {
             for (int i = 0; i < L.n; i++) live[t][L.slot[i]] = sceneValue(pt, t, L.slot[i], morph);
     }
 
+    // Mitschreiben, was gerade herauskommt - in den reservierten Bereich, ohne Umweg.
+    void recWrite(const float* stereoOut, int n) {
+        SamplePool::Slot& sl = pool.s[recSlot];
+        for (int i = 0; i < n && sl.n < recMax; i++) {
+            float l = stereoOut[i * 2], r = stereoOut[i * 2 + 1];
+            if (recCh == 2) { pool.data[sl.at + sl.n * 2] = l; pool.data[sl.at + sl.n * 2 + 1] = r; }
+            else            { pool.data[sl.at + sl.n] = 0.5f * (l + r); }
+            sl.n++;
+        }
+        if (sl.n >= recMax) recStop();          // die Laenge stand vorher fest
+    }
+
     // out ist stereo-verschraenkt (L,R,L,R...) und wird ueberschrieben.
     void render(float* out, int frames) {
         for (int i = 0; i < frames * 2; i++) out[i] = 0.0f;
@@ -312,6 +346,7 @@ struct Engine : Sink {
                 out[(done + i) * 2]     = softClip(bufD[0][i] * master);
                 out[(done + i) * 2 + 1] = softClip(bufD[1][i] * master);
             }
+            if (recOn) recWrite(out + done * 2, c);
             done += c;
         }
     }

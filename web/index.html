@@ -278,6 +278,13 @@ textarea {
     <label class="filebtn" for="smpFile">DATEIEN WAEHLEN</label>
     <input type="file" id="smpFile" accept="audio/*" multiple>
     <div class="sheet" id="smpList"></div>
+    <div class="lbl" style="margin-top:4px">Aufnehmen, was herauskommt</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="rec" data-takte="1">1 TAKT</button>
+      <button class="rec" data-takte="2">2 TAKTE</button>
+      <button class="rec" data-takte="4">4 TAKTE</button>
+      <span class="hint" id="recInfo" style="align-self:center"></span>
+    </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       <button id="smpUse">AUF DIESE SPUR</button>
       <button id="smpClear">VORRAT LEEREN</button>
@@ -379,6 +386,22 @@ async function audioOn() {
     if (e.data.type === 'ready') el('klang').classList.add('on');
     if (e.data.type === 'fehler') console.error('Audio-Kern:', e.data.text);
     if (e.data.type === 'smp') { if (e.data.n) smpAck.add(e.data.slot); smpPaint(); }
+    if (e.data.type === 'recStart' && !e.data.frames) {
+      recWartet = false;
+      el('recInfo').textContent = 'Kein Platz im Vorrat.';
+    }
+    if (e.data.type === 'rec') {                 // fertig: ins Modell und in den Speicher
+      const name = 'aufnahme ' + (e.data.slot + 1);
+      recWartet = false;
+      if (smpPut(e.data.slot, e.data.data, e.data.rate, e.data.ch, name)) {
+        smpAck.add(e.data.slot);
+        smpStore(name, e.data.data, e.data.rate, e.data.ch);
+        smpSel = e.data.slot;
+        el('recInfo').textContent = 'aufgenommen: ' +
+          (e.data.data.length / e.data.ch / e.data.rate).toFixed(2) + ' s';
+      } else el('recInfo').textContent = 'Kein Platz im Vorrat.';
+      smpPaint(); buildParams();
+    }
   };
   node.connect(ctx.destination);
   // Was vor dem ersten PLAY geladen wurde, kennt der Audio-Faden noch nicht - nachreichen.
@@ -523,7 +546,12 @@ function openPick(p) {
     const b = document.createElement('button');
     b.className = v === cur ? 'cur' : '';
     b.innerHTML = `<span class="n">${ptext(p, v)}</span>`;
-    b.onclick = () => { writeValue(p, v); paint(); el('pick').close(); };
+    b.onclick = () => {
+      // Die Machine ist kein gewoehnlicher Wert: mit ihr wechseln auch ihre beiden Regler.
+      if (p.id === 'trk.machine' && lockStep < 0) cmd('scSetMachine', sel, v);
+      else writeValue(p, v);
+      buildParams(); el('pick').close();
+    };
     list.appendChild(b);
     if (v === cur) setTimeout(() => b.scrollIntoView({block: 'center'}), 0);
   }
@@ -640,6 +668,41 @@ el('lockDone').onclick = closeLock;
 el('lockPrev').onclick = () => jumpTrig(-1);
 el('lockNext').onclick = () => jumpTrig(1);
 
+// --- Eigener Speicher: Samples ueberleben das Schliessen der Seite ----------------------------
+// Das Dokument merkt sich nur NAMEN. Den Klang dazu sucht die Huelle - hier im Browser-Speicher.
+// Alles in try/catch: in einem privaten Fenster gibt es ihn vielleicht gar nicht.
+const SMPDB = 'synthcity-samples';
+function idb() {
+  return new Promise((ok, no) => {
+    try {
+      const r = indexedDB.open(SMPDB, 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('s', {keyPath: 'name'});
+      r.onsuccess = () => ok(r.result);
+      r.onerror = () => no(r.error);
+    } catch (e) { no(e); }
+  });
+}
+async function smpStore(name, data, rate, ch) {
+  try {
+    const db = await idb();
+    await new Promise((ok, no) => {
+      const t = db.transaction('s', 'readwrite');
+      t.objectStore('s').put({name, data, rate, ch});
+      t.oncomplete = ok; t.onerror = () => no(t.error);
+    });
+  } catch (e) { /* ohne Speicher geht es auch, nur nicht ueber die Sitzung hinaus */ }
+}
+async function smpFetch(name) {
+  try {
+    const db = await idb();
+    return await new Promise((ok, no) => {
+      const r = db.transaction('s').objectStore('s').get(name);
+      r.onsuccess = () => ok(r.result || null);
+      r.onerror = () => no(r.error);
+    });
+  } catch (e) { return null; }
+}
+
 // --- Sample-Vorrat --------------------------------------------------------------------------
 let smpSel = 0;
 const smpAck = new Set();          // Plaetze, die der Audio-Faden bestaetigt hat
@@ -648,16 +711,19 @@ const machSlot = () => P.find(p => p.id === 'trk.machine').slot;
 
 function smpLabel(i) {
   const n = X.scSmpFrames(i);
-  if (!n) return (i + 1) + '  leer';
+  if (!n) return (i + 1) + (X.scSmpWanted(i) ? '  ' + str(X.scSmpName(i)) + '  fehlt' : '  leer');
   const ack = smpAck.has(i) ? ' \u25cf' : (node ? ' \u2026' : '');
-  return (i + 1) + '  ' + str(X.scSmpName(i)) + '  ' + (n / X.scSmpRate(i)).toFixed(2) + ' s' + ack;
+  const st = X.scSmpCh(i) === 2 ? ' ST' : '';
+  return (i + 1) + '  ' + str(X.scSmpName(i)) + '  ' + (n / X.scSmpRate(i)).toFixed(2) + ' s'
+         + st + ack;
 }
 // Ein Sample aus dem Modell in den Audio-Faden schicken (auch nachtraeglich).
 function smpSendToAudio(i) {
   const n = X.scSmpFrames(i);
   if (!node || !n) return;
-  const data = new Float32Array(X.memory.buffer, X.scSmpData(i), n).slice();
-  node.port.postMessage({fn: 'smp', slot: i, data, rate: X.scSmpRate(i),
+  const ch = X.scSmpCh(i);
+  const data = new Float32Array(X.memory.buffer, X.scSmpData(i), n * ch).slice();
+  node.port.postMessage({fn: 'smp', slot: i, data, rate: X.scSmpRate(i), ch,
                          name: new TextEncoder().encode(str(X.scSmpName(i))),
                          loop: X.scSmpLoop(i)});
 }
@@ -685,10 +751,13 @@ async function smpLoadFiles(files) {
     try {
       const buf = await ac.decodeAudioData(await f.arrayBuffer());
       const n = buf.length;
-      const mono = new Float32Array(n);
-      for (let c = 0; c < buf.numberOfChannels; c++) {
-        const d = buf.getChannelData(c);
-        for (let i = 0; i < n; i++) mono[i] += d[i] / buf.numberOfChannels;
+      const ch = buf.numberOfChannels >= 2 ? 2 : 1;      // Stereo bleibt Stereo
+      const mono = new Float32Array(n * ch);
+      if (ch === 2) {
+        const l = buf.getChannelData(0), r = buf.getChannelData(1);
+        for (let i = 0; i < n; i++) { mono[i * 2] = l[i]; mono[i * 2 + 1] = r[i]; }
+      } else {
+        mono.set(buf.getChannelData(0));
       }
       const name = f.name.replace(/\.[^.]+$/, '').slice(0, 20);
       const nb = new TextEncoder().encode(name);
@@ -697,11 +766,12 @@ async function smpLoadFiles(files) {
       const np = X.scAlloc(nb.length + 1);
       const nm = new Uint8Array(X.memory.buffer, np, nb.length + 1);
       nm.set(nb); nm[nb.length] = 0;
-      if (!X.scSmpSet(slot, dp, n, buf.sampleRate, np, 0)) {
+      if (!X.scSmpSet(slot, dp, n, buf.sampleRate, np, 0, ch)) {
         el('smpList').innerHTML = '<div class="err">Der Vorrat ist voll.</div>';
         return;
       }
       smpSendToAudio(slot);
+      smpStore(name, mono, buf.sampleRate, ch);
       slot++;
     } catch (e) {
       el('smpList').innerHTML = '<div class="err">' + f.name + ' liess sich nicht lesen: '
@@ -713,7 +783,28 @@ async function smpLoadFiles(files) {
   smpPaint();
   buildParams();
 }
-el('smpBtn').onclick = () => { smpPaint(); el('smp').showModal(); };
+// --- Aufnahme ---------------------------------------------------------------------------------
+// Aufgenommen wird im Audio-Faden; das Ergebnis kommt zurueck und landet im Modell und im
+// eigenen Speicher. Ohne laufenden Klang gibt es nichts aufzunehmen - darum erst PLAY.
+let recWartet = false;
+for (const b of document.querySelectorAll('.rec')) {
+  b.onclick = async () => {
+    if (!node) { el('recInfo').textContent = 'Erst PLAY druecken.'; return; }
+    if (recWartet) return;
+    let slot = -1;
+    for (let i = 0; i < X.scSmpSlots(); i++)
+      if (!X.scSmpFrames(i) && !X.scSmpWanted(i)) { slot = i; break; }
+    if (slot < 0) { el('recInfo').textContent = 'Kein freier Platz.'; return; }
+    const takte = +b.dataset.takte;
+    const sek = takte * 4 * 60 / X.scGet(-1, bpmSlot());
+    const name = 'aufnahme ' + (slot + 1);
+    recWartet = true;
+    el('recInfo').textContent = 'nimmt auf \u2026';
+    node.port.postMessage({fn: 'rec', slot, seconds: sek,
+                           name: new TextEncoder().encode(name), ch: 2});
+  };
+}
+el('smpBtn').onclick = () => { smpPaint(); el('recInfo').textContent = ''; el('smp').showModal(); };
 el('smpClose').onclick = () => el('smp').close();
 el('smpFile').onchange = e => { smpLoadFiles([...e.target.files]); e.target.value = ''; };
 el('smpClear').onclick = () => {
@@ -721,11 +812,37 @@ el('smpClear').onclick = () => {
 };
 // Ein Sample auf die gewaehlte Spur legen heisst: Machine auf SMPL und den Platz einstellen.
 el('smpUse').onclick = () => {
-  cmd('scSet', sel, machSlot(), 3);
+  cmd('scSetMachine', sel, 3);
   cmd('scSet', sel, smpSlot(), smpSel);
   el('smp').close();
   buildParams();
 };
+
+// Nach dem Laden eines Projekts: was es verlangt und was nicht da ist, im Speicher suchen.
+async function smpRestoreWanted() {
+  let gefunden = 0;
+  for (let i = 0; i < X.scSmpSlots(); i++) {
+    if (!X.scSmpWanted(i)) continue;
+    const rec = await smpFetch(str(X.scSmpName(i)));
+    if (!rec) continue;
+    smpPut(i, rec.data, rec.rate, rec.ch || 1, str(X.scSmpName(i)));
+    gefunden++;
+  }
+  if (gefunden) { smpPaint(); buildParams(); }
+  return gefunden;
+}
+// Ein fertiges Sample in beide Kerne legen.
+function smpPut(slot, data, rate, ch, name) {
+  const nb = new TextEncoder().encode(name);
+  const dp = X.scAlloc(data.length * 4);
+  new Float32Array(X.memory.buffer, dp, data.length).set(data);
+  const np = X.scAlloc(nb.length + 1);
+  const nm = new Uint8Array(X.memory.buffer, np, nb.length + 1);
+  nm.set(nb); nm[nb.length] = 0;
+  if (!X.scSmpSet(slot, dp, data.length / ch, rate, np, 0, ch)) return false;
+  smpSendToAudio(slot);
+  return true;
+}
 
 el('pickClose').onclick = () => el('pick').close();
 el('docBtn').onclick = () => { el('docText').value = str(X.scSave()); el('doc').showModal(); };
@@ -739,6 +856,7 @@ el('docLoad').onclick = () => {
   if (node) node.port.postMessage({fn: 'scLoad', doc: new TextEncoder().encode(t)});
   el('doc').close();
   buildPads(); buildParams();
+  smpRestoreWanted();
 };
 el('docCopy').onclick = async () => {
   try { await navigator.clipboard.writeText(el('docText').value); el('docCopy').textContent = 'KOPIERT'; }

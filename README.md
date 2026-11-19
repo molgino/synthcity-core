@@ -5,7 +5,7 @@ Konzept: `../r36-groovebox/docs/konzept-neu.md`.
 
 Kein Framework, keine Abhängigkeiten, keine STL-Container im Kern — C++17 und fertig.
 
-## Stand: Meilenstein 7 — der Sampler
+## Stand: Meilenstein 8 — Samples überleben den Neustart
 
 | Baustein | Datei | Zustand |
 | --- | --- | --- |
@@ -16,7 +16,8 @@ Kein Framework, keine Abhängigkeiten, keine STL-Container im Kern — C++17 und
 | Lock-freie Befehls-Queue (Oberfläche → Audio) | `src/queue.h` | steht |
 | DSP-Bausteine: PolyBLEP, TPT-Filter, Hüllkurve, Skalen | `src/dsp.h` | steht |
 | Machines: `POLY`, `FM`, `DRUM`, `SMPL` — hinter denselben Reglern | `src/machine.h` | steht |
-| Sample-Vorrat (64 Plätze, gemeinsamer Block, mono) | `src/sample.h` | steht |
+| Sample-Vorrat (64 Plätze, mono **und stereo**), Aufnahme | `src/sample.h` | steht |
+| Dokument mit Namen (nicht nur Zahlen) | `src/doc.h` | steht |
 | Sende-Effekte: Delay im Takt, Hall (FDN) | `src/fx.h` | steht |
 | Stimmen, Filter, Hüllkurve, Panorama, Summe | `src/engine.h` | steht |
 | Slides als Rampen, Scenes + Morph, Mute, Step-Loop | `src/engine.h`, `src/model.h` | steht |
@@ -72,10 +73,28 @@ sind: Samples, die **vor** dem ersten PLAY geladen werden, erreichen den Audio-F
 sie werden beim Start nachgereicht; und ein Punkt in der Liste zeigt, dass der Klang-Kern das
 Sample wirklich hat, nicht nur die Anzeige.
 
-Was noch fehlt: **Stereo** (ein Stereo-Sample wird beim Laden zusammengelegt), **Aufnahme** im
-Gerät, und die Samples stehen **nicht im Dokument** — ein gespeichertes Projekt merkt sich die
-Platznummer, nicht die Datei. Das ist der nächste Schritt, denn ohne ihn überlebt ein Projekt den
-Neustart nur halb.
+### Das Dokument merkt sich Namen, nicht Klänge
+
+Eine Projektdatei bleibt klein und lesbar: sie schreibt `smp.0.name = kick 909`, nicht 200 kB
+Audio. Wer sie öffnet, *sieht*, welche Samples sie verlangt. Ein Platz, dessen Name bekannt ist
+und dessen Klang fehlt, ist ein **Wunsch** — ihn zu erfüllen ist Sache der Hülle: im Browser der
+eigene Speicher (IndexedDB), am Gerät später die Speicherkarte.
+
+Dafür musste das Dokument zum ersten Mal **Text** können. Es bleibt beim Format `id = wert`:
+sieht der Wert wie eine Zahl aus, ist es eine; sonst ein Name. Alte Dateien lesen sich unverändert.
+
+### Aufnehmen, was herauskommt
+
+Aufgenommen wird dort, wo der Klang entsteht — im Audio-Thread, direkt in einen reservierten
+Platz des Vorrats, ohne Umweg und ohne Speicheranforderung. Danach geht das Ergebnis an die
+Oberfläche zurück, die es ins Modell und in ihren Speicher legt. Die Länge steht vorher fest
+(1, 2 oder 4 Takte am Tempo), die Aufnahme endet von selbst.
+
+Das ist dieselbe Mechanik, die am Gerät später den Eingang oder das Mikro aufnimmt. **Im
+veröffentlichten Browser-Fenster ist der Mikrofonzugriff gesperrt** — deshalb nimmt die Weboberfläche
+die Summe auf, nicht das Mikro.
+
+Was noch fehlt: Trimmen und Loop-Punkte setzen, und ein Blick auf die Wellenform.
 
 ## Machines und Effekte
 
@@ -88,6 +107,10 @@ Machine etwas anderes, und *die Machine sagt, was sie heißt*:
 | `FM` | RATIO | INDEX | `5.00 : 1` |
 | `DRUM` | SWEEP | RAUSCH | `24 Halbt.` |
 | `SMPL` | START | FEIN | `50 %` |
+
+Eine andere Machine zu wählen setzt **ihre** beiden Grundwerte — sonst stünde der Sampler beim
+Umschalten mitten im Sample statt an seinem Anfang. (Derselbe Fehler wie in SYNTH CITY, dort
+Aufgabe 90.)
 
 Die Parametertabelle nennt die beiden nur noch `QUELLE A` und `QUELLE B`; den echten Namen
 liefert `Machine::labelA/labelB`, den Anzeigetext `Machine::text`. Damit stimmt die Beschriftung
@@ -223,9 +246,9 @@ Last (x86, ein Kern): 580× Echtzeit mit einer Spur, 33× im schlimmsten Fall mi
 
 ## Als Nächstes
 
-8. Samples ins Dokument (nach Name, nachladbar) — sonst überlebt ein Projekt den Neustart nur halb.
 9. Song-Modus, Pattern-Bänke.
-10. Gerät: R36S-Build, Aufnahme, Gamepad-Bedienung.
+10. Sample trimmen und loopen, Wellenform zeichnen.
+11. Gerät: R36S-Build, echter Eingang, Gamepad-Bedienung.
 
 Offen aus Meilenstein 2: das DSP ist **neu geschrieben**, nicht aus SYNTH CITY portiert — ein
 Bit-Vergleich gegen den alten Render steht deshalb aus. Die Referenz-WAV sichert ab jetzt den

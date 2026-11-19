@@ -2,6 +2,7 @@
 #include "../src/model.h"
 #include "../src/seq.h"
 #include "../src/queue.h"
+#include "../src/sample.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <vector>
@@ -216,6 +217,46 @@ static void testScenes() {
     CHECK(Q.pat[0].sc[0][1].n == 0, "eine Spur ohne Scene bekommt beim Laden Werte");
 }
 
+// Namen im Dokument: der Vorrat merkt sich, welche Samples ein Projekt verlangt.
+static void testSampleDoc() {
+    curCase = "Samples im Dokument";
+    static Doc d; d.clear();
+    d.set("bpm", 128);
+    d.setStr("smp.0.name", "kick 909");
+    CHECK(d.get("bpm", 0) == 128, "Zahl verloren");
+    CHECK(!strcmp(d.getStr("smp.0.name", "?"), "kick 909"), "Name verloren");
+    CHECK(!strcmp(d.getStr("gibtsnicht", "-"), "-"), "fehlender Name liefert keinen Standard");
+    CHECK(d.isNumber("-12") && !d.isNumber("12a") && !d.isNumber(""), "Zahlentest falsch");
+    CHECK(d.save("/tmp/sc-smp.txt"), "speichern fehlgeschlagen");
+    static Doc d2; CHECK(d2.load("/tmp/sc-smp.txt"), "laden fehlgeschlagen");
+    CHECK(d2.get("bpm", 0) == 128, "Zahl ueberlebt den Rundlauf nicht");
+    CHECK(!strcmp(d2.getStr("smp.0.name", "?"), "kick 909"), "Name ueberlebt den Rundlauf nicht");
+
+    static SamplePool pool;
+    pool.clear();
+    static float t[64];
+    for (int i = 0; i < 64; i++) t[i] = 0.5f;
+    CHECK(pool.set(2, t, 32, 44100.0f, "snare", false, 2), "Stereo-Sample abgelehnt");
+    CHECK(pool.s[2].ch == 2 && pool.s[2].n == 32, "Stereo falsch abgelegt");
+    static Doc d3; d3.clear();
+    poolToDoc(pool, d3);
+    CHECK(!strcmp(d3.getStr("smp.2.name", ""), "snare"), "Name nicht im Dokument");
+    CHECK(d3.get("smp.2.rate", 0) == 44100 && d3.get("smp.2.ch", 0) == 2, "Daten nicht im Dokument");
+
+    // Ein leerer Vorrat laedt das Projekt: der Platz wird zum Wunsch, nicht zum Klang.
+    static SamplePool leer;
+    leer.clear();
+    poolFromDoc(d3, leer);
+    CHECK(leer.wanted(2), "der verlangte Platz ist kein Wunsch");
+    CHECK(leer.empty(2), "ein Wunsch gilt als belegt");
+    CHECK(!strcmp(leer.s[2].name, "snare") && leer.s[2].ch == 2, "der Wunsch kennt den Namen nicht");
+    CHECK(!leer.wanted(0), "ein unbenutzter Platz wird zum Wunsch");
+
+    // Was schon da ist und denselben Namen traegt, bleibt liegen.
+    poolFromDoc(d3, pool);
+    CHECK(pool.s[2].n == 32 && !pool.wanted(2), "ein vorhandenes Sample wird weggeworfen");
+}
+
 static void testQueue() {
     curCase = "Befehls-Warteschlange";
     Queue<8> q;
@@ -234,6 +275,7 @@ int main() {
     testPolymetrik();
     testRatchet();
     testScenes();
+    testSampleDoc();
     testQueue();
     printf("%s: %d Pruefungen ok, %d Fehler\n", fail ? "FEHLGESCHLAGEN" : "OK", pass, fail);
     return fail ? 1 : 0;

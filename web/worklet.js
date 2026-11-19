@@ -6,6 +6,7 @@ class SynthCityNode extends AudioWorkletProcessor {
     this.ready = false;
     this.lastPost = 0;
     this.pending = [];        // Befehle, die vor dem Fertigwerden ankommen, gehen nicht verloren
+    this.recSlot = -1;
     WebAssembly.instantiate(opts.processorOptions.bytes, {}).then(res => {
       const inst = res.instance || res;
       this.x = inst.exports;
@@ -27,6 +28,7 @@ class SynthCityNode extends AudioWorkletProcessor {
   apply(m) {
     if (m.fn === 'scLoad') { this.load(m.doc); return; }
     if (m.fn === 'smp')    { this.sample(m); return; }
+    if (m.fn === 'rec')    { this.record(m); return; }
     if (this.x[m.fn]) this.x[m.fn](...(m.args || []));
   }
 
@@ -38,9 +40,22 @@ class SynthCityNode extends AudioWorkletProcessor {
     const np = this.x.scAlloc(nb.length + 1);
     const nm = new Uint8Array(this.x.memory.buffer, np, nb.length + 1);
     nm.set(nb); nm[nb.length] = 0;
-    this.x.scSmpSet(m.slot, p, m.data.length, m.rate, np, m.loop ? 1 : 0);
+    const ch = m.ch || 1;
+    this.x.scSmpSet(m.slot, p, m.data.length / ch, m.rate, np, m.loop ? 1 : 0, ch);
     // Rueckmeldung: die Oberflaeche zeigt erst dann an, dass der Klang-Kern es wirklich hat.
     this.port.postMessage({type: 'smp', slot: m.slot, n: this.x.scSmpFrames(m.slot)});
+  }
+
+  // Aufgenommen wird dort, wo der Klang entsteht - hier. Danach geht das Ergebnis
+  // zurueck an die Oberflaeche, die es ins Modell und in ihren Speicher legt.
+  record(m) {
+    const nb = m.name;
+    const np = this.x.scAlloc(nb.length + 1);
+    const nm = new Uint8Array(this.x.memory.buffer, np, nb.length + 1);
+    nm.set(nb); nm[nb.length] = 0;
+    const n = this.x.scRecStart(m.slot, m.seconds, np, m.ch || 2);
+    this.recSlot = n > 0 ? m.slot : -1;
+    this.port.postMessage({type: 'recStart', slot: m.slot, frames: n});
   }
 
   load(bytes) {
@@ -58,6 +73,14 @@ class SynthCityNode extends AudioWorkletProcessor {
     this.x.scRender(this.buf, n);
     const f = new Float32Array(this.x.memory.buffer, this.buf, n * 2);
     for (let i = 0; i < n; i++) { L[i] = f[i * 2]; R[i] = f[i * 2 + 1]; }
+    if (this.recSlot >= 0 && !this.x.scRecOn()) {       // die Aufnahme ist gerade fertig
+      const slot = this.recSlot;
+      this.recSlot = -1;
+      const frames = this.x.scSmpFrames(slot), ch = this.x.scSmpCh(slot);
+      const data = new Float32Array(this.x.memory.buffer, this.x.scSmpData(slot),
+                                    frames * ch).slice();
+      this.port.postMessage({type: 'rec', slot, data, ch, rate: this.x.scSmpRate(slot)});
+    }
     if (currentTime - this.lastPost > 0.04) {     // Zeigerstand hoechstens 25-mal je Sekunde
       this.lastPost = currentTime;
       const steps = [];

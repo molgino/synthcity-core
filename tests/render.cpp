@@ -413,7 +413,7 @@ int main() {
         e.pool.set(0, sine, 48000, 48000.0f, "sinus", true);
         setupBeat(e, 72);                                  // eine Oktave hoeher
         Track& t2 = e.P.pat[0].t[0];
-        t2.p[SL("trk.machine")] = 3; t2.p[SL("trk.smp")] = 0;
+        machineSelect(t2.p, 3); t2.p[SL("trk.smp")] = 0;
         t2.p[SL("trk.flt.freq")] = 127; t2.p[SL("trk.amp.sus")] = 100;
         t2.p[SL("trk.amp.dec")] = 127; t2.p[SL("trk.len")] = 127;
         e.start(); e.render(b, N);
@@ -424,7 +424,7 @@ int main() {
         e.prepare(48000.0f);
         setupBeat(e, 60);
         Track& t3 = e.P.pat[0].t[0];
-        t3.p[SL("trk.machine")] = 3; t3.p[SL("trk.smp")] = 7;
+        machineSelect(t3.p, 3); t3.p[SL("trk.smp")] = 7;
         e.start(); e.render(b, N);
         chk(rms(b, N) == 0.0f, "ein leerer Platz klingt");
 
@@ -440,7 +440,7 @@ int main() {
         e.pool.set(1, hi, 48000, 48000.0f, "hoch", true);
         setupBeat(e, 60);
         Track& t4 = e.P.pat[0].t[0];
-        t4.p[SL("trk.machine")] = 3; t4.p[SL("trk.smp")] = 0;
+        machineSelect(t4.p, 3); t4.p[SL("trk.smp")] = 0;
         t4.p[SL("trk.flt.freq")] = 127; t4.p[SL("trk.amp.dec")] = 90;
         t4.s[4].setLock(SL("trk.smp"), 1);
         e.start(); e.render(c, 48000);
@@ -450,6 +450,66 @@ int main() {
         chk(ersterTief > 0.005f, "der erste Step spielt das tiefe Sample nicht");
         chk(zweiterHoch > zweiterTief * 4.0f, "der gelockte Step spielt nicht das andere Sample");
         chk(sane(c, 48000 * 2), "der Sampler laeuft aus dem Ruder");
+    }
+
+    grp("Stereo-Samples");
+    {
+        const int N = 24000;
+        static float b[24000 * 2];
+        static float st[48000 * 2];                     // links 220 Hz, rechts 880 Hz
+        for (int i = 0; i < 48000; i++) {
+            st[i * 2]     = sinf(6.2831853f * 220.0f * i / 48000.0f);
+            st[i * 2 + 1] = sinf(6.2831853f * 880.0f * i / 48000.0f);
+        }
+        e.prepare(48000.0f);
+        chk(e.pool.set(0, st, 48000, 48000.0f, "stereo", true, 2), "Stereo-Sample abgelehnt");
+        chk(e.pool.s[0].ch == 2 && e.pool.s[0].n == 48000, "Stereo falsch abgelegt");
+        setupBeat(e, 60);
+        Track& t = e.P.pat[0].t[0];
+        machineSelect(t.p, 3); t.p[SL("trk.smp")] = 0;
+        t.p[SL("trk.flt.freq")] = 127; t.p[SL("trk.amp.sus")] = 100;
+        t.p[SL("trk.amp.dec")] = 127; t.p[SL("trk.len")] = 127;
+        e.start(); e.render(b, N);
+        float l220 = bin(b, N, 220.0f, 48000.0f),     l880 = bin(b, N, 880.0f, 48000.0f);
+        float r220 = bin(b + 1, N, 220.0f, 48000.0f), r880 = bin(b + 1, N, 880.0f, 48000.0f);
+        chk(l220 > l880 * 4.0f, "links klingt nicht die linke Seite");
+        chk(r880 > r220 * 4.0f, "rechts klingt nicht die rechte Seite");
+    }
+
+    grp("Aufnahme in den Vorrat");
+    {
+        const int N = 48000;
+        static float b[48000 * 2];
+        e.prepare(48000.0f); setupBeat(e, 57);
+        e.P.pat[0].t[0].p[SL("trk.flt.freq")] = 127;
+        e.start();
+        chk(e.recStart(5, 0.5f, "mitschnitt", 2) == 24000, "Aufnahme laesst sich nicht scharf stellen");
+        chk(e.recOn, "Aufnahme nicht scharf");
+        e.render(b, N);                                  // eine Sekunde - die Aufnahme endet nach 0,5
+        chk(!e.recOn, "die Aufnahme endet nicht von selbst");
+        chk(e.pool.s[5].n == 24000, "die Aufnahme ist nicht eine halbe Sekunde lang");
+        chk(e.pool.s[5].ch == 2, "die Aufnahme ist nicht stereo");
+
+        // Das Aufgenommene muss klingen wie das, was gespielt wurde.
+        float rmsAuf = 0;
+        for (int i = 0; i < 24000; i++) {
+            float x = e.pool.data[e.pool.s[5].at + i * 2];
+            rmsAuf += x * x;
+        }
+        rmsAuf = sqrtf(rmsAuf / 24000.0f);
+        chk(rmsAuf > 0.01f, "die Aufnahme ist still");
+
+        // Und sie laesst sich sofort wieder abspielen.
+        static float c[24000 * 2];
+        e.prepare(48000.0f);
+        setupBeat(e, 60);
+        Track& t = e.P.pat[0].t[0];
+        machineSelect(t.p, 3); t.p[SL("trk.smp")] = 5;      // setzt START auf den Anfang
+        chk(t.p[SL("trk.src.a")] == 0, "SMPL startet nicht am Anfang des Samples");
+        t.p[SL("trk.flt.freq")] = 127; t.p[SL("trk.amp.dec")] = 110;
+        e.start(); e.render(c, 24000);
+        chk(rms(c, 24000) > 0.005f, "das Aufgenommene spielt nicht");
+        chk(sane(c, 24000 * 2), "die Aufnahme laeuft aus dem Ruder");
     }
 
     grp("Sende-Effekte");
