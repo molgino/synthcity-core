@@ -45,6 +45,25 @@ const grp = n => console.log('- ' + n);
   chk(khz > 17 && khz < 19, 'FREQ bei 127 ist nicht rund 18 kHz (' + khz + ')');
   chk(str(x.scParamText(idxOf('trk.vol'), 100)).startsWith('0.0'), 'VOL 100 ist nicht 0 dB');
 
+  grp('Auswahlwerte heissen wie ihre Bedeutung, nicht wie ihr Index');
+  chk(str(x.scParamText(idxOf('trk.machine'), 0)) === 'POLY', 'ENGINE zeigt keinen Namen');
+  chk(str(x.scParamText(idxOf('trk.flt.type'), 0)) === 'TIEFPASS', 'Filtertyp zeigt keinen Namen');
+  chk(str(x.scParamText(idxOf('trk.cond'), 0)) === '--', 'COND 0 ist nicht leer');
+  chk(x.scEnumCount(idxOf('trk.cond')) > 50, 'zu wenige Bedingungen zur Auswahl');
+  chk(x.scEnumCount(idxOf('trk.machine')) === 1, 'Machine-Liste falsch lang');
+  chk(x.scEnumCount(idxOf('trk.vol')) === 0, 'ein stufenloser Regler bekommt eine Liste');
+  {
+    const ci = idxOf('trk.cond');
+    const namen = [];
+    for (let i = 0; i < x.scEnumCount(ci); i++) namen.push(str(x.scParamText(ci, x.scEnumValue(ci, i))));
+    chk(namen.includes('FILL') && namen.includes('/PRE') && namen.includes('1ST'),
+        'feste Bedingungen fehlen in der Liste');
+    chk(namen.includes('50 %'), 'Wahrscheinlichkeit fehlt in der Liste');
+    chk(namen.includes('1:2') && namen.includes('/1:2') && namen.includes('8:8'),
+        'A:B-Bedingungen fehlen in der Liste');
+    chk(new Set(namen).size === namen.length, 'ein Eintrag kommt doppelt vor');
+  }
+
   grp('Klang: Tonhoehe stimmt auch im Browser-Bau');
   const N = 24000, buf = x.scAlloc(N * 2 * 4);
   const render = n => {

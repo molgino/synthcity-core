@@ -20,6 +20,12 @@
   --rail: 76px;
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+/* Auf einer Geraetefront markiert man keinen Text: ein Druck auf M soll stumm schalten,
+   nicht die Beschriftung auswaehlen. Nur das Dokumentfeld bleibt auswaehlbar. */
+#app, #app * { -webkit-user-select: none; user-select: none; }
+/* Eine eigene Regel mit display schlaegt sonst das hidden-Attribut der Umgebung. */
+[hidden] { display: none !important; }
+textarea, textarea * { -webkit-user-select: text; user-select: text; }
 html, body { height: 100%; }
 body {
   margin: 0; background: var(--panel); color: var(--fg);
@@ -71,8 +77,9 @@ button:focus-visible { outline: 2px solid var(--ok); outline-offset: 2px; }
 .trk.sel { background: #1f2a31; box-shadow: inset 3px 0 0 var(--c); }
 .trk.muted .nm, .trk.muted .dot { opacity: .3; }
 .trk .m {
-  font-size: 9px; font-weight: 700; color: var(--dim); border: 1px solid var(--line);
-  border-radius: 4px; width: 20px; height: 20px; display: grid; place-items: center; flex: none;
+  font-size: 10px; font-weight: 700; color: var(--dim); background: transparent;
+  border: 1px solid var(--line); border-radius: 5px; width: 26px; height: 26px;
+  display: grid; place-items: center; flex: none; padding: 0; min-height: 0; cursor: pointer;
 }
 .trk.muted .m { background: var(--lock); color: #230a17; border-color: var(--lock); opacity: 1; }
 
@@ -139,6 +146,17 @@ footer {
 .play.on { background: var(--ok); border-color: var(--ok); color: #06231a; }
 
 /* --- Dokument --- */
+/* Auswahlliste: ein Wert mit Bedeutung wird gewaehlt, nicht gezogen. */
+.sheet { display: grid; gap: 2px; max-height: 58vh; overflow-y: auto; overscroll-behavior: contain; }
+.sheet button {
+  text-align: left; min-height: 44px; border-radius: 6px; background: var(--raised);
+  display: flex; align-items: center; gap: 10px;
+}
+.sheet button.cur { background: var(--amber); color: #15100a; border-color: var(--amber); }
+.sheet button .n { font-family: var(--mono); font-size: 12px; }
+.row.pick { cursor: pointer; }
+.row.pick .v::after { content: ' \25be'; color: var(--dim); }
+
 dialog {
   border: 1px solid var(--line); background: var(--surface); color: var(--fg);
   border-radius: 10px; width: min(560px, 92vw); padding: 0;
@@ -206,6 +224,14 @@ textarea {
     </div>
   </footer>
 </div>
+
+<dialog id="pick">
+  <div class="dlg">
+    <div class="lbl" id="pickTitle">Auswahl</div>
+    <div class="sheet" id="pickList"></div>
+    <button id="pickClose">ABBRECHEN</button>
+  </div>
+</dialog>
 
 <dialog id="doc">
   <div class="dlg">
@@ -299,11 +325,15 @@ function buildRail() {
     const d = document.createElement('div');
     d.className = 'trk';
     d.style.setProperty('--c', HUE[t]);
-    d.innerHTML = `<span class="dot"></span><span class="nm">SPUR ${t + 1}</span><span class="m">M</span>`;
-    d.onclick = ev => {
-      if (ev.target.classList.contains('m')) { cmd('scMute', t, X.scIsMute(t) ? 0 : 1); return; }
-      sel = t; lockStep = -1; buildPads(); buildParams();
-    };
+    d.innerHTML = `<span class="dot"></span><span class="nm">SPUR ${t + 1}</span>
+                   <button class="m" aria-label="Spur ${t + 1} stumm">M</button>`;
+    const m = d.querySelector('.m');
+    m.addEventListener('pointerdown', ev => {
+      ev.stopPropagation(); ev.preventDefault();          // nicht die Spur mitwaehlen
+      cmd('scMute', t, X.scIsMute(t) ? 0 : 1);
+    });
+    m.addEventListener('click', ev => ev.stopPropagation());
+    d.addEventListener('click', () => { sel = t; lockStep = -1; buildPads(); buildParams(); });
     r.appendChild(d);
   }
 }
@@ -376,7 +406,7 @@ function buildParams() {
       box.appendChild(h);
     }
     const row = document.createElement('div');
-    row.className = 'row';
+    row.className = 'row' + (X.scEnumCount(p.i) ? ' pick' : '');
     row.innerHTML = `<div class="nm">${p.name}<small>${p.id}</small></div>
                      <div style="display:flex;align-items:center"><span class="v"></span></div>
                      <div class="bar"></div>`;
@@ -400,6 +430,37 @@ function writeValue(p, v) {
     cmd('scLockSet', sel, lockStep, p.slot, v, 0);
   } else cmd('scSet', sel, p.slot, v);
 }
+// Werte mit Bedeutung (Engine, Filtertyp, Bedingung) kommen als Liste - eine Zahl,
+// die man nachschlagen muss, waere keine Anzeige.
+function openPick(p) {
+  const n = X.scEnumCount(p.i);
+  if (!n) return;
+  const cur = valueOf(p).v;
+  el('pickTitle').textContent = p.name + '  ' + p.id;
+  const list = el('pickList');
+  list.innerHTML = '';
+  let group = '';
+  for (let i = 0; i < n; i++) {
+    const v = X.scEnumValue(p.i, i);
+    const g = str(X.scEnumGroup(p.i, i));
+    if (g && g !== group) {
+      group = g;
+      const h = document.createElement('div');
+      h.className = 'lbl';
+      h.style.padding = '10px 2px 2px';
+      h.textContent = g;
+      list.appendChild(h);
+    }
+    const b = document.createElement('button');
+    b.className = v === cur ? 'cur' : '';
+    b.innerHTML = `<span class="n">${str(X.scParamText(p.i, v))}</span>`;
+    b.onclick = () => { writeValue(p, v); paint(); el('pick').close(); };
+    list.appendChild(b);
+    if (v === cur) setTimeout(() => b.scrollIntoView({block: 'center'}), 0);
+  }
+  el('pick').showModal();
+}
+
 // Erst die Richtung entscheiden, dann handeln: sonst verstellt man beim Blaettern Werte.
 function dragRow(row, p) {
   let id = null, x0 = 0, y0 = 0, start = 0, mode = 0;
@@ -421,7 +482,10 @@ function dragRow(row, p) {
     writeValue(p, start + (dx / 180) * (p.hi - p.lo));
     paint();
   });
-  const end = () => { id = null; mode = 0; };
+  const end = e => {
+    if (id !== null && mode === 0 && X.scEnumCount(p.i)) openPick(p);   // getippt, nicht gezogen
+    id = null; mode = 0;
+  };
   row.addEventListener('pointerup', end);
   row.addEventListener('pointercancel', end);
 }
@@ -488,6 +552,7 @@ el('lockDone').onclick = closeLock;
 el('lockPrev').onclick = () => jumpTrig(-1);
 el('lockNext').onclick = () => jumpTrig(1);
 
+el('pickClose').onclick = () => el('pick').close();
 el('docBtn').onclick = () => { el('docText').value = str(X.scSave()); el('doc').showModal(); };
 el('docClose').onclick = () => el('doc').close();
 el('docLoad').onclick = () => {

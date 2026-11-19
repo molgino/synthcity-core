@@ -29,6 +29,11 @@ int   scParamLo(int i)    { return PARAMS[i].lo; }
 int   scParamHi(int i)    { return PARAMS[i].hi; }
 int   scParamDef(int i)   { return PARAMS[i].def; }
 int   scParamFlags(int i) { return PARAMS[i].flags; }
+// Auswahllisten: die Oberflaeche fragt, welche Werte sinnvoll sind - sie kennt die Zahlen nicht.
+int scEnumCount(int i) { return (i >= 0 && i < NPARAMS) ? enumCount(PARAMS[i]) : 0; }
+int scEnumValue(int i, int k) { return (i >= 0 && i < NPARAMS) ? enumValue(PARAMS[i], k) : 0; }
+const char* scEnumGroup(int i, int k) { return (i >= 0 && i < NPARAMS) ? enumGroup(PARAMS[i], k) : ""; }
+
 const char* scParamText(int i, float v) {
     if (i < 0 || i >= NPARAMS) return "";
     paramText(PARAMS[i], v, gBuf, sizeof gBuf);
