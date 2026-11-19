@@ -64,22 +64,29 @@ button:focus-visible { outline: 2px solid var(--ok); outline-offset: 2px; }
 .klang i { width: 7px; height: 7px; border-radius: 50%; background: #39474f; }
 .klang.on { color: var(--ok); }
 .klang.on i { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+.meter { width: 34px; height: 7px; border-radius: 4px; background: #1d262c; overflow: hidden;
+         flex: none; border: 1px solid var(--line); }
+.meter b { display: block; height: 100%; width: 0; background: var(--ok); transition: width .08s linear; }
+.meter b.laut { background: var(--amber); }
 
 /* --- Mitte: Spurleiste + Arbeitsflaeche --- */
 .main { display: grid; grid-template-columns: var(--rail) 1fr; min-height: 0; }
 .rail { border-right: 1px solid var(--line); background: var(--surface); overflow-y: auto; }
 .trk {
-  display: flex; align-items: center; gap: 6px; padding: 7px 6px 7px 8px;
-  border-bottom: 1px solid var(--line); cursor: pointer; min-height: 46px;
+  display: flex; align-items: stretch; gap: 6px; padding: 4px 5px 4px 8px;
+  border-bottom: 1px solid var(--line); cursor: pointer; min-height: 48px;
 }
+.trk .dot, .trk .nm { align-self: center; }
 .trk .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--c); }
 .trk .nm { font-size: 11px; font-weight: 600; letter-spacing: .06em; flex: 1; }
 .trk.sel { background: #1f2a31; box-shadow: inset 3px 0 0 var(--c); }
 .trk.muted .nm, .trk.muted .dot { opacity: .3; }
 .trk .m {
-  font-size: 10px; font-weight: 700; color: var(--dim); background: transparent;
-  border: 1px solid var(--line); border-radius: 5px; width: 26px; height: 26px;
-  display: grid; place-items: center; flex: none; padding: 0; min-height: 0; cursor: pointer;
+  /* Am Handy muss man das treffen koennen: volle Zeilenhoehe, nicht 26 Pixel. */
+  font-size: 11px; font-weight: 700; color: var(--dim); background: #19222800;
+  border: 1px solid var(--line); border-radius: 5px; width: 30px; min-height: 40px;
+  align-self: stretch; display: grid; place-items: center; flex: none; padding: 0;
+  cursor: pointer; touch-action: manipulation;
 }
 .trk.muted .m { background: var(--lock); color: #230a17; border-color: var(--lock); opacity: 1; }
 
@@ -236,6 +243,7 @@ textarea {
       <button class="tiny" id="bpmUp" aria-label="Tempo hoch">+</button>
     </div>
     <span class="klang" id="klang" title="Klang-Kern"><i></i>KLANG</span>
+    <span class="meter" title="Ausgangspegel"><b id="meterFill"></b></span>
     <button class="tiny" id="smpBtn">SMP</button>
     <button class="tiny" id="docBtn">DOK</button>
   </header>
@@ -335,6 +343,7 @@ let ctx = null, node = null;  // der Kern im Audio-Faden
 let sel = 0, lockStep = -1, playing = false;
 let posSteps = new Array(8).fill(-1);
 let patNextView = -1;          // was der Klang-Kern in der Warteschlange hat
+let meterPeak = 0;
 const P = [];                 // Parametertabelle, aus dem Kern gelesen
 const el = id => document.getElementById(id);
 const machOf = t => X.scGet(t, P.find(p => p.id === 'trk.machine').slot);
@@ -398,6 +407,12 @@ async function audioOn() {
     if (e.data.type === 'pos') {
       posSteps = e.data.steps;
       patNextView = e.data.next;
+      // Der Spitzenwert wird kurz gehalten, sonst zeigt die Anzeige fast immer null.
+      const pk = e.data.peak || 0;
+      meterPeak = pk > meterPeak ? pk : meterPeak * 0.82;
+      const f = el('meterFill');
+      f.style.width = Math.min(100, Math.round(meterPeak * 110)) + '%';
+      f.classList.toggle('laut', meterPeak > 0.85);
       // Der Klang hat gewechselt - das Modell zieht nach, damit man das Richtige bearbeitet.
       if (e.data.pat !== X.scPattern()) {
         X.scSetPattern(e.data.pat);
@@ -427,6 +442,9 @@ async function audioOn() {
   node.connect(ctx.destination);
   // Was vor dem ersten PLAY eingestellt wurde, kennt der Audio-Faden noch nicht - nachreichen.
   node.port.postMessage({fn: 'scSetPattern', args: [X.scPattern()]});
+  for (let t = 0; t < X.scNTracks(); t++)
+    node.port.postMessage({fn: 'scMute', args: [t, X.scIsMute(t)]});
+  node.port.postMessage({fn: 'scSetMorph', args: [X.scGetMorph()]});
   for (let i = 0; i < X.scSmpSlots(); i++) smpSendToAudio(i);
 }
 
@@ -441,11 +459,19 @@ function buildRail() {
     d.innerHTML = `<span class="dot"></span><span class="nm">SPUR ${t + 1}</span>
                    <button class="m" aria-label="Spur ${t + 1} stumm">M</button>`;
     const m = d.querySelector('.m');
-    m.addEventListener('pointerdown', ev => {
-      ev.stopPropagation(); ev.preventDefault();          // nicht die Spur mitwaehlen
+    // Zwei Wege auf denselben Knopf: faellt der eine aus (schnelle Tipps hintereinander
+    // verschluckt der Browser den Zeiger-Druck), greift der andere. Die Sperre verhindert,
+    // dass beide zusammen zweimal schalten - unterm Strich: ein Druck, eine Wirkung.
+    let zuletzt = 0;
+    const schalten = ev => {
+      ev.stopPropagation();
+      const jetzt = Date.now();
+      if (jetzt - zuletzt < 150) return;
+      zuletzt = jetzt;
       cmd('scMute', t, X.scIsMute(t) ? 0 : 1);
-    });
-    m.addEventListener('click', ev => ev.stopPropagation());
+    };
+    m.addEventListener('pointerdown', ev => { ev.preventDefault(); schalten(ev); });
+    m.addEventListener('click', schalten);
     d.addEventListener('click', () => { sel = t; lockStep = -1; buildPads(); buildParams(); });
     r.appendChild(d);
   }

@@ -59,6 +59,16 @@ Drei Entscheidungen, die den Rest tragen:
   Das war zuerst falsch: der Schnappschuss fror alles ein, und ein gedrehter Filterregler
   blieb am klingenden Ton wirkungslos.
 
+## Die Oberfläche wird im Browser geprüft
+
+`tests/browser.js` (`make uitest`) startet einen echten Browser und bedient die Seite wie ein
+Finger: tippen, halten, ziehen. Gemessen wird dabei am **Ergebnis** — am Pegel, den der
+Audio-Kern meldet, nicht an der Anzeige. Nur so fällt auf, wenn die Anzeige stimmt und der Klang
+nicht.
+
+Dafür gibt es in der Kopfzeile eine **Pegelanzeige**. Sie ist nicht Zierde: sie war das
+Messgerät, mit dem sich „Mute geht nicht" überhaupt beantworten ließ.
+
 ## Pattern wechseln
 
 Gewählt wird sofort, **gewechselt wird im Takt** — alles andere klingt wie ein Versehen. Der
@@ -75,6 +85,14 @@ In der Oberfläche steht die Pattern-Reihe über den Steps: antippen wählt (das
 grün), lange drücken öffnet *kopieren* und *leeren*. **Die Anzeige folgt dem Klang**, nicht
 umgekehrt: während es läuft, entscheidet der Audio-Kern, wann gewechselt wird, und das Modell
 zieht nach — sonst würde man schon das neue Pattern bearbeiten, während das alte noch spielt.
+
+### Was beim Start mitgehen muss
+
+Der Audio-Kern entsteht erst beim ersten **PLAY**. Alles, was vorher eingestellt wurde, kennt er
+nicht — und das ist dreimal schiefgegangen, bevor es eine feste Regel wurde: erst bei den
+**Samples**, dann beim **Pattern**, dann bei den **Mutes**. Seitdem schickt `audioOn()` den
+ganzen Zustand nach: Pattern, Mutes, Morph und jedes geladene Sample. Ein Browser-Test schaltet
+deshalb absichtlich **vor** dem Start stumm und misst danach den Pegel.
 
 ## Der Sampler
 

@@ -7,6 +7,7 @@ class SynthCityNode extends AudioWorkletProcessor {
     this.lastPost = 0;
     this.pending = [];        // Befehle, die vor dem Fertigwerden ankommen, gehen nicht verloren
     this.recSlot = -1;
+    this.peak = 0;
     WebAssembly.instantiate(opts.processorOptions.bytes, {}).then(res => {
       const inst = res.instance || res;
       this.x = inst.exports;
@@ -72,10 +73,19 @@ class SynthCityNode extends AudioWorkletProcessor {
     if (!this.ready) { L.fill(0); R.fill(0); return true; }
     this.x.scRender(this.buf, n);
     const f = new Float32Array(this.x.memory.buffer, this.buf, n * 2);
-    for (let i = 0; i < n; i++) { L[i] = f[i * 2]; R[i] = f[i * 2 + 1]; }
+    let peak = 0;
+    for (let i = 0; i < n; i++) {
+      L[i] = f[i * 2]; R[i] = f[i * 2 + 1];
+      const a = Math.abs(L[i]) > Math.abs(R[i]) ? Math.abs(L[i]) : Math.abs(R[i]);
+      if (a > peak) peak = a;
+    }
+    // Gemeldet wird das Maximum SEIT DER LETZTEN MELDUNG - ein Spitzenwert, der zwischen
+    // zwei Meldungen abfaellt, zeigt sonst fast immer null.
+    if (peak > this.peak) this.peak = peak;
     if (this.recSlot >= 0 && !this.x.scRecOn()) {       // die Aufnahme ist gerade fertig
       const slot = this.recSlot;
       this.recSlot = -1;
+    this.peak = 0;
       const frames = this.x.scSmpFrames(slot), ch = this.x.scSmpCh(slot);
       const data = new Float32Array(this.x.memory.buffer, this.x.scSmpData(slot),
                                     frames * ch).slice();
@@ -85,7 +95,9 @@ class SynthCityNode extends AudioWorkletProcessor {
       this.lastPost = currentTime;
       const steps = [];
       for (let t = 0; t < 8; t++) steps.push(this.x.scPlayStep(t));
-      this.port.postMessage({type: 'pos', steps, pat: this.x.scPattern(), next: this.x.scPatNext()});
+      this.port.postMessage({type: 'pos', steps, peak: this.peak,
+                             pat: this.x.scPattern(), next: this.x.scPatNext()});
+      this.peak = 0;
     }
     return true;
   }
