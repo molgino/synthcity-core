@@ -32,29 +32,40 @@ const grp = n => console.log('- ' + n);
   grp('Parametertabelle kommt heruber');
   chk(x.scNParams() > 20, 'zu wenige Parameter');
   chk(str(x.scParamName(idxOf('trk.flt.freq'))) === 'FREQ', 'Name von trk.flt.freq falsch');
-  chk(str(x.scParamText(idxOf('trk.vol'), 100)).includes('dB'), 'VOL nicht in dB');
-  chk(str(x.scParamText(idxOf('trk.note'), 69)) === 'A4', 'Note 69 ist nicht A4');
-  chk(str(x.scParamText(idxOf('trk.flt.freq'), 127)).includes('kHz'), 'FREQ nicht in kHz');
-  chk(str(x.scParamText(idxOf('trk.amp.dec'), 71)).includes('ms'), 'DEC nicht in ms');
+  chk(str(x.scParamText(idxOf('trk.vol'), 100, -1)).includes('dB'), 'VOL nicht in dB');
+  chk(str(x.scParamText(idxOf('trk.note'), 69, -1)) === 'A4', 'Note 69 ist nicht A4');
+  chk(str(x.scParamText(idxOf('trk.flt.freq'), 127, -1)).includes('kHz'), 'FREQ nicht in kHz');
+  chk(str(x.scParamText(idxOf('trk.amp.dec'), 71, -1)).includes('ms'), 'DEC nicht in ms');
 
   grp('Die eigene Mathematik rechnet richtig');
   // pTime(71) soll rund 0,17 s sein, pFreq(127) rund 18 kHz - wie im nativen Bau.
-  const ms = parseFloat(str(x.scParamText(idxOf('trk.amp.dec'), 71)));
+  const ms = parseFloat(str(x.scParamText(idxOf('trk.amp.dec'), 71, -1)));
   chk(ms > 150 && ms < 200, 'DEC bei 71 ist nicht rund 170 ms (' + ms + ')');
-  const khz = parseFloat(str(x.scParamText(idxOf('trk.flt.freq'), 127)));
+  const khz = parseFloat(str(x.scParamText(idxOf('trk.flt.freq'), 127, -1)));
   chk(khz > 17 && khz < 19, 'FREQ bei 127 ist nicht rund 18 kHz (' + khz + ')');
-  chk(str(x.scParamText(idxOf('trk.vol'), 100)).startsWith('0.0'), 'VOL 100 ist nicht 0 dB');
+  chk(str(x.scParamText(idxOf('trk.vol'), 100, -1)).startsWith('0.0'), 'VOL 100 ist nicht 0 dB');
   // Das eigene snprintf muss dasselbe schreiben wie das der Linux-Bibliothek - Vorzeichen eingeschlossen.
-  chk(str(x.scParamText(idxOf('trk.micro'), 24)) === '+0.00 Steps', 'MTIM zeigt kein Pluszeichen');
-  chk(str(x.scParamText(idxOf('trk.micro'), 12)) === '-0.50 Steps', 'MTIM nach vorn falsch');
-  chk(str(x.scParamText(idxOf('trk.len'), 6)) === '0.50 Steps', 'LEN halber Step falsch');
+  chk(str(x.scParamText(idxOf('trk.micro'), 24, -1)) === '+0.00 Steps', 'MTIM zeigt kein Pluszeichen');
+  chk(str(x.scParamText(idxOf('trk.micro'), 12, -1)) === '-0.50 Steps', 'MTIM nach vorn falsch');
+  chk(str(x.scParamText(idxOf('trk.len'), 6, -1)) === '0.50 Steps', 'LEN halber Step falsch');
 
   grp('Auswahlwerte heissen wie ihre Bedeutung, nicht wie ihr Index');
-  chk(str(x.scParamText(idxOf('trk.machine'), 0)) === 'POLY', 'ENGINE zeigt keinen Namen');
-  chk(str(x.scParamText(idxOf('trk.flt.type'), 0)) === 'TIEFPASS', 'Filtertyp zeigt keinen Namen');
-  chk(str(x.scParamText(idxOf('trk.cond'), 0)) === '--', 'COND 0 ist nicht leer');
+  chk(str(x.scParamText(idxOf('trk.machine'), 0, -1)) === 'POLY', 'ENGINE zeigt keinen Namen');
+  chk(str(x.scParamText(idxOf('trk.flt.type'), 0, -1)) === 'TIEFPASS', 'Filtertyp zeigt keinen Namen');
+  chk(str(x.scParamText(idxOf('trk.cond'), 0, -1)) === '--', 'COND 0 ist nicht leer');
   chk(x.scEnumCount(idxOf('trk.cond')) > 50, 'zu wenige Bedingungen zur Auswahl');
-  chk(x.scEnumCount(idxOf('trk.machine')) === 1, 'Machine-Liste falsch lang');
+  chk(x.scEnumCount(idxOf('trk.machine')) === 3, 'Machine-Liste falsch lang');
+  chk(str(x.scParamText(idxOf('trk.machine'), 1, -1)) === 'FM', 'Machine 1 heisst nicht FM');
+  chk(str(x.scParamText(idxOf('trk.machine'), 2, -1)) === 'DRUM', 'Machine 2 heisst nicht DRUM');
+  // Dieselbe Zahl heisst je Machine etwas anderes - das ist der Sinn des Machine-Prinzips.
+  chk(str(x.scParamText(idxOf('trk.src.a'), 24, 1)) === '2.00 : 1', 'FM zeigt kein Verhaeltnis');
+  chk(str(x.scParamText(idxOf('trk.src.a'), 64, 0)) === '+0.00 Halbt.', 'POLY zeigt kein Detune');
+  chk(str(x.scParamText(idxOf('trk.src.a'), 64, -1)) === '+0', 'ohne Machine fehlt die nackte Zahl');
+  chk(str(x.scParamText(idxOf('trk.src.a'), 64, 2)).includes('Halbt.'), 'DRUM zeigt keinen Sweep');
+  chk(str(x.scMachLabel(0, 0)) === 'DTUN' && str(x.scMachLabel(1, 0)) === 'RATIO'
+      && str(x.scMachLabel(2, 0)) === 'SWEEP', 'Reglernamen je Machine falsch');
+  chk(str(x.scParamText(idxOf('fx.a.div'), 4, -1)) === '1/8', 'Echo-Zeit zeigt keinen Notenwert');
+  chk(x.scEnumCount(idxOf('fx.a.div')) === 9, 'Echo-Zeiten falsch viele');
   chk(x.scEnumCount(idxOf('trk.vol')) === 0, 'ein stufenloser Regler bekommt eine Liste');
   {
     const ci = idxOf('trk.cond');

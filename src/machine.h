@@ -17,6 +17,11 @@ struct Machine {
     virtual const char* name()   const = 0;
     virtual const char* labelA() const = 0;      // Anzeige fuer trk.src.a
     virtual const char* labelB() const = 0;      // Anzeige fuer trk.src.b
+    // Wie der Wert heisst, weiss nur die Machine: 64 ist bei der einen "kein Detune",
+    // bei der anderen "Verhaeltnis 2:1". Vorgabe ist die nackte Zahl.
+    virtual void text(int which, float v, char* out, int n) const {
+        (void)which; snprintf(out, n, "%.0f", (double)v);
+    }
     virtual void  start(MState& m, float hz, float vel, const float* p, float sr) const = 0;
     // Fuellt n Samples (n <= MACH_CHUNK). Ein Aufruf je Teilblock, nicht je Sample.
     virtual void  render(MState& m, const float* p, float hz, float* buf, int n, float sr) const = 0;
@@ -30,6 +35,10 @@ struct MachPoly : Machine {
     const char* name()   const override { return "POLY"; }
     const char* labelA() const override { return "DTUN"; }
     const char* labelB() const override { return "SHAPE"; }
+    void text(int which, float v, char* out, int n) const override {
+        if (which == 0) snprintf(out, n, "%+.2f Halbt.", (double)(pBip(v) * 0.25f));
+        else            snprintf(out, n, "%.0f %%", (double)(v * 100.0f / 127.0f));
+    }
 
     static int slotA() { static const int s = paramSlot(paramFind("trk.src.a")); return s; }
     static int slotB() { static const int s = paramSlot(paramFind("trk.src.b")); return s; }
@@ -58,12 +67,101 @@ struct MachPoly : Machine {
     }
 };
 
+// --- FM: zwei Operatoren, Phasenmodulation ----------------------------------------------------
+// Phasenmodulation statt echter Frequenzmodulation - die Tonhoehe bleibt dabei stehen.
+// Ganzzahlige Verhaeltnisse klingen harmonisch, krumme glockig und metallisch.
+struct MachFm : Machine {
+    struct St { Osc car, mod; float z; };
+    static_assert(sizeof(St) <= MACH_STATE, "Zustand passt nicht in den Block");
+    static const float* ratios() {
+        static const float r[16] = {0.5f, 1.0f, 1.5f, 2.0f, 2.5f, 3.0f, 3.5f, 4.0f,
+                                    5.0f, 6.0f, 7.0f, 8.0f, 1.41f, 2.73f, 5.19f, 9.42f};
+        return r;
+    }
+    static int ratioIdx(float v) { int i = (int)(v * 16.0f / 128.0f); return i < 0 ? 0 : (i > 15 ? 15 : i); }
+
+    const char* name()   const override { return "FM"; }
+    const char* labelA() const override { return "RATIO"; }
+    const char* labelB() const override { return "INDEX"; }
+    void text(int which, float v, char* out, int n) const override {
+        if (which == 0) {
+            float r = ratios()[ratioIdx(v)];
+            snprintf(out, n, "%.2f : 1", (double)r);
+        } else snprintf(out, n, "%.0f %%", (double)(v * 100.0f / 127.0f));
+    }
+    static int slotA() { static const int s = paramSlot(paramFind("trk.src.a")); return s; }
+    static int slotB() { static const int s = paramSlot(paramFind("trk.src.b")); return s; }
+
+    void start(MState& m, float hz, float vel, const float* p, float sr) const override {
+        St& s = m.as<St>();
+        s.car.reset(0.0f); s.mod.reset(0.0f); s.z = 0.0f;
+        (void)hz; (void)vel; (void)p; (void)sr;
+    }
+    void render(MState& m, const float* p, float hz, float* buf, int n, float sr) const override {
+        St& s = m.as<St>();
+        float r = ratios()[ratioIdx(p[slotA()])];
+        float idx = pUni(p[slotB()]) * 8.0f;
+        s.car.setHz(hz, sr);
+        s.mod.setHz(hz * r, sr);
+        for (int i = 0; i < n; i++) {
+            float mo = s.mod.sine();
+            float ph = s.car.ph + idx * mo * 0.15f;
+            ph -= (float)(int)ph;
+            if (ph < 0.0f) ph += 1.0f;
+            buf[i] = sinf(6.2831853f * ph);
+            s.car.advance(); s.mod.advance();
+        }
+    }
+};
+
+// --- DRUM: Sinus mit fallender Tonhoehe plus Rauschen ------------------------------------------
+// Das Grundrezept jeder Drum-Maschine: ein schneller Tonhoehenfall macht den Anschlag,
+// Rauschen macht Snare und Hi-Hat. Die Huellkurve kommt wie ueberall von der Spur.
+struct MachDrum : Machine {
+    struct St { Osc osc; float env; uint32_t rng; };
+    static_assert(sizeof(St) <= MACH_STATE, "Zustand passt nicht in den Block");
+
+    const char* name()   const override { return "DRUM"; }
+    const char* labelA() const override { return "SWEEP"; }
+    const char* labelB() const override { return "RAUSCH"; }
+    void text(int which, float v, char* out, int n) const override {
+        if (which == 0) snprintf(out, n, "%.0f Halbt.", (double)(pUni(v) * 48.0f));
+        else            snprintf(out, n, "%.0f %%", (double)(v * 100.0f / 127.0f));
+    }
+    static int slotA() { static const int s = paramSlot(paramFind("trk.src.a")); return s; }
+    static int slotB() { static const int s = paramSlot(paramFind("trk.src.b")); return s; }
+
+    void start(MState& m, float hz, float vel, const float* p, float sr) const override {
+        St& s = m.as<St>();
+        s.osc.reset(0.0f);
+        s.env = 1.0f;
+        s.rng = 0x1234567u + (uint32_t)(hz * 7.0f);
+        (void)vel; (void)p; (void)sr;
+    }
+    void render(MState& m, const float* p, float hz, float* buf, int n, float sr) const override {
+        St& s = m.as<St>();
+        float sweep = pUni(p[slotA()]) * 48.0f;        // Halbtoene nach oben beim Anschlag
+        float mix = pUni(p[slotB()]);
+        float c = expf(-1.0f / (0.035f * sr));         // Fall in rund 35 ms
+        for (int i = 0; i < n; i++) {
+            s.env *= c;
+            s.osc.setHz(hz * exp2f(sweep * s.env / 12.0f), sr);
+            s.rng ^= s.rng << 13; s.rng ^= s.rng >> 17; s.rng ^= s.rng << 5;
+            float nz = (float)(int32_t)s.rng * (1.0f / 2147483648.0f);
+            buf[i] = (1.0f - mix) * s.osc.sine() + mix * nz * 0.7f;
+            s.osc.advance();
+        }
+    }
+};
+
 // Register aller Machines. trk.machine ist der Index hier - die Reihenfolge darf nie wechseln.
 inline const Machine* machineAt(int i) {
     static const MachPoly poly;
-    static const Machine* const all[] = { &poly };
+    static const MachFm   fm;
+    static const MachDrum drum;
+    static const Machine* const all[] = { &poly, &fm, &drum };
     enum { N = (int)(sizeof all / sizeof *all) };
     if (i < 0 || i >= N) i = 0;
     return all[i];
 }
-inline int machineCount() { return 1; }
+inline int machineCount() { return 3; }

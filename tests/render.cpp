@@ -275,6 +275,96 @@ int main() {
         chk(rms(b, N) > 0.01f, "das Fenster wiederholt sich hoerbar");
     }
 
+    grp("Zweite und dritte Machine");
+    {
+        const int N = 24000;
+        static float a[24000 * 2], b[24000 * 2];
+        // FM: Verhaeltnis 2:1 - der Grundton bleibt stehen, es kommen Obertoene dazu
+        e.prepare(48000.0f); setupBeat(e, 45);
+        Track& t = e.P.pat[0].t[0];
+        t.p[SL("trk.machine")] = 1;
+        t.p[SL("trk.src.a")] = 24;                  // Verhaeltnis 2.00 : 1
+        t.p[SL("trk.src.b")] = 0;                   // noch ohne Modulation
+        t.p[SL("trk.flt.freq")] = 127; t.p[SL("trk.amp.sus")] = 100;
+        t.p[SL("trk.amp.dec")] = 127; t.p[SL("trk.len")] = 127;
+        e.start(); e.render(a, N);
+        chk(bin(a, N, 110.0f, 48000.0f) > bin(a, N, 220.0f, 48000.0f) * 4.0f,
+            "FM ohne Index ist kein reiner Grundton");
+        e.prepare(48000.0f); setupBeat(e, 45);
+        Track& t2 = e.P.pat[0].t[0];
+        t2.p[SL("trk.machine")] = 1;
+        t2.p[SL("trk.src.a")] = 24; t2.p[SL("trk.src.b")] = 110;   // viel Modulation
+        t2.p[SL("trk.flt.freq")] = 127; t2.p[SL("trk.amp.sus")] = 100;
+        t2.p[SL("trk.amp.dec")] = 127; t2.p[SL("trk.len")] = 127;
+        e.start(); e.render(b, N);
+        chk(bin(b, N, 330.0f, 48000.0f) > bin(a, N, 330.0f, 48000.0f) * 5.0f,
+            "der Index bringt keine Obertoene");
+
+        // DRUM: die Tonhoehe faellt - genau das macht den Anschlag
+        e.prepare(48000.0f); setupBeat(e, 33);
+        Track& d = e.P.pat[0].t[0];
+        d.p[SL("trk.machine")] = 2;
+        d.p[SL("trk.src.a")] = 100;                 // kraeftiger Sweep
+        d.p[SL("trk.src.b")] = 0;                   // kein Rauschen
+        d.p[SL("trk.flt.freq")] = 127; d.p[SL("trk.amp.dec")] = 70;
+        e.start(); e.render(a, N);
+        float frueh = 0, spaet = 0;
+        for (int k = 200; k < 2000; k++) frueh += fabsf(a[k * 2]);
+        for (int k = 3000; k < 4800; k++) spaet += fabsf(a[k * 2]);
+        chk(bin(a, 600, 400.0f, 48000.0f) > bin(a + 3000 * 2, 600, 400.0f, 48000.0f) * 2.0f,
+            "die Tonhoehe faellt nicht");
+        chk(frueh > 0.0f && spaet > 0.0f, "der Schlag klingt nicht");
+
+        // Rauschen statt Ton
+        e.prepare(48000.0f); setupBeat(e, 69);
+        Track& h = e.P.pat[0].t[0];
+        h.p[SL("trk.machine")] = 2;
+        h.p[SL("trk.src.a")] = 0; h.p[SL("trk.src.b")] = 127;
+        h.p[SL("trk.flt.freq")] = 127; h.p[SL("trk.amp.dec")] = 20;
+        e.start(); e.render(b, N);
+        float breit = bin(b, 2000, 3000.0f, 48000.0f), schmal = bin(b, 2000, 440.0f, 48000.0f);
+        chk(breit > schmal * 0.2f, "Rauschen hat keine Hoehen");
+        chk(sane(b, N * 2), "DRUM laeuft aus dem Ruder");
+    }
+
+    grp("Sende-Effekte");
+    {
+        const int N = 72000;                        // anderthalb Sekunden
+        static float trocken[72000 * 2], nass[72000 * 2];
+        for (int k = 0; k < 2; k++) {
+            e.prepare(48000.0f);
+            projectInit(e.P); e.P.pat[0].used = 1;
+            Track& t = e.P.pat[0].t[0];
+            t.len = 16; t.speed = 4;
+            t.p[SL("trk.note")] = 57; t.p[SL("trk.amp.dec")] = 40;
+            t.s[0].on = 1;                          // ein einziger Anschlag
+            if (k == 1) t.p[SL("trk.send.a")] = 110;
+            e.P.g[SL("fx.a.div")] = 4;              // 1/8 = 0,25 s bei 120 bpm
+            e.P.g[SL("fx.a.fb")] = 90;
+            e.start(); e.render(k == 0 ? trocken : nass, N);
+        }
+        // Nach einer halben Sekunde ist der Ton laengst vorbei - nur das Echo kann klingen.
+        float spaetTrocken = rms(trocken + 30000 * 2, 8000);
+        float spaetNass    = rms(nass + 30000 * 2, 8000);
+        chk(spaetTrocken < 0.0005f, "ohne Sende klingt es nach dem Ton weiter");
+        chk(spaetNass > spaetTrocken * 20.0f, "das Echo kommt nicht");
+        chk(sane(nass, N * 2), "das Echo laeuft aus dem Ruder");
+
+        static float hall[72000 * 2];
+        e.prepare(48000.0f);
+        projectInit(e.P); e.P.pat[0].used = 1;
+        Track& t = e.P.pat[0].t[0];
+        t.len = 16; t.speed = 4;
+        t.p[SL("trk.note")] = 57; t.p[SL("trk.amp.dec")] = 40;
+        t.p[SL("trk.send.b")] = 110;
+        t.s[0].on = 1;
+        e.P.g[SL("fx.b.dec")] = 120;
+        e.start(); e.render(hall, N);
+        chk(rms(hall + 20000 * 2, 4000) > 0.001f, "der Hall hat keine Fahne");
+        chk(rms(hall + 20000 * 2, 4000) < rms(hall, 4000), "die Fahne wird nicht leiser");
+        chk(sane(hall, N * 2), "der Hall laeuft aus dem Ruder");
+    }
+
     grp("Referenz-Aufnahme");
     {
         const int N = 96000;                         // zwei Sekunden

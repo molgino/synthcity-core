@@ -5,7 +5,7 @@ Konzept: `../r36-groovebox/docs/konzept-neu.md`.
 
 Kein Framework, keine Abhängigkeiten, keine STL-Container im Kern — C++17 und fertig.
 
-## Stand: Meilenstein 5 — die Oberfläche
+## Stand: Meilenstein 6 — drei Machines und zwei Effekt-Busse
 
 | Baustein | Datei | Zustand |
 | --- | --- | --- |
@@ -15,12 +15,13 @@ Kein Framework, keine Abhängigkeiten, keine STL-Container im Kern — C++17 und
 | Scheduler in Samples, Conditions, Micro-Timing, Ratchets | `src/seq.h` | steht |
 | Lock-freie Befehls-Queue (Oberfläche → Audio) | `src/queue.h` | steht |
 | DSP-Bausteine: PolyBLEP, TPT-Filter, Hüllkurve, Skalen | `src/dsp.h` | steht |
-| Machines (austauschbare Klangquelle), erste: `POLY` | `src/machine.h` | steht |
+| Machines: `POLY`, `FM`, `DRUM` — austauschbar hinter denselben Reglern | `src/machine.h` | steht |
+| Sende-Effekte: Delay im Takt, Hall (FDN) | `src/fx.h` | steht |
 | Stimmen, Filter, Hüllkurve, Panorama, Summe | `src/engine.h` | steht |
 | Slides als Rampen, Scenes + Morph, Mute, Step-Loop | `src/engine.h`, `src/model.h` | steht |
 | CLAP-Plugin (Parameter, Zustand, Noten, Transport) | `plugin/clap_plugin.cpp` | steht |
 | Oberfläche (WebAssembly + Touch), baut sich aus der Tabelle | `web/` | steht |
-| Effekte, Sends, Sampler | — | später |
+| Sampler, Song-Modus, Gerät | — | später |
 
 ```
 make test        # 60 + 25 + 73 + 19 Prüfungen
@@ -50,6 +51,29 @@ Drei Entscheidungen, die den Rest tragen:
   „jedes Sample neu“ rund 65 % mehr Luft, ohne hörbaren Unterschied.
 - **Der P-Lock-Schnappschuss wird beim Anschlag genommen.** Die Stimme trägt ihre eigenen Werte
   mit sich; was danach am Regler passiert, ändert sie nicht mehr — genau wie bei der Hardware.
+
+## Machines und Effekte
+
+**Drei Machines hinter denselben zwei Reglern** — das Elektron-Prinzip. Dieselbe Zahl heißt je
+Machine etwas anderes, und *die Machine sagt, was sie heißt*:
+
+| Machine | Regler A | Regler B | Wert 64 zeigt |
+| --- | --- | --- | --- |
+| `POLY` | DTUN | SHAPE | `+0.00 Halbt.` |
+| `FM` | RATIO | INDEX | `5.00 : 1` |
+| `DRUM` | SWEEP | RAUSCH | `24 Halbt.` |
+
+Die Parametertabelle nennt die beiden nur noch `QUELLE A` und `QUELLE B`; den echten Namen
+liefert `Machine::labelA/labelB`, den Anzeigetext `Machine::text`. Damit stimmt die Beschriftung
+automatisch in allen drei Hüllen — Oberfläche, Plugin, später das Gerät.
+
+**Zwei Sende-Busse statt Effekten je Spur**: Hall kostet acht Spuren einmal, nicht achtmal — der
+Grund, warum Hardware es genauso macht. Bus A ist ein Delay, dessen Zeit ein **Notenwert** ist
+(1/32 bis 1/1, am Tempo), mit kreuzweiser Rückkopplung; Bus B ein Hall als Feedback-Delay-Netzwerk
+(vier Leitungen, Householder-Matrix, Dämpfung je Leitung). Der Sende-Anteil gehört zur **Stimme** —
+ein P-Lock auf `S.A` schickt wirklich nur diesen einen Anschlag ins Echo.
+
+Die Referenz-Aufnahme blieb dabei **unverändert**: mit Sends auf null klingt nichts anders.
 
 ## Die Oberfläche
 
@@ -165,13 +189,13 @@ läuft dabei ungerührt weiter.
 - **Referenz-Aufnahme**: zwei Sekunden eines Patterns werden gegen `tests/ref/pattern.wav`
   verglichen — jede ungewollte Klangänderung fällt auf.
 
-Last (x86, ein Kern): 1400× Echtzeit mit einer Spur, 36× im schlimmsten Fall mit allen
-32 Stimmen und 32stel-Noten auf acht Spuren.
+Last (x86, ein Kern): 620× Echtzeit mit einer Spur, 35× im schlimmsten Fall mit allen
+32 Stimmen und 32stel-Noten auf acht Spuren — die Effekte laufen dabei mit.
 
 ## Als Nächstes
 
-6. Gerät: R36S-Build, Sampler, Dateien.
-7. Effekte und Sends, zweite Machine, Sampler im Kern.
+7. Sampler im Kern (Machine `SMPL`), Song-Modus.
+8. Gerät: R36S-Build, Dateien, Gamepad-Bedienung.
 
 Offen aus Meilenstein 2: das DSP ist **neu geschrieben**, nicht aus SYNTH CITY portiert — ein
 Bit-Vergleich gegen den alten Render steht deshalb aus. Die Referenz-WAV sichert ab jetzt den

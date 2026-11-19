@@ -5,6 +5,7 @@
 #include "param.h"
 #include "dsp.h"
 #include "machine.h"
+#include "fx.h"
 #include "seq.h"
 #include <stdio.h>
 
@@ -46,6 +47,7 @@ inline const char* fltTypeName(int v) {
 // Die Liste steht dort, wo auch die Bedeutung steht - die Oberflaeche kennt die Zahlen nicht.
 inline int enumCount(const ParamDef& d) {
     if (!strcmp(d.id, "trk.machine"))  return machineCount();
+    if (!strcmp(d.id, "fx.a.div"))     return DELAY_DIV_N;
     if (!strcmp(d.id, "trk.flt.type")) return FLT_N;
     if (d.kind == PK_COND)             return 9 + 19 + 34;
     if (d.kind == PK_ONOFF)            return 2;
@@ -76,7 +78,18 @@ inline int enumValue(const ParamDef& d, int i) {
     return CND_NONE;
 }
 
-inline void paramText(const ParamDef& d, float v, char* out, int n) {
+// mach: welche Machine die Spur gerade benutzt. Nur sie weiss, was ihre beiden eigenen
+// Regler bedeuten - 64 heisst bei POLY "kein Detune" und bei FM "Verhaeltnis 2.5 : 1".
+inline void paramText(const ParamDef& d, float v, char* out, int n, int mach = -1) {
+    if (mach >= 0) {
+        if (!strcmp(d.id, "trk.src.a")) { machineAt(mach)->text(0, v, out, n); return; }
+        if (!strcmp(d.id, "trk.src.b")) { machineAt(mach)->text(1, v, out, n); return; }
+    }
+    if (!strcmp(d.id, "fx.a.div")) {
+        int i = (int)(v + 0.5f);
+        snprintf(out, n, "%s", DELAY_DIV[i < 0 ? 0 : (i >= DELAY_DIV_N ? DELAY_DIV_N - 1 : i)].name);
+        return;
+    }
     // Werte, deren Einheit nur aus ihrer Bedeutung folgt, stehen vor der allgemeinen Regel.
     if (!strcmp(d.id, "trk.len")) {          // Zwoelftel eines Steps: 12 = ein ganzer Step
         snprintf(out, n, "%.2f Steps", (double)v / 12.0);

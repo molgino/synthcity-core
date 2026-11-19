@@ -3,6 +3,7 @@
 // ab - deshalb erscheint ein neuer Regler von selbst, ohne eine Zeile JavaScript.
 #include "../src/engine.h"
 #include "../src/text.h"
+#include "../src/demo.h"
 #include <string.h>
 
 static Engine  gEng;
@@ -34,11 +35,17 @@ int scEnumCount(int i) { return (i >= 0 && i < NPARAMS) ? enumCount(PARAMS[i]) :
 int scEnumValue(int i, int k) { return (i >= 0 && i < NPARAMS) ? enumValue(PARAMS[i], k) : 0; }
 const char* scEnumGroup(int i, int k) { return (i >= 0 && i < NPARAMS) ? enumGroup(PARAMS[i], k) : ""; }
 
-const char* scParamText(int i, float v) {
+// mach: die Machine der gemeinten Spur, oder -1. Sie bestimmt, was ihre beiden Regler heissen.
+const char* scParamText(int i, float v, int mach) {
     if (i < 0 || i >= NPARAMS) return "";
-    paramText(PARAMS[i], v, gBuf, sizeof gBuf);
+    paramText(PARAMS[i], v, gBuf, sizeof gBuf, mach);
     return gBuf;
 }
+const char* scMachName(int m)  { return machineAt(m)->name(); }
+const char* scMachLabel(int m, int which) {
+    return which ? machineAt(m)->labelB() : machineAt(m)->labelA();
+}
+int scMachCount() { return machineCount(); }
 
 // --- Werte ------------------------------------------------------------------------------------
 int  scGet(int track, int slot) {
@@ -152,42 +159,8 @@ void scLoad(const char* text) {
     gEng.resetTrackValues();
 }
 
-// --- Ein Pattern zum Anfangen -------------------------------------------------------------------
-void scDemo() {
-    projectInit(gEng.P);
-    gEng.P.g[paramSlot(paramFind("bpm"))] = 124;
-    gEng.seq.bpm = 124;
-    gEng.P.pat[0].used = 1;
-    const int note = paramSlot(paramFind("trk.note")),  freq = paramSlot(paramFind("trk.flt.freq"));
-    const int env  = paramSlot(paramFind("trk.flt.env")), dec = paramSlot(paramFind("trk.amp.dec"));
-    const int reso = paramSlot(paramFind("trk.flt.reso")), vol = paramSlot(paramFind("trk.vol"));
-    const int pan  = paramSlot(paramFind("trk.pan")),    shape = paramSlot(paramFind("trk.src.b"));
-    const int len  = paramSlot(paramFind("trk.len")),    sus = paramSlot(paramFind("trk.amp.sus"));
-    const int atk  = paramSlot(paramFind("trk.amp.atk")), cond = paramSlot(paramFind("trk.cond"));
-
-    Track& b = gEng.P.pat[0].t[0];                       // Bass
-    b.p[note] = 33; b.p[freq] = 52; b.p[env] = 100; b.p[reso] = 60; b.p[dec] = 52; b.p[vol] = 108;
-    for (int s = 0; s < 16; s += 4) b.s[s].on = 1;
-    b.s[8].setLock(note, 45);
-    b.s[12].on = 1; b.s[12].setLock(note, 40, 1);        // gleitet hinauf
-
-    Track& p = gEng.P.pat[0].t[1];                       // Flaeche
-    p.speed = 2;
-    p.p[note] = 64; p.p[shape] = 20; p.p[atk] = 70; p.p[sus] = 92; p.p[len] = 90;
-    p.p[freq] = 72; p.p[vol] = 88; p.p[pan] = 48;
-    for (int s = 0; s < 16; s += 8) { p.s[s].on = 1; p.s[s].setLock(cond, (int16_t)condAB(2, 2, false)); }
-    p.s[8].setLock(note, 67);
-
-    Track& m = gEng.P.pat[0].t[2];                       // Melodie, 12 Steps gegen die Vier
-    m.len = 12;
-    m.p[note] = 76; m.p[shape] = 110; m.p[dec] = 28; m.p[freq] = 90; m.p[vol] = 84; m.p[pan] = 82;
-    const int ns[12] = {76, 0, 79, 0, 0, 83, 0, 76, 0, 0, 72, 0};
-    for (int s = 0; s < 12; s++) if (ns[s]) { m.s[s].on = 1; m.s[s].setLock(note, (int16_t)ns[s]); }
-
-    gEng.P.pat[0].sc[0][0].set(freq, 44);                // Scene A dumpf
-    gEng.P.pat[0].sc[1][0].set(freq, 86);                // Scene B offen
-    gEng.resetTrackValues();
-}
+// --- Ein Pattern zum Anfangen (steht in src/demo.h) -------------------------------------------
+void scDemo() { demoProject(gEng); }
 
 // Speicher fuer die Oberflaeche (Audio-Puffer, Text) - einmal angefordert, nie im Render.
 void* scAlloc(int bytes) { return malloc((size_t)bytes); }

@@ -290,6 +290,14 @@ let sel = 0, lockStep = -1, playing = false;
 let posSteps = new Array(8).fill(-1);
 const P = [];                 // Parametertabelle, aus dem Kern gelesen
 const el = id => document.getElementById(id);
+const machOf = t => X.scGet(t, P.find(p => p.id === 'trk.machine').slot);
+const ptext = (p, v) => str(X.scParamText(p.i, v, machOf(sel)));
+// Wie die beiden Quellregler heissen, sagt die Machine - nicht die Tabelle.
+const rowName = p => {
+  if (p.id === 'trk.src.a') return str(X.scMachLabel(machOf(sel), 0));
+  if (p.id === 'trk.src.b') return str(X.scMachLabel(machOf(sel), 1));
+  return p.name;
+};
 
 // --- Kern laden -------------------------------------------------------------------------------
 const str = p => {
@@ -434,7 +442,7 @@ function buildParams() {
     }
     const row = document.createElement('div');
     row.className = 'row' + (X.scEnumCount(p.i) ? ' pick' : '');
-    row.innerHTML = `<div class="nm">${p.name}<small>${p.id}</small></div>
+    row.innerHTML = `<div class="nm">${rowName(p)}<small>${p.id}</small></div>
                      <div style="display:flex;align-items:center"><span class="v"></span></div>
                      <div class="bar"></div>`;
     row.dataset.p = p.i;
@@ -463,7 +471,7 @@ function openPick(p) {
   const n = X.scEnumCount(p.i);
   if (!n) return;
   const cur = valueOf(p).v;
-  el('pickTitle').textContent = p.name + '  ' + p.id;
+  el('pickTitle').textContent = rowName(p) + '  ' + p.id;
   const list = el('pickList');
   list.innerHTML = '';
   let group = '';
@@ -480,7 +488,7 @@ function openPick(p) {
     }
     const b = document.createElement('button');
     b.className = v === cur ? 'cur' : '';
-    b.innerHTML = `<span class="n">${str(X.scParamText(p.i, v))}</span>`;
+    b.innerHTML = `<span class="n">${ptext(p, v)}</span>`;
     b.onclick = () => { writeValue(p, v); paint(); el('pick').close(); };
     list.appendChild(b);
     if (v === cur) setTimeout(() => b.scrollIntoView({block: 'center'}), 0);
@@ -539,7 +547,8 @@ function paint() {
     const p = P[+row.dataset.p];
     const {v, locked} = valueOf(p);
     row.classList.toggle('locked', locked);
-    row.querySelector('.v').textContent = str(X.scParamText(p.i, v));
+    row.querySelector('.v').textContent = ptext(p, v);
+    row.querySelector('.nm').firstChild.textContent = rowName(p);
     row.querySelector('.bar').style.width = ((v - p.lo) / (p.hi - p.lo) * 100) + '%';
     let x = row.querySelector('.x');
     if (locked && !x) {

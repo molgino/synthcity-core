@@ -31,6 +31,15 @@ static const ParamDef PARAMS[] = {
     {"bpm",          "TEMPO",  PS_GLOBAL, PK_NUM,    30, 300, 120, "BPM", 0},
     {"swing",        "SWING",  PS_GLOBAL, PK_NUM,    50,  80,  50, "%",   0},
     {"master.vol",   "SUMME",  PS_GLOBAL, PK_LEVEL,   0, 127, 100, "dB",  0},
+    // --- Sende-Effekte: einmal gerechnet fuer alle Spuren ---
+    {"fx.a.div",     "ECHO",   PS_GLOBAL, PK_ENUM,    0,   8,   4, "",    0},
+    {"fx.a.fb",      "E.FB",   PS_GLOBAL, PK_NUM,     0, 127,  60, "",    0},
+    {"fx.a.tone",    "E.TON",  PS_GLOBAL, PK_NUM,     0, 127,  70, "",    0},
+    {"fx.a.vol",     "E.SUM",  PS_GLOBAL, PK_LEVEL,   0, 127, 100, "dB",  0},
+    {"fx.b.size",    "HALL",   PS_GLOBAL, PK_NUM,     0, 127,  70, "",    0},
+    {"fx.b.dec",     "H.ZEIT", PS_GLOBAL, PK_NUM,     0, 127,  80, "",    0},
+    {"fx.b.damp",    "H.DMP",  PS_GLOBAL, PK_NUM,     0, 127,  60, "",    0},
+    {"fx.b.vol",     "H.SUM",  PS_GLOBAL, PK_LEVEL,   0, 127, 100, "dB",  0},
     // --- Spur: Anschlag ---
     {"trk.note",     "NOTE",   PS_TRACK,  PK_NOTE,    0, 127,  60, "",    PF_LOCK},
     {"trk.vel",      "VEL",    PS_TRACK,  PK_NUM,     0, 127, 100, "",    PF_LOCK},
@@ -41,8 +50,8 @@ static const ParamDef PARAMS[] = {
     {"trk.ratchet",  "RTRG",   PS_TRACK,  PK_NUM,     1,   8,   1, "",    PF_LOCK},
     // --- Spur: Quelle ---
     {"trk.machine",  "ENGINE", PS_TRACK,  PK_ENUM,    0,  15,   0, "",    0},
-    {"trk.src.a",    "TUNE",   PS_TRACK,  PK_BIP,     0, 127,  64, "",    PF_LOCK | PF_MOD},
-    {"trk.src.b",    "DECAY",  PS_TRACK,  PK_NUM,     0, 127,  64, "",    PF_LOCK | PF_MOD},
+    {"trk.src.a",    "QUELLE A", PS_TRACK, PK_BIP,    0, 127,  64, "",    PF_LOCK | PF_MOD},
+    {"trk.src.b",    "QUELLE B", PS_TRACK, PK_NUM,    0, 127,  64, "",    PF_LOCK | PF_MOD},
     // --- Spur: Filter ---
     {"trk.flt.freq", "FREQ",   PS_TRACK,  PK_NUM,     0, 127, 127, "Hz",  PF_LOCK | PF_MOD},
     {"trk.flt.reso", "RESO",   PS_TRACK,  PK_NUM,     0, 127,   0, "",    PF_LOCK | PF_MOD},

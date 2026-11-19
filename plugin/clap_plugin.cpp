@@ -121,14 +121,17 @@ static bool paGet(const clap_plugin_t* pl, clap_id id, double* out) {
     return true;
 }
 // Die Anzeige kommt aus derselben Tabelle wie die Oberflaeche - Einheit inklusive.
-static bool paText(const clap_plugin_t*, clap_id id, double v, char* out, uint32_t n) {
+static bool paText(const clap_plugin_t* pl, clap_id id, double v, char* out, uint32_t n) {
     buildParams();
     const PParam* p = findPar(id);
     if (!p) return false;
     if (p->kind == PX_MORPH) { snprintf(out, n, "%.0f %%", v * 100.0); return true; }
     if (p->kind == PX_FILL || p->kind == PX_MUTE) { snprintf(out, n, v > 0.5 ? "AN" : "AUS"); return true; }
     if (p->kind == PX_FOCUS) { snprintf(out, n, "SPUR %d", (int)(v + 0.5)); return true; }
-    paramText(PARAMS[p->pidx], (float)v, out, (int)n);
+    // Die beiden Quellregler heissen so, wie die Machine der gewaehlten Spur sie nennt.
+    Plug* P = self(pl);
+    int mach = P->eng.P.pat[P->eng.pat].t[P->focus].p[paramSlot(paramFind("trk.machine"))];
+    paramText(PARAMS[p->pidx], (float)v, out, (int)n, mach);
     return true;
 }
 static bool paFromText(const clap_plugin_t*, clap_id id, const char* txt, double* out) {

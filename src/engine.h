@@ -6,6 +6,7 @@
 #pragma once
 #include "seq.h"
 #include "machine.h"
+#include "fx.h"
 
 enum { NVOICES = 32, CTL = 16, NRAMP = 8 };   // CTL: Steuerrate in Samples (Zweierpotenz)
 
@@ -86,8 +87,15 @@ struct Voice {
         panL = cosf(a); panR = sinf(a);
     }
 
-    void run(float* outL, float* outR, int n, float sr) {
+    // Drei Ziele: trocken, Sende A, Sende B. Die Sende-Anteile gehoeren zur Stimme,
+    // damit ein P-Lock auf S.A auch wirklich nur diesen Anschlag weiterschickt.
+    struct Mix { float *dL, *dR, *aL, *aR, *bL, *bR; };
+
+    void run(const Mix& mx, int n, float sr) {
         if (!used) return;
+        static const int slotSA = paramSlot(paramFind("trk.send.a"));
+        static const int slotSB = paramSlot(paramFind("trk.send.b"));
+        float sa = pLevel(pf[slotSA]), sb = pLevel(pf[slotSB]);
         float buf[MACH_CHUNK];
         int done = 0;
         while (done < n) {
@@ -104,8 +112,10 @@ struct Voice {
                 }
                 age++;
                 float x = flt.run(buf[i], ft) * e * gain;
-                outL[done + i] += x * panL;
-                outR[done + i] += x * panR;
+                float xl = x * panL, xr = x * panR;
+                mx.dL[done + i] += xl;        mx.dR[done + i] += xr;
+                mx.aL[done + i] += xl * sa;   mx.aR[done + i] += xr * sa;
+                mx.bL[done + i] += xl * sb;   mx.bR[done + i] += xr * sb;
             }
             done += c;
             if (env.done()) { used = false; return; }
@@ -129,9 +139,15 @@ struct Engine : Sink {
     // kann laengst verklungen sein, wenn der naechste Trig kommt.
     float trkVal[NTRACKS][64];
 
+    Delay  delay;
+    Reverb reverb;
+
     Ev   q[256];
     int  qoff[256];
     int  nq = 0;
+    // Arbeitspuffer gehoeren zur Engine, nicht auf den Stapel: im Browser sind davon
+    // nur 64 KB da, und sechs Puffer zu 4096 Samples waeren mehr.
+    float bufD[2][4096], bufA[2][4096], bufB[2][4096];
 
     Engine() { projectInit(P); resetTrackValues(); }
 
@@ -143,6 +159,7 @@ struct Engine : Sink {
     void prepare(float rate) {
         sr = rate; seq.sr = rate;
         for (int i = 0; i < NVOICES; i++) { v[i].used = false; v[i].env.kill(); }
+        delay.reset(); reverb.reset();
         resetTrackValues();
         morphDone = -1.0f;
     }
@@ -230,18 +247,41 @@ struct Engine : Sink {
         applyMorph();
         float master = pLevel(P.g[paramSlot(paramFind("master.vol"))]);
 
-        float L[4096], R[4096];
+        // Effekte: Einstellungen einmal je Block, nicht je Sample.
+        static const int sDiv  = paramSlot(paramFind("fx.a.div"));
+        static const int sFb   = paramSlot(paramFind("fx.a.fb"));
+        static const int sTone = paramSlot(paramFind("fx.a.tone"));
+        static const int sAVol = paramSlot(paramFind("fx.a.vol"));
+        static const int sSize = paramSlot(paramFind("fx.b.size"));
+        static const int sDec  = paramSlot(paramFind("fx.b.dec"));
+        static const int sDamp = paramSlot(paramFind("fx.b.damp"));
+        static const int sBVol = paramSlot(paramFind("fx.b.vol"));
+        delay.setTime(P.g[sDiv], (float)seq.bpm, sr);
+        reverb.setSize(pUni(P.g[sSize]), sr);
+        float fb   = pUni(P.g[sFb]) * 0.95f;
+        float tone = pUni(P.g[sTone]);
+        float dec  = 0.3f + pUni(P.g[sDec]) * 0.69f;
+        float damp = pUni(P.g[sDamp]);
+        float aVol = pLevel(P.g[sAVol]), bVol = pLevel(P.g[sBVol]);
+
         int done = 0, ei = 0;
         while (done < frames) {
             int next = frames;
             while (ei < nq && qoff[ei] <= done) { fire(q[ei]); ei++; }
             if (ei < nq && qoff[ei] < next) next = qoff[ei];
             int c = next - done; if (c > 4096) c = 4096; if (c <= 0) c = 1;
-            for (int i = 0; i < c; i++) { L[i] = 0.0f; R[i] = 0.0f; }
-            for (int i = 0; i < NVOICES; i++) v[i].run(L, R, c, sr);
             for (int i = 0; i < c; i++) {
-                out[(done + i) * 2]     = softClip(L[i] * master);
-                out[(done + i) * 2 + 1] = softClip(R[i] * master);
+                bufD[0][i] = bufD[1][i] = 0.0f;
+                bufA[0][i] = bufA[1][i] = 0.0f;
+                bufB[0][i] = bufB[1][i] = 0.0f;
+            }
+            Voice::Mix mx{bufD[0], bufD[1], bufA[0], bufA[1], bufB[0], bufB[1]};
+            for (int i = 0; i < NVOICES; i++) v[i].run(mx, c, sr);
+            delay.run(bufA[0], bufA[1], bufD[0], bufD[1], c, fb, tone, aVol);
+            reverb.run(bufB[0], bufB[1], bufD[0], bufD[1], c, dec, damp, bVol);
+            for (int i = 0; i < c; i++) {
+                out[(done + i) * 2]     = softClip(bufD[0][i] * master);
+                out[(done + i) * 2 + 1] = softClip(bufD[1][i] * master);
             }
             done += c;
         }
