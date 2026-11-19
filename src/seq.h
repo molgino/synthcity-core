@@ -34,6 +34,8 @@ struct Seq {
     int64_t pos = 0;            // Samples seit Start
     bool running = false;
     bool fill = false;          // Performance-Ebene: aendert nie die Daten
+    bool loopOn = false;        // Step-Loop: ein Fenster wiederholt sich,
+    int  loopFrom = 0, loopLen = 4;   // die Uhr laeuft dabei ungeruehrt weiter
     uint32_t seed = 0x5eed1234;
 
     int64_t nextK[NTRACKS];     // naechster noch nicht bewerteter Schritt je Spur
@@ -90,6 +92,10 @@ struct Seq {
         int len = tr.len < 1 ? 1 : tr.len;
         int s = (int)(((k % len) + len) % len);
         int64_t pass = k / len;
+        if (loopOn && loopLen > 0) {            // nur die Quelle wird umgelenkt, nicht die Zeit
+            int w = loopLen > len ? len : loopLen;
+            s = (loopFrom + (int)(((k % w) + w) % w)) % len;
+        }
         const Step& st = tr.s[s];
         if (!st.on) return;
 

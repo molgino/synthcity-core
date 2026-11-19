@@ -5,7 +5,7 @@
 #include "param.h"
 #include "doc.h"
 
-enum { NTRACKS = 8, NSTEPS = 128, NPATTERNS = 16, NLOCKS = 12 };
+enum { NTRACKS = 8, NSTEPS = 128, NPATTERNS = 16, NLOCKS = 12, NSCENES = 2, NSCLOCK = 16 };
 
 struct Lock {
     uint16_t slot;      // Slot des Spurparameters (Reihenfolge der Tabelle)
@@ -38,8 +38,26 @@ struct Track {
     Step s[NSTEPS];
 };
 
+// Eine Scene haelt je Spur eine Handvoll abweichender Werte. Der Morph-Regler faehrt
+// stufenlos zwischen Scene A und Scene B; wo eine Scene nichts sagt, gilt der Grundwert.
+struct SceneTrack {
+    uint8_t n = 0;
+    Lock v[NSCLOCK];
+    const Lock* find(int slot) const {
+        for (int i = 0; i < n; i++) if (v[i].slot == slot) return &v[i];
+        return nullptr;
+    }
+    bool set(int slot, int16_t val) {
+        for (int i = 0; i < n; i++) if (v[i].slot == slot) { v[i].val = val; return true; }
+        if (n >= NSCLOCK) return false;
+        v[n++] = {(uint16_t)slot, val, 0};
+        return true;
+    }
+};
+
 struct Pattern {
     Track t[NTRACKS];
+    SceneTrack sc[NSCENES][NTRACKS];
     uint8_t used = 0;
 };
 
@@ -64,6 +82,8 @@ inline void projectInit(Project& P) {
                 if (PARAMS[i].scope == PS_TRACK) tr.p[paramSlot(i)] = PARAMS[i].def;
             for (int s = 0; s < NSTEPS; s++) { tr.s[s].on = 0; tr.s[s].nLock = 0; }
         }
+        for (int k = 0; k < NSCENES; k++)
+            for (int t = 0; t < NTRACKS; t++) P.pat[pi].sc[k][t].n = 0;
     }
 }
 
@@ -73,11 +93,26 @@ inline int16_t effective(const Track& tr, int step, int slot) {
     return l ? l->val : tr.p[slot];
 }
 
+// Dieselbe Kette mit Scenes: Lock -> Morph zwischen A und B -> Grundwert.
+// Der Lock gewinnt immer; wo eine Scene nichts sagt, wird gegen den Grundwert gefahren.
+inline float sceneValue(const Pattern& pt, int t, int slot, float morph) {
+    float base = (float)pt.t[t].p[slot];
+    const Lock* a = pt.sc[0][t].find(slot);
+    const Lock* b = pt.sc[1][t].find(slot);
+    if (!a && !b) return base;
+    float va = a ? (float)a->val : base, vb = b ? (float)b->val : base;
+    return va + (vb - va) * morph;
+}
+inline float effectiveF(const Pattern& pt, int t, int step, int slot, float morph) {
+    const Lock* l = pt.t[t].s[step].findLock(slot);
+    return l ? (float)l->val : sceneValue(pt, t, slot, morph);
+}
+
 // --- Dokument schreiben ---------------------------------------------------------------------
 // Geschrieben wird nur, was vom Standard abweicht: die Datei bleibt klein und lesbar, und ein
 // Parameter, den es spaeter nicht mehr gibt, stoert niemanden.
 inline void projectToDoc(const Project& P, Doc& d) {
-    char k[DOC_KEY];
+    char k[DOC_KEY], k2[DOC_KEY];
     for (int i = 0; i < NPARAMS; i++) {
         if (PARAMS[i].scope != PS_GLOBAL) continue;
         int slot = paramSlot(i);
@@ -98,6 +133,13 @@ inline void projectToDoc(const Project& P, Doc& d) {
                 docKeyTrack(k, sizeof k, pi, t, PARAMS[i].id);
                 d.set(k, tr.p[slot]);
             }
+            for (int k = 0; k < NSCENES; k++)
+                for (int i = 0; i < pt.sc[k][t].n; i++) {
+                    int pIdx = paramOfSlot(PS_TRACK, pt.sc[k][t].v[i].slot);
+                    if (pIdx < 0) continue;
+                    docKeyScene(k2, sizeof k2, pi, k, t, PARAMS[pIdx].id);
+                    d.set(k2, pt.sc[k][t].v[i].val);
+                }
             for (int s = 0; s < NSTEPS; s++) {
                 const Step& st = tr.s[s];
                 if (!st.on && !st.nLock) continue;
@@ -142,6 +184,15 @@ inline void projectFromDoc(const Doc& d, Project& P) {
                 if (PARAMS[i].scope != PS_TRACK) continue;
                 docKeyTrack(k, sizeof k, pi, t, PARAMS[i].id);
                 tr.p[paramSlot(i)] = (int16_t)d.get(k, PARAMS[i].def);
+            }
+            for (int k2i = 0; k2i < NSCENES; k2i++) {
+                SceneTrack& sct = pt.sc[k2i][t];
+                sct.n = 0;
+                for (int i = 0; i < NPARAMS; i++) {
+                    if (PARAMS[i].scope != PS_TRACK || !(PARAMS[i].flags & PF_LOCK)) continue;
+                    docKeyScene(k, sizeof k, pi, k2i, t, PARAMS[i].id);
+                    if (d.has(k)) sct.set(paramSlot(i), (int16_t)d.get(k, 0));
+                }
             }
             for (int s = 0; s < NSTEPS; s++) {
                 docKeyStep(k, sizeof k, pi, t, s, "");

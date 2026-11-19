@@ -181,6 +181,41 @@ static void testRatchet() {
 }
 
 // 8 - Die Warteschlange: Reihenfolge bleibt, voll laeuft sie nicht ueber
+// Scenes: zwei Werte-Ebenen je Spur, dazwischen faehrt der Morph-Regler.
+static void testScenes() {
+    curCase = "Scenes und Morph";
+    const int sl = paramSlot(paramFind("trk.flt.freq"));
+    static Project P; demoPattern(P);
+    P.pat[0].sc[0][0].set(sl, 30);
+    P.pat[0].sc[1][0].set(sl, 110);
+    P.pat[0].t[0].p[sl] = 70;
+
+    CHECK(sceneValue(P.pat[0], 0, sl, 0.0f) == 30.0f, "Morph 0 ist nicht Scene A");
+    CHECK(sceneValue(P.pat[0], 0, sl, 1.0f) == 110.0f, "Morph 1 ist nicht Scene B");
+    CHECK(sceneValue(P.pat[0], 0, sl, 0.5f) == 70.0f, "die Mitte liegt nicht dazwischen");
+    // Spur 1 hat keine Scene - dort bleibt der Grundwert stehen
+    CHECK(sceneValue(P.pat[0], 1, sl, 0.7f) == (float)P.pat[0].t[1].p[sl], "Spur ohne Scene wandert");
+    // Nur EINE Seite belegt: dann wird gegen den Grundwert gefahren
+    static Project R; demoPattern(R);
+    R.pat[0].t[0].p[sl] = 60;
+    R.pat[0].sc[1][0].set(sl, 120);
+    CHECK(sceneValue(R.pat[0], 0, sl, 0.0f) == 60.0f, "halbe Scene: A ist nicht der Grundwert");
+    CHECK(sceneValue(R.pat[0], 0, sl, 1.0f) == 120.0f, "halbe Scene: B fehlt");
+    // Ein Lock schlaegt die Scene
+    P.pat[0].t[0].s[4].setLock(sl, 15);
+    CHECK(effectiveF(P.pat[0], 0, 4, sl, 1.0f) == 15.0f, "Lock verliert gegen die Scene");
+
+    static Doc d; projectToDoc(P, d);
+    CHECK(d.save("/tmp/sc-scene.txt"), "speichern fehlgeschlagen");
+    static Doc d2; CHECK(d2.load("/tmp/sc-scene.txt"), "laden fehlgeschlagen");
+    static Project Q; projectFromDoc(d2, Q);
+    const Lock* a = Q.pat[0].sc[0][0].find(sl);
+    const Lock* b = Q.pat[0].sc[1][0].find(sl);
+    CHECK(a && a->val == 30, "Scene A ueberlebt den Rundlauf nicht");
+    CHECK(b && b->val == 110, "Scene B ueberlebt den Rundlauf nicht");
+    CHECK(Q.pat[0].sc[0][1].n == 0, "eine Spur ohne Scene bekommt beim Laden Werte");
+}
+
 static void testQueue() {
     curCase = "Befehls-Warteschlange";
     Queue<8> q;
@@ -198,6 +233,7 @@ int main() {
     testConditions();
     testPolymetrik();
     testRatchet();
+    testScenes();
     testQueue();
     printf("%s: %d Pruefungen ok, %d Fehler\n", fail ? "FEHLGESCHLAGEN" : "OK", pass, fail);
     return fail ? 1 : 0;

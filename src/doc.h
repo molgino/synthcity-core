@@ -79,6 +79,9 @@ struct Doc {
 inline void docKeyTrack(char* out, int nOut, int pat, int trk, const char* id) {
     snprintf(out, nOut, "pat.%d.trk.%d.%s", pat, trk, id + (strncmp(id, "trk.", 4) ? 0 : 4));
 }
+inline void docKeyScene(char* out, int nOut, int pat, int sc, int trk, const char* id) {
+    snprintf(out, nOut, "pat.%d.sc.%d.trk.%d.%s", pat, sc, trk, id + (strncmp(id, "trk.", 4) ? 0 : 4));
+}
 inline void docKeyStep(char* out, int nOut, int pat, int trk, int step, const char* suffix) {
     snprintf(out, nOut, "pat.%d.trk.%d.st.%d%s%s", pat, trk, step, suffix[0] ? "." : "", suffix);
 }

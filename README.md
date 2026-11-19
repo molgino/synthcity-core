@@ -5,7 +5,7 @@ Konzept: `../r36-groovebox/docs/konzept-neu.md`.
 
 Kein Framework, keine Abhängigkeiten, keine STL-Container im Kern — C++17 und fertig.
 
-## Stand: Meilenstein 2 — es klingt
+## Stand: Meilenstein 3 — der Sequencer ist vollständig
 
 | Baustein | Datei | Zustand |
 | --- | --- | --- |
@@ -17,10 +17,11 @@ Kein Framework, keine Abhängigkeiten, keine STL-Container im Kern — C++17 und
 | DSP-Bausteine: PolyBLEP, TPT-Filter, Hüllkurve, Skalen | `src/dsp.h` | steht |
 | Machines (austauschbare Klangquelle), erste: `POLY` | `src/machine.h` | steht |
 | Stimmen, Filter, Hüllkurve, Panorama, Summe | `src/engine.h` | steht |
-| Effekte, Sends, Sampler | — | Meilenstein 3 |
+| Slides als Rampen, Scenes + Morph, Mute, Step-Loop | `src/engine.h`, `src/model.h` | steht |
+| Effekte, Sends, Sampler | — | Meilenstein 4 |
 
 ```
-make test        # 48 + 16 Prüfungen
+make test        # 60 + 25 Prüfungen
 make SAN=1 test  # mit Address-/UB-Sanitizer
 make bench       # Last: Faktor gegenüber Echtzeit
 make demo        # schreibt demo.wav (16 s)
@@ -46,6 +47,24 @@ Drei Entscheidungen, die den Rest tragen:
 - **Der P-Lock-Schnappschuss wird beim Anschlag genommen.** Die Stimme trägt ihre eigenen Werte
   mit sich; was danach am Regler passiert, ändert sie nicht mehr — genau wie bei der Hardware.
 
+## Die zweite Werte-Ebene
+
+Der wirksame Wert ist immer dieselbe Kette: **Lock → Morph zwischen Scene A und B → Grundwert.**
+Eine Scene hält je Spur eine Handvoll abweichender Werte; wo sie nichts sagt, wird gegen den
+Grundwert gefahren (wie der Crossfader des Octatrack). Der Morph-Regler wirkt auch auf einen
+schon klingenden Ton, nicht erst auf den nächsten Anschlag.
+
+**Slides** machen aus der Stufe zwischen zwei Locks eine Rampe — und zwar ab dem Wert, an dem
+die *Spur* gerade steht, nicht ab einer noch klingenden Stimme. Das war der entscheidende Punkt:
+die vorige Stimme ist meistens längst verklungen, wenn der nächste Trig kommt. Weil die Tonhöhe
+auf der Steuerrate neu gelesen wird, ist ein Pitch-Slide dieselbe Maschinerie wie ein
+Filter-Slide — kein Sonderfall.
+
+**Die Performance-Ebene fasst die Daten nie an.** Mute schweigt die Spur, der Sequencer läuft
+weiter (ein Test beweist es: eine Nachbarspur, die per `NEI` dem Würfel der stummen Spur folgt,
+klingt bitgleich wie ohne Mute). Step-Loop lenkt nur um, welcher Step gelesen wird — die Uhr
+läuft dabei ungerührt weiter.
+
 ## Was die Tests beweisen
 
 - **Das Dokument trägt**: speichern, laden, Lock mit Slide, trigless Step — und eine ID, die
@@ -70,13 +89,23 @@ Drei Entscheidungen, die den Rest tragen:
 - **Das Filter nimmt die Höhen weg**, der Grundton bleibt.
 - **P-Locks wirken je Step**: der Grundton der Spur verschwindet auf dem gelockten Step.
 - **32 Stimmen gleichzeitig** erzeugen keine Aussetzer; der Ausgang bleibt immer in den Grenzen.
+- **Slide**: zu Beginn des Steps klingt noch die alte Note, am Ende die neue.
+- **Scenes**: A dumpf, B offen, Morph 0,5 messbar dazwischen — und der Crossfader öffnet auch
+  einen Ton, der schon läuft.
+- **Mute hält den Lauf nicht an**: stumm und „ganz leise“ liefern bitgleich dasselbe Signal.
+- **Step-Loop**: der Step außerhalb des Fensters klingt nicht mehr, das Fenster wiederholt sich.
 - **Referenz-Aufnahme**: zwei Sekunden eines Patterns werden gegen `tests/ref/pattern.wav`
   verglichen — jede ungewollte Klangänderung fällt auf.
 
-Last (x86, ein Kern): 1500× Echtzeit mit einer Spur, 40× im schlimmsten Fall mit allen
+Last (x86, ein Kern): 1400× Echtzeit mit einer Spur, 36× im schlimmsten Fall mit allen
 32 Stimmen und 32stel-Noten auf acht Spuren.
 
 ## Als Nächstes
 
-3. Sequencer vollständig: Slides als Rampen, Scenes + Morph, Sub-Steps.
-4. CLAP-Plugin aus derselben Parameter-Tabelle.
+4. CLAP-Plugin aus derselben Parameter-Tabelle — der ehrliche Prüfstein für das Datenmodell.
+5. Oberfläche gegen das Modell.
+6. Gerät: R36S-Build, Sampler, Dateien.
+
+Offen aus Meilenstein 2: das DSP ist **neu geschrieben**, nicht aus SYNTH CITY portiert — ein
+Bit-Vergleich gegen den alten Render steht deshalb aus. Die Referenz-WAV sichert ab jetzt den
+neuen Klang.

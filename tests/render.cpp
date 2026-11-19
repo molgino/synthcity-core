@@ -169,6 +169,112 @@ int main() {
         chk(rms(b, N) > 0.01f, "es klingt weiter");
     }
 
+    grp("Slide: der Ton gleitet zum naechsten Lock");
+    {
+        const int N = 36000;
+        static float b[48000 * 2];
+        e.prepare(48000.0f); setupBeat(e, 45);
+        Track& tr = e.P.pat[0].t[0];
+        tr.p[SL("trk.flt.freq")] = 127;
+        tr.p[SL("trk.amp.sus")] = 100; tr.p[SL("trk.amp.dec")] = 127;
+        tr.s[4].setLock(SL("trk.note"), 57, 1);          // eine Oktave hoch, gleitend
+        e.start(); e.render(b, N);
+        // Der zweite Step beginnt bei Sample 24000 und dauert 6000 Samples.
+        const float* mid = b + 24000 * 2;
+        float earlyLow  = bin(mid,         1800, 110.0f, 48000.0f);
+        float earlyHigh = bin(mid,         1800, 220.0f, 48000.0f);
+        float lateLow   = bin(mid + 4200 * 2, 1800, 110.0f, 48000.0f);
+        float lateHigh  = bin(mid + 4200 * 2, 1800, 220.0f, 48000.0f);
+        chk(earlyLow > earlyHigh, "zu Beginn des Steps klingt noch die alte Note");
+        chk(lateHigh > lateLow,   "am Ende des Steps ist die neue Note erreicht");
+    }
+
+    grp("Scenes und Morph");
+    {
+        const int N = 18000;
+        static float a[24000 * 2], m[24000 * 2], z[24000 * 2];
+        for (int k = 0; k < 3; k++) {
+            e.prepare(48000.0f); setupBeat(e, 45);
+            e.P.pat[0].t[0].p[SL("trk.flt.freq")] = 30;
+            e.P.pat[0].sc[0][0].set(SL("trk.flt.freq"), 30);     // Scene A: dumpf
+            e.P.pat[0].sc[1][0].set(SL("trk.flt.freq"), 110);    // Scene B: offen
+            e.morph = k * 0.5f;
+            e.start(); e.render(k == 0 ? a : k == 1 ? m : z, N);
+        }
+        float ha = bin(a, N, 3000.0f, 48000.0f), hm = bin(m, N, 3000.0f, 48000.0f),
+              hz_ = bin(z, N, 3000.0f, 48000.0f);
+        chk(hz_ > ha * 4.0f, "Scene B klingt deutlich offener als Scene A");
+        chk(hm > ha && hm < hz_, "die Mitte liegt zwischen beiden Scenes");
+    }
+
+    grp("Morph wirkt auch auf eine klingende Stimme");
+    {
+        const int N = 24000;
+        static float b[24000 * 2];
+        e.prepare(48000.0f); setupBeat(e, 45);
+        Track& tr = e.P.pat[0].t[0];
+        tr.p[SL("trk.len")] = 127; tr.p[SL("trk.amp.sus")] = 100; tr.p[SL("trk.amp.dec")] = 127;
+        e.P.pat[0].sc[0][0].set(SL("trk.flt.freq"), 30);
+        e.P.pat[0].sc[1][0].set(SL("trk.flt.freq"), 110);
+        e.morph = 0.0f; e.start();
+        e.render(b, 8000);                      // erst dumpf
+        e.morph = 1.0f;
+        e.render(b + 8000 * 2, 8000);           // mitten im Ton aufgezogen
+        float vorher = bin(b + 3000 * 2, 4000, 3000.0f, 48000.0f);
+        float nachher = bin(b + 11000 * 2, 4000, 3000.0f, 48000.0f);
+        chk(nachher > vorher * 4.0f, "der Crossfader oeffnet den laufenden Ton");
+        (void)N;
+    }
+
+    grp("Mute macht still, aber haelt den Lauf nicht an");
+    {
+        const int N = 48000;
+        static float stumm[48000 * 2], leise[48000 * 2];
+        for (int k = 0; k < 2; k++) {
+            e.prepare(48000.0f);
+            projectInit(e.P); e.P.pat[0].used = 1;
+            Track& t0 = e.P.pat[0].t[0];        // wuerfelt
+            t0.len = 16; t0.speed = 4; t0.p[SL("trk.note")] = 45;
+            for (int s = 0; s < 16; s += 2) {
+                t0.s[s].on = 1; t0.s[s].setLock(SL("trk.cond"), (int16_t)condProb(50));
+            }
+            Track& t1 = e.P.pat[0].t[1];        // folgt dem Wuerfel der Spur darueber
+            t1.len = 16; t1.speed = 4; t1.p[SL("trk.note")] = 69;
+            for (int s = 0; s < 16; s += 2) {
+                t1.s[s].on = 1; t1.s[s].setLock(SL("trk.cond"), (int16_t)CND_NEI);
+            }
+            if (k == 0) e.mute[0] = true;       // stummgeschaltet
+            else { e.mute[0] = false; t0.p[SL("trk.vol")] = 0; }   // oder nur ganz leise
+            e.start(); e.render(k == 0 ? stumm : leise, N);
+        }
+        e.mute[0] = false;
+        int bad = 0;
+        for (int i = 0; i < N * 2; i++) if (stumm[i] != leise[i]) bad++;
+        chk(bad == 0, "stumm und leise liefern dasselbe - die Bedingungen laufen weiter");
+        chk(rms(stumm, N) > 0.005f, "die Nachbarspur klingt weiter");
+    }
+
+    grp("Step-Loop wiederholt das Fenster, die Uhr laeuft weiter");
+    {
+        const int N = 96000;                       // zwei Sekunden: Step 8 faellt erst dann an
+        static float b[96000 * 2];
+        e.prepare(48000.0f); setupBeat(e, 45);
+        Track& tr = e.P.pat[0].t[0];
+        tr.s[8].setLock(SL("trk.note"), 81);      // dieser Step darf nie zu hoeren sein
+        e.seq.loopOn = true; e.seq.loopFrom = 0; e.seq.loopLen = 4;
+        e.start(); e.render(b, N);
+        static float ohne[96000 * 2];
+        e.prepare(48000.0f); setupBeat(e, 45);
+        e.P.pat[0].t[0].s[8].setLock(SL("trk.note"), 81);
+        e.seq.loopOn = false;
+        e.start(); e.render(ohne, N);
+        // Gemessen im Fenster genau dieses Steps (Sample 48000 bis 54000), nicht ueber alles.
+        chk(bin(b + 48000 * 2, 6000, 880.0f, 48000.0f)
+                < bin(ohne + 48000 * 2, 6000, 880.0f, 48000.0f) * 0.25f,
+            "der Step ausserhalb des Fensters klingt nicht mehr");
+        chk(rms(b, N) > 0.01f, "das Fenster wiederholt sich hoerbar");
+    }
+
     grp("Referenz-Aufnahme");
     {
         const int N = 96000;                         // zwei Sekunden

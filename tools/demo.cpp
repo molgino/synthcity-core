@@ -21,6 +21,8 @@ int main(int argc, char** argv) {
     b.p[SL("trk.flt.reso")] = 60; b.p[SL("trk.amp.dec")] = 52; b.p[SL("trk.vol")] = 108;
     for (int s = 0; s < 16; s += 4) b.s[s].on = 1;
     b.s[8].setLock(SL("trk.note"), 45);
+    b.s[12].on = 1;
+    b.s[12].setLock(SL("trk.note"), 40, 1);                       // gleitet hinauf (Slide)
     b.s[14].on = 1; b.s[14].setLock(SL("trk.micro"), 30);        // leicht nach hinten geschoben
     b.s[14].setLock(SL("trk.ratchet"), 3);                        // dreifacher Anschlag
 
@@ -46,11 +48,26 @@ int main(int argc, char** argv) {
         if (notes[s]) { m.s[s].on = 1; m.s[s].setLock(SL("trk.note"), (int16_t)notes[s]); }
     m.s[5].setLock(SL("trk.prob"), 60);                           // taucht nur manchmal auf
 
+    // Scenes: A dumpf und eng, B offen und breit - der Morph faehrt im Stueck hinueber.
+    e.P.pat[0].sc[0][0].set(SL("trk.flt.freq"), 44);
+    e.P.pat[0].sc[1][0].set(SL("trk.flt.freq"), 86);
+    e.P.pat[0].sc[0][2].set(SL("trk.vol"), 60);
+    e.P.pat[0].sc[1][2].set(SL("trk.vol"), 96);
+
     const int N = 48000 * 16;
     static float buf[48000 * 16 * 2];
     e.start();
     int done = 0;
-    while (done < N) { int n = 128; if (done + n > N) n = N - done; e.render(buf + done * 2, n); done += n; }
+    while (done < N) {
+        int n = 128; if (done + n > N) n = N - done;
+        float t = (float)done / N;
+        e.morph = t < 0.25f ? 0.0f : (t < 0.75f ? (t - 0.25f) * 2.0f : 1.0f);   // Crossfader
+        e.mute[2] = t < 0.25f;                                   // Melodie kommt spaeter dazu
+        e.seq.loopOn = (t > 0.88f && t < 0.95f);                 // kurzer Step-Loop als Stotterer
+        e.seq.loopFrom = 0; e.seq.loopLen = 2;
+        e.render(buf + done * 2, n);
+        done += n;
+    }
     if (!wavWrite(out, buf, N, 48000)) { printf("konnte %s nicht schreiben\n", out); return 1; }
     printf("%s geschrieben (%d Sekunden)\n", out, N / 48000);
     return 0;

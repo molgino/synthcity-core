@@ -6,15 +6,16 @@
 
 // --- Skalen: aus 0..127 werden musikalisch sinnvolle Groessen -------------------------------
 // Die Tabelle in param.h kennt nur ganze Zahlen; die Bedeutung bekommen sie erst hier.
-inline float pBip(int v)   { return (v - 64) / 63.0f; }                     // -1 .. +1, Mitte 64
-inline float pUni(int v)   { return v / 127.0f; }                           // 0 .. 1
-inline float pTime(int v)  { return 0.001f * powf(10.0f, 4.0f * v / 127.0f); } // 1 ms .. 10 s
-inline float pFreq(int v)  { return 20.0f * powf(900.0f, v / 127.0f); }     // 20 Hz .. 18 kHz
+// Sie nehmen Fliesskomma, weil Werte zwischen zwei Steps GLEITEN koennen (Slides).
+inline float pBip(float v)  { return (v - 64.0f) / 63.0f; }                 // -1 .. +1, Mitte 64
+inline float pUni(float v)  { return v / 127.0f; }                          // 0 .. 1
+inline float pTime(float v) { return 0.001f * powf(10.0f, 4.0f * v / 127.0f); } // 1 ms .. 10 s
+inline float pFreq(float v) { return 20.0f * powf(900.0f, v / 127.0f); }    // 20 Hz .. 18 kHz
 inline float dbToLin(float db) { return db <= -60.0f ? 0.0f : powf(10.0f, db / 20.0f); }
 // 100 = 0 dB (Einheitsverstaerkung), 0 = Stille, 127 = +6 dB.
-inline float pLevel(int v) {
-    if (v <= 0) return 0.0f;
-    float db = v <= 100 ? (v - 100) * (60.0f / 99.0f) : (v - 100) * (6.0f / 27.0f);
+inline float pLevel(float v) {
+    if (v <= 0.0f) return 0.0f;
+    float db = v <= 100.0f ? (v - 100.0f) * (60.0f / 99.0f) : (v - 100.0f) * (6.0f / 27.0f);
     return dbToLin(db);
 }
 inline float noteHz(float n) { return 440.0f * powf(2.0f, (n - 69.0f) / 12.0f); }

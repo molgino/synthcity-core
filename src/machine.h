@@ -17,9 +17,9 @@ struct Machine {
     virtual const char* name()   const = 0;
     virtual const char* labelA() const = 0;      // Anzeige fuer trk.src.a
     virtual const char* labelB() const = 0;      // Anzeige fuer trk.src.b
-    virtual void  start(MState& m, float hz, float vel, const int16_t* p, float sr) const = 0;
+    virtual void  start(MState& m, float hz, float vel, const float* p, float sr) const = 0;
     // Fuellt n Samples (n <= MACH_CHUNK). Ein Aufruf je Teilblock, nicht je Sample.
-    virtual void  render(MState& m, const int16_t* p, float hz, float* buf, int n, float sr) const = 0;
+    virtual void  render(MState& m, const float* p, float hz, float* buf, int n, float sr) const = 0;
 };
 
 // --- POLY: zwei verstimmte Oszillatoren, stufenlos von Saege nach Rechteck ---------------------
@@ -34,7 +34,7 @@ struct MachPoly : Machine {
     static int slotA() { static const int s = paramSlot(paramFind("trk.src.a")); return s; }
     static int slotB() { static const int s = paramSlot(paramFind("trk.src.b")); return s; }
 
-    void start(MState& m, float hz, float vel, const int16_t* p, float sr) const override {
+    void start(MState& m, float hz, float vel, const float* p, float sr) const override {
         St& s = m.as<St>();
         s.a.reset(0.0f);
         s.b.reset(0.25f);           // feste Phasenlage: gleicher Anschlag klingt immer gleich.
@@ -42,7 +42,7 @@ struct MachPoly : Machine {
         s.width = 0.5f;
         (void)vel; (void)p; (void)hz; (void)sr;
     }
-    void render(MState& m, const int16_t* p, float hz, float* buf, int n, float sr) const override {
+    void render(MState& m, const float* p, float hz, float* buf, int n, float sr) const override {
         St& s = m.as<St>();
         float dt = pBip(p[slotA()]) * 0.25f;          // bis zu einem Viertelton Verstimmung
         float shape = pUni(p[slotB()]);               // 0 = Saege, 1 = schmaler Puls
