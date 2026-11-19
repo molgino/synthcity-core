@@ -82,6 +82,12 @@ Finger: tippen, halten, ziehen. Gemessen wird dabei am **Ergebnis** — am Pegel
 Audio-Kern meldet, nicht an der Anzeige. Nur so fällt auf, wenn die Anzeige stimmt und der Klang
 nicht.
 
+Dazu läuft die Seite auf **sieben echten Handygrößen** (iPhone SE bis 15 Pro Max, hoch und
+quer, ein Pixel): für jedes Bedienelement wird geprüft, ob in seiner Mitte auch wirklich *es
+selbst* liegt — nicht ein Nachbar, der darüber ragt. Das fing erst an, als ein Bildschirmfoto vom
+iPhone zeigte, dass die M-Knöpfe verdeckt waren und die Seite 397 px breit war, auf jedem Gerät.
+Meine früheren „Handy"-Tests liefen ohne Viewport-Angabe — also gar nicht in Handybreite.
+
 Dafür gibt es in der Kopfzeile eine **Pegelanzeige**. Sie ist nicht Zierde: sie war das
 Messgerät, mit dem sich „Mute geht nicht" überhaupt beantworten ließ.
 

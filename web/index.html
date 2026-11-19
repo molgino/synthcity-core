@@ -1,4 +1,5 @@
 <title>SYNTH CITY</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
@@ -33,7 +34,8 @@ body {
   touch-action: manipulation;
 }
 #app {
-  height: 100%; display: grid; grid-template-rows: auto 1fr auto;
+  height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr); width: 100%;
   padding-left: max(0px, env(safe-area-inset-left, 0px));
   padding-right: max(0px, env(safe-area-inset-right, 0px));
 }
@@ -42,7 +44,8 @@ body {
 
 /* --- Kopfzeile --- */
 header {
-  display: flex; align-items: center; gap: 10px; padding: 8px max(10px, env(safe-area-inset-left, 0px));
+  display: flex; align-items: center; gap: 8px; padding: 8px max(10px, env(safe-area-inset-left, 0px));
+  min-width: 0;
   border-bottom: 1px solid var(--line); background: var(--surface); min-height: 52px;
 }
 .brand { font-weight: 700; letter-spacing: .18em; font-size: 13px; white-space: nowrap; }
@@ -70,12 +73,16 @@ button:focus-visible { outline: 2px solid var(--ok); outline-offset: 2px; }
 .meter b.laut { background: var(--amber); }
 
 /* --- Mitte: Spurleiste + Arbeitsflaeche --- */
-.main { display: grid; grid-template-columns: var(--rail) 1fr; min-height: 0; }
+/* minmax(0, 1fr) statt 1fr: sonst waechst die Spalte mit ihrem breitesten Inhalt,
+   und die ganze Seite wird breiter als der Schirm. */
+.main { display: grid; grid-template-columns: var(--rail) minmax(0, 1fr); min-height: 0; min-width: 0; }
 .rail { border-right: 1px solid var(--line); background: var(--surface); overflow-y: auto; }
 .trk {
   display: flex; align-items: stretch; gap: 6px; padding: 4px 5px 4px 8px;
   border-bottom: 1px solid var(--line); cursor: pointer; min-height: 48px;
+  overflow: hidden;                 /* nichts darf unter die Arbeitsflaeche ragen */
 }
+.trk .nm { min-width: 0; flex: 1; white-space: nowrap; overflow: hidden; }
 .trk .dot, .trk .nm { align-self: center; }
 .trk .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--c); }
 .trk .nm { font-size: 11px; font-weight: 600; letter-spacing: .06em; flex: 1; }
@@ -158,9 +165,9 @@ footer {
   padding: 8px max(10px, env(safe-area-inset-left, 0px)) max(8px, env(safe-area-inset-bottom, 0px));
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
 }
-.morph { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 150px; }
+.morph { display: flex; align-items: center; gap: 8px; flex: 1 1 160px; min-width: 0; }
 .morph input { flex: 1; accent-color: var(--amber); min-width: 80px; }
-.play { min-width: 92px; }
+.play { min-width: 78px; }
 .play.on { background: var(--ok); border-color: var(--ok); color: #06231a; }
 
 /* --- Dokument --- */
@@ -207,7 +214,27 @@ textarea {
 .err { padding: 14px; color: var(--lock); font-size: 13px; line-height: 1.6; }
 
 @media (max-width: 560px) {
-  :root { --rail: 62px; }
+  /* Kopfzeile: das Wort KLANG weicht, der Punkt bleibt - die Knoepfe sind wichtiger. */
+  header { gap: 6px; padding-inline: 8px; }
+  .klang { font-size: 0; gap: 0; }
+  .meter { width: 26px; }
+  .tempo { gap: 3px; }
+  .tempo .lbl { display: none; }
+  .tempo .v { font-size: 17px; min-width: 34px; }
+  header .tiny { padding: 0 8px; min-width: 34px; }
+  footer { gap: 6px; padding-inline: 8px; }
+  footer button { padding: 0 10px; }
+  /* Schmal: die Spur heisst nur noch ihre Nummer, in ihrer Farbe - so bleibt Platz
+     fuer einen M-Knopf, den man mit dem Daumen trifft. */
+  :root { --rail: 66px; }
+  .trk { padding: 4px 4px 4px 6px; gap: 4px; }
+  .trk .dot { display: none; }
+  .trk .nm { color: var(--c); font-size: 15px; font-family: var(--mono); font-weight: 700;
+             text-align: center; }
+  .trk .nm .w { display: none; }
+  .trk .m { width: 32px; }
+  /* Flachere Pads: im Hochformat bleibt sonst fuer die Regler kaum eine Zeile. */
+  .pad { aspect-ratio: 4 / 3; }
   .brand { display: none; }          /* schmaler Schirm: die Knoepfe sind wichtiger */
   .padgrid { grid-template-columns: repeat(4, 1fr); }
 }
@@ -216,27 +243,33 @@ textarea {
    auf einen Spalt druecken - also stehen Steps und Regler nebeneinander, und die Pads
    bekommen eine feste Hoehe statt eines Seitenverhaeltnisses. */
 @media (orientation: landscape) and (max-height: 560px) {
+  /* Querformat am Handy: wenig Hoehe. Statt fester Hoehen wird die vorhandene Hoehe
+     GETEILT - acht Spuren und vier Pad-Reihen passen dann auf jeden Schirm, ohne dass
+     etwas unter den Rand rutscht. */
   :root { --rail: 58px; }
-  header { min-height: 44px; padding-block: 4px; }
+  header { min-height: 40px; padding-block: 3px; }
   .brand { font-size: 10px; }
   .work { grid-template-rows: minmax(0, 1fr); grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-  .pads { border-bottom: none; border-right: 1px solid var(--line); overflow-y: auto; padding: 8px; }
+  .rail { display: grid; grid-template-rows: repeat(8, minmax(0, 1fr)); overflow: hidden; }
+  .trk { min-height: 0; padding: 2px 4px 2px 6px; gap: 4px; }
+  .trk .dot, .trk .nm .w { display: none; }
+  .trk .nm { color: var(--c); font-size: 14px; font-family: var(--mono); font-weight: 700; text-align: center; }
+  .trk .m { width: 28px; min-height: 0; }
+  .pads { border-bottom: none; border-right: 1px solid var(--line); padding: 6px;
+          display: grid; grid-template-rows: auto auto minmax(0, 1fr); min-height: 0; }
+  .pats { margin-bottom: 4px; gap: 3px; }
+  .pt { min-height: 22px; }
+  .padhead { margin-bottom: 4px; }
+  .padhead .tiny { min-height: 28px; }
+  .padgrid { grid-template-columns: repeat(8, 1fr); grid-auto-rows: minmax(0, 1fr); gap: 4px; min-height: 0; }
+  .pad { aspect-ratio: auto; height: auto; min-height: 0; border-radius: 5px; }
   .params { border-left: none; }
-  .pad { aspect-ratio: auto; height: 46px; border-radius: 5px; }
-  .padgrid { grid-template-columns: repeat(4, 1fr); gap: 5px; }
-  .trk { min-height: 36px; padding: 4px 5px 4px 7px; }
-  .trk .nm { font-size: 10px; }
-  .trk .m { width: 22px; height: 22px; }
   .row { min-height: 38px; padding-block: 5px; }
   .grp { padding: 6px 12px 2px; }
-  footer { padding-block: 5px; gap: 8px; }
+  footer { padding-block: 4px; gap: 8px; }
   .play, footer button { min-height: 34px; }
   .sheet { max-height: 46vh; }
   textarea { height: 34vh; }
-}
-/* Breites Querformat (Tablet, Notebook): die Steps duerfen wieder in eine Reihe. */
-@media (orientation: landscape) and (max-height: 560px) and (min-width: 760px) {
-  .padgrid { grid-template-columns: repeat(8, 1fr); }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
@@ -485,7 +518,7 @@ function buildRail() {
     const d = document.createElement('div');
     d.className = 'trk';
     d.style.setProperty('--c', HUE[t]);
-    d.innerHTML = `<span class="dot"></span><span class="nm">SPUR ${t + 1}</span>
+    d.innerHTML = `<span class="dot"></span><span class="nm"><span class="w">SPUR </span>${t + 1}</span>
                    <button class="m" aria-label="Spur ${t + 1} stumm">M</button>`;
     const m = d.querySelector('.m');
     // Zwei Wege auf denselben Knopf: faellt der eine aus (schnelle Tipps hintereinander

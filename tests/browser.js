@@ -1,7 +1,7 @@
 // Prueft die Oberflaeche in einem echten Browser: laden, tippen, hoeren.
 // Gemessen wird am ERGEBNIS - am Pegel des Audio-Kerns, nicht an der Anzeige.
 // Start:  node tests/browser.js [http://localhost:8787/index.html]
-const {chromium} = require('playwright');
+const {chromium, devices} = require('playwright');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -193,6 +193,38 @@ const stummMuster = async p => {
     await p.locator('.pt').nth(2).tap(); await p.waitForTimeout(300);
     chk(!(await p.locator('#songBtn').evaluate(e => e.classList.contains('on'))),
         'ein Tipp auf ein Pattern laesst den Song weiterlaufen');
+  }
+
+  grp('Auf echten Handygroessen ist alles zu treffen');
+  // Gemeldet am iPhone: M-Knoepfe verdeckt, Seite breiter als der Schirm. Geprueft wird,
+  // ob in der Mitte jedes Bedienelements auch wirklich DIESES Element liegt.
+  for (const name of ['iPhone SE', 'iPhone 13', 'iPhone 15 Pro Max', 'Pixel 7',
+                      'iPhone SE landscape', 'iPhone 13 landscape', 'iPhone 15 Pro Max landscape']) {
+    const ctx = await b.newContext({...devices[name]});
+    const q = await ctx.newPage();
+    await q.goto(url);
+    await q.waitForTimeout(1000);
+    const r = await q.evaluate(() => {
+      const W = document.documentElement.clientWidth;
+      const fehlt = [];
+      for (const s of ['.trk .m', '#play', '#fill', '#songBtn', '#smpBtn', '#docBtn',
+                       '#bpmUp', '#bpmDn', '.pt', '#morph', '.pad'])
+        for (const el of document.querySelectorAll(s)) {
+          const b = el.getBoundingClientRect();
+          const t = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+          if (!(b.width > 0 && (t === el || el.contains(t)))) fehlt.push(s);
+        }
+      const reihen = document.querySelectorAll('.row');
+      let sichtbar = 0;
+      for (const row of reihen) { const b = row.getBoundingClientRect(); if (b.top < innerHeight - 60 && b.bottom > 0) sichtbar++; }
+      return {W, scroll: document.documentElement.scrollWidth, fehlt: [...new Set(fehlt)], sichtbar};
+    });
+    chk(r.scroll <= r.W, name + ': die Seite ist breiter als der Schirm (' + r.scroll + ' > ' + r.W + ')');
+    chk(r.fehlt.length === 0, name + ': nicht zu treffen: ' + r.fehlt.join(', '));
+    chk(r.sichtbar >= 2, name + ': fuer die Regler bleibt kein Platz');
+    if (!name.includes('landscape')) { await ctx.close(); continue; }
+    chk(await q.locator('.trk').nth(7).locator('.m').isVisible(), name + ': Spur 8 ist nicht zu sehen');
+    await ctx.close();
   }
 
   grp('Keine Fehler in der Konsole');
