@@ -5,7 +5,7 @@ Konzept: `../r36-groovebox/docs/konzept-neu.md`.
 
 Kein Framework, keine Abhängigkeiten, keine STL-Container im Kern — C++17 und fertig.
 
-## Stand: Meilenstein 3 — der Sequencer ist vollständig
+## Stand: Meilenstein 4 — das CLAP-Plugin
 
 | Baustein | Datei | Zustand |
 | --- | --- | --- |
@@ -18,10 +18,12 @@ Kein Framework, keine Abhängigkeiten, keine STL-Container im Kern — C++17 und
 | Machines (austauschbare Klangquelle), erste: `POLY` | `src/machine.h` | steht |
 | Stimmen, Filter, Hüllkurve, Panorama, Summe | `src/engine.h` | steht |
 | Slides als Rampen, Scenes + Morph, Mute, Step-Loop | `src/engine.h`, `src/model.h` | steht |
-| Effekte, Sends, Sampler | — | Meilenstein 4 |
+| CLAP-Plugin (Parameter, Zustand, Noten, Transport) | `plugin/clap_plugin.cpp` | steht |
+| Effekte, Sends, Sampler | — | später |
 
 ```
-make test        # 60 + 25 Prüfungen
+make test        # 60 + 25 + 73 Prüfungen
+make plugin      # baut build/synthcity.clap
 make SAN=1 test  # mit Address-/UB-Sanitizer
 make bench       # Last: Faktor gegenüber Echtzeit
 make demo        # schreibt demo.wav (16 s)
@@ -46,6 +48,34 @@ Drei Entscheidungen, die den Rest tragen:
   „jedes Sample neu“ rund 65 % mehr Luft, ohne hörbaren Unterschied.
 - **Der P-Lock-Schnappschuss wird beim Anschlag genommen.** Die Stimme trägt ihre eigenen Werte
   mit sich; was danach am Regler passiert, ändert sie nicht mehr — genau wie bei der Hardware.
+
+## Der Prüfstein: was das Plugin gekostet hat
+
+Das Konzept sagt: *wenn das Plugin mühsam wird, stimmt etwas am Datenmodell nicht.* Es wurde
+nicht mühsam — **392 Zeilen**, davon ist die Hälfte Anzeigetext und C-Schnittstelle.
+
+- **Die Parameterliste wird erzeugt, nicht gepflegt.** Sie entsteht aus `PARAMS`; die ID ist der
+  FNV-Hash der Text-ID, also über Versionen hinweg stabil. Ein neuer Regler erscheint im Host,
+  ohne dass im Plugin eine Zeile dazukommt.
+- **Der Zustand *ist* das Dokument.** `state.save` schreibt dieselben Zeilen `id = wert`, die
+  auch auf die Karte gehen. Ein Test liest im gespeicherten Plugin-Zustand nach, ob
+  `pat.0.trk.0.note = 45` darin steht — Projektdatei und Plugin-State sind dasselbe Format.
+- **Nicht alle Spuren auf einmal.** Ableton Live blendet oberhalb von 32 Parametern nicht mehr
+  automatisch ein und zeigt höchstens 128. Darum sieht der Host wie an der Hardware: die
+  globalen Werte, die Performance-Ebene (Morph, Fill, 8 Mutes) und die Regler der **gewählten**
+  Spur — 35 Parameter. Beim Spurwechsel bittet das Plugin den Host, die Werte neu zu lesen.
+
+### Getestet wie von einem Host
+
+`tests/plugin.cpp` lädt die `.clap` mit `dlopen`, sucht `clap_entry` und benutzt sie wie eine DAW:
+73 Prüfungen über Anschlüsse, Parameter, Automation, Noten, Transport und Blockgrößen von 1 bis
+4096. Weil 73 grüne Prüfungen im ersten Anlauf verdächtig sind, habe ich drei **Mutationen**
+eingebaut und geprüft, dass die Tests rot werden: Transport startet den Sequencer nicht (gefangen),
+Spurwahl wird ignoriert (gefangen), gewählte Spur fehlt im Zustand — **nicht** gefangen. Diese
+Lücke ist jetzt mit zwei Prüfungen geschlossen.
+
+Noch offen: `clap-validator` in der CI. Der Bau wurde hier abgelehnt, das Werkzeug fehlt also
+bisher.
 
 ## Die zweite Werte-Ebene
 
@@ -102,7 +132,6 @@ Last (x86, ein Kern): 1400× Echtzeit mit einer Spur, 36× im schlimmsten Fall m
 
 ## Als Nächstes
 
-4. CLAP-Plugin aus derselben Parameter-Tabelle — der ehrliche Prüfstein für das Datenmodell.
 5. Oberfläche gegen das Modell.
 6. Gerät: R36S-Build, Sampler, Dateien.
 
