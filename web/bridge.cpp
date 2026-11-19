@@ -232,4 +232,18 @@ void scDemo() { demoProject(gEng); }
 // Speicher fuer die Oberflaeche (Audio-Puffer, Text) - einmal angefordert, nie im Render.
 void* scAlloc(int bytes) { return malloc((size_t)bytes); }
 
+// Ein WIEDERVERWENDETER Block fuer Uebergaben (Sample-Daten, Text). Ohne ihn fordert jede
+// Uebergabe neuen Speicher an, der nie zurueckkommt - nach ein paar Samples ist Schluss.
+static void*  gScratch = 0;
+static size_t gScratchN = 0;
+void* scScratch(int bytes) {
+    size_t n = (size_t)(bytes < 16 ? 16 : bytes);
+    if (n > gScratchN) {
+        void* p = malloc(n);
+        if (!p) return 0;
+        gScratch = p; gScratchN = n;
+    }
+    return gScratch;
+}
+
 }  // extern "C"

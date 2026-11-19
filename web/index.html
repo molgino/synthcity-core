@@ -172,7 +172,9 @@ footer {
 }
 .sheet button.cur { background: var(--amber); color: #15100a; border-color: var(--amber); }
 .sheet button .n { font-family: var(--mono); font-size: 12px; }
-#smpFile { display: none; }
+/* Nicht display:none: ein so verstecktes Dateifeld laesst sich auf dem iPhone
+   nicht immer oeffnen. Es bleibt im Bild, nur unsichtbar und ohne Platzbedarf. */
+#smpFile { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .filebtn {
   display: grid; place-items: center; min-height: 44px; border-radius: 6px;
   background: var(--raised); border: 1px solid var(--line); font-weight: 600;
@@ -296,7 +298,8 @@ textarea {
     <p class="hint">Dateien werden im Browser entpackt und in den Vorrat gelegt - eine Spur
       spielt sie mit der Machine <b>SMPL</b>. Note 60 spielt in Aufnahmegeschwindigkeit.</p>
     <label class="filebtn" for="smpFile">DATEIEN WAEHLEN</label>
-    <input type="file" id="smpFile" accept="audio/*" multiple>
+    <input type="file" id="smpFile" multiple
+           accept=".wav,.wave,.aif,.aiff,.mp3,.m4a,.aac,.ogg,.oga,.opus,.flac,.caf,audio/wav,audio/x-wav,audio/wave,audio/aiff,audio/mpeg,audio/mp4,audio/ogg,audio/flac,audio/*">
     <div class="sheet" id="smpList"></div>
     <div class="lbl" style="margin-top:4px">Aufnehmen, was herauskommt</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -805,6 +808,46 @@ async function smpFetch(name) {
   } catch (e) { return null; }
 }
 
+// WAV selbst lesen. Das wichtigste Format soll nicht davon abhaengen, was der Browser
+// gerade entpacken kann oder will - und auf dem iPhone will er nicht immer.
+// Gelesen werden PCM 8/16/24/32 Bit und Fliesskomma 32 Bit, mono oder stereo.
+function wavLesen(ab) {
+  const d = new DataView(ab);
+  const txt = (at) => String.fromCharCode(d.getUint8(at), d.getUint8(at + 1),
+                                          d.getUint8(at + 2), d.getUint8(at + 3));
+  if (txt(0) !== 'RIFF' || txt(8) !== 'WAVE') return null;
+  let at = 12, fmt = null, datAt = 0, datLen = 0;
+  while (at + 8 <= d.byteLength) {
+    const id = txt(at), len = d.getUint32(at + 4, true);
+    if (id === 'fmt ') {
+      fmt = {form: d.getUint16(at + 8, true), ch: d.getUint16(at + 10, true),
+             rate: d.getUint32(at + 12, true), bits: d.getUint16(at + 22, true)};
+    } else if (id === 'data') { datAt = at + 8; datLen = len; }
+    at += 8 + len + (len & 1);
+  }
+  if (!fmt || !datAt) return null;
+  const ch = fmt.ch >= 2 ? 2 : 1;
+  const bps = fmt.bits >> 3;
+  if (!bps || (fmt.form !== 1 && fmt.form !== 3 && fmt.form !== 0xfffe)) return null;
+  const frames = Math.floor(datLen / (bps * fmt.ch));
+  const out = new Float32Array(frames * ch);
+  for (let i = 0; i < frames; i++) {
+    for (let c = 0; c < ch; c++) {
+      const o = datAt + (i * fmt.ch + c) * bps;
+      let v = 0;
+      if (fmt.form === 3) v = bps === 8 ? d.getFloat64(o, true) : d.getFloat32(o, true);
+      else if (bps === 1) v = (d.getUint8(o) - 128) / 128;
+      else if (bps === 2) v = d.getInt16(o, true) / 32768;
+      else if (bps === 3) {
+        const u = d.getUint8(o) | (d.getUint8(o + 1) << 8) | (d.getInt8(o + 2) << 16);
+        v = u / 8388608;
+      } else if (bps === 4) v = d.getInt32(o, true) / 2147483648;
+      out[i * ch + c] = v;
+    }
+  }
+  return {data: out, rate: fmt.rate || 44100, ch, frames};
+}
+
 // --- Sample-Vorrat --------------------------------------------------------------------------
 let smpSel = 0;
 const smpAck = new Set();          // Plaetze, die der Audio-Faden bestaetigt hat
@@ -851,29 +894,29 @@ async function smpLoadFiles(files) {
   for (const f of files) {
     if (slot >= X.scSmpSlots()) break;
     try {
-      const buf = await ac.decodeAudioData(await f.arrayBuffer());
-      const n = buf.length;
-      const ch = buf.numberOfChannels >= 2 ? 2 : 1;      // Stereo bleibt Stereo
-      const mono = new Float32Array(n * ch);
-      if (ch === 2) {
-        const l = buf.getChannelData(0), r = buf.getChannelData(1);
-        for (let i = 0; i < n; i++) { mono[i * 2] = l[i]; mono[i * 2 + 1] = r[i]; }
+      const ab = await f.arrayBuffer();
+      let mono, n, ch, rate;
+      const selbst = /\.wave?$/i.test(f.name) ? wavLesen(ab) : null;
+      if (selbst) {                                      // WAV lesen wir selbst
+        mono = selbst.data; n = selbst.frames; ch = selbst.ch; rate = selbst.rate;
       } else {
-        mono.set(buf.getChannelData(0));
+        const buf = await ac.decodeAudioData(ab.slice(0));
+        n = buf.length;
+        ch = buf.numberOfChannels >= 2 ? 2 : 1;          // Stereo bleibt Stereo
+        mono = new Float32Array(n * ch);
+        if (ch === 2) {
+          const l = buf.getChannelData(0), r = buf.getChannelData(1);
+          for (let i = 0; i < n; i++) { mono[i * 2] = l[i]; mono[i * 2 + 1] = r[i]; }
+        } else mono.set(buf.getChannelData(0));
+        rate = buf.sampleRate;
       }
       const name = f.name.replace(/\.[^.]+$/, '').slice(0, 20);
-      const nb = new TextEncoder().encode(name);
-      const dp = X.scAlloc(n * 4);
-      new Float32Array(X.memory.buffer, dp, n).set(mono);
-      const np = X.scAlloc(nb.length + 1);
-      const nm = new Uint8Array(X.memory.buffer, np, nb.length + 1);
-      nm.set(nb); nm[nb.length] = 0;
-      if (!X.scSmpSet(slot, dp, n, buf.sampleRate, np, 0, ch)) {
+      // Eine Stelle legt Samples ab - sie rechnet die Kanaele richtig mit.
+      if (!smpPut(slot, mono, rate, ch, name)) {
         el('smpList').innerHTML = '<div class="err">Der Vorrat ist voll.</div>';
         return;
       }
-      smpSendToAudio(slot);
-      smpStore(name, mono, buf.sampleRate, ch);
+      smpStore(name, mono, rate, ch);
       slot++;
     } catch (e) {
       el('smpList').innerHTML = '<div class="err">' + f.name + ' liess sich nicht lesen: '
@@ -908,6 +951,12 @@ for (const b of document.querySelectorAll('.rec')) {
 }
 el('smpBtn').onclick = () => { smpPaint(); el('recInfo').textContent = ''; el('smp').showModal(); };
 el('smpClose').onclick = () => el('smp').close();
+// Der Beschriftungs-Klick allein reicht auf manchen Geraeten nicht - hier wird der
+// Auswaehler zusaetzlich von Hand geoeffnet.
+document.querySelector('.filebtn').addEventListener('click', ev => {
+  ev.preventDefault();
+  el('smpFile').click();
+});
 el('smpFile').onchange = e => { smpLoadFiles([...e.target.files]); e.target.value = ''; };
 el('smpClear').onclick = () => {
   cmd('scSmpClear'); smpAck.clear(); smpSel = 0; smpPaint(); buildParams();
@@ -936,9 +985,10 @@ async function smpRestoreWanted() {
 // Ein fertiges Sample in beide Kerne legen.
 function smpPut(slot, data, rate, ch, name) {
   const nb = new TextEncoder().encode(name);
-  const dp = X.scAlloc(data.length * 4);
+  const dp = X.scScratch(data.length * 4 + nb.length + 64);
+  if (!dp) return false;
   new Float32Array(X.memory.buffer, dp, data.length).set(data);
-  const np = X.scAlloc(nb.length + 1);
+  const np = dp + data.length * 4;
   const nm = new Uint8Array(X.memory.buffer, np, nb.length + 1);
   nm.set(nb); nm[nb.length] = 0;
   if (!X.scSmpSet(slot, dp, data.length / ch, rate, np, 0, ch)) return false;
@@ -952,7 +1002,7 @@ el('docClose').onclick = () => el('doc').close();
 el('docLoad').onclick = () => {
   const t = el('docText').value;
   const b = new TextEncoder().encode(t + '\0');
-  const p = X.scAlloc(b.length);
+  const p = X.scScratch(b.length);
   new Uint8Array(X.memory.buffer, p, b.length).set(b);
   X.scLoad(p);
   if (node) node.port.postMessage({fn: 'scLoad', doc: new TextEncoder().encode(t)});

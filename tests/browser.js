@@ -2,6 +2,27 @@
 // Gemessen wird am ERGEBNIS - am Pegel des Audio-Kerns, nicht an der Anzeige.
 // Start:  node tests/browser.js [http://localhost:8787/index.html]
 const {chromium} = require('playwright');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+// Eine WAV-Datei zum Auswaehlen bauen - 16 Bit stereo, damit der Test nichts voraussetzt.
+function testWav(datei, rate = 48000, sek = 0.5, hz = 440) {
+  const n = Math.round(rate * sek), bl = 4;
+  const b = Buffer.alloc(44 + n * bl);
+  b.write('RIFF', 0); b.writeUInt32LE(36 + n * bl, 4); b.write('WAVE', 8);
+  b.write('fmt ', 12); b.writeUInt32LE(16, 16); b.writeUInt16LE(1, 20);
+  b.writeUInt16LE(2, 22); b.writeUInt32LE(rate, 24); b.writeUInt32LE(rate * bl, 28);
+  b.writeUInt16LE(bl, 32); b.writeUInt16LE(16, 34);
+  b.write('data', 36); b.writeUInt32LE(n * bl, 40);
+  for (let i = 0; i < n; i++) {
+    const v = Math.round(20000 * Math.sin(2 * Math.PI * hz * i / rate));
+    b.writeInt16LE(v, 44 + i * 4);
+    b.writeInt16LE(Math.round(v * 0.5), 46 + i * 4);
+  }
+  fs.writeFileSync(datei, b);
+  return datei;
+}
 
 let fails = 0, checks = 0;
 const chk = (ok, what) => { checks++; if (!ok) { fails++; console.log('  FEHLER: ' + what); } };
@@ -100,6 +121,39 @@ const stummMuster = async p => {
   const a = p.locator('.row', {hasText: 'trk.src.a'});
   chk((await a.locator('.nm').textContent()).includes('RATIO'), 'der Regler heisst nicht wie die Machine');
   chk((await a.locator('.v').textContent()).includes(':'), 'FM zeigt kein Verhaeltnis');
+
+  grp('Samples auswaehlen und laden');
+  {
+    const feld = p.locator('#smpFile');
+    // Auf dem iPhone laesst sich ein mit display:none verstecktes Feld nicht oeffnen,
+    // und "audio/*" allein graut .wav-Dateien aus.
+    chk(await feld.evaluate(e => getComputedStyle(e).display) !== 'none',
+        'das Dateifeld ist mit display:none versteckt');
+    const accept = await feld.getAttribute('accept');
+    chk(accept.includes('.wav'), 'der Auswaehler nennt .wav nicht ausdruecklich');
+    chk(accept.includes('audio/wav'), 'der Auswaehler nennt audio/wav nicht');
+
+    const datei = testWav(path.join(os.tmpdir(), 'sc-test-stereo.wav'));
+    await p.locator('#smpBtn').tap();
+    await p.waitForTimeout(300);
+    await feld.setInputFiles(datei);
+    await p.waitForTimeout(1500);
+    const eintrag = (await p.locator('#smpList button').first().textContent()).trim();
+    chk(eintrag.includes('sc-test-stereo'), 'das Sample steht nicht im Vorrat');
+    chk(eintrag.includes('0.50 s'), 'die Laenge stimmt nicht: ' + eintrag);
+    chk(eintrag.includes('ST'), 'die Datei wurde nicht als stereo gelesen');
+    chk(eintrag.includes('\u25cf'), 'der Klang-Kern hat das Sample nicht bestaetigt');
+
+    await p.locator('#smpUse').tap();
+    await p.waitForTimeout(400);
+    const eng2 = p.locator('.row', {hasText: 'trk.machine'});
+    await eng2.scrollIntoViewIfNeeded();
+    chk((await eng2.locator('.v').textContent()).trim() === 'SMPL', 'die Spur spielt nicht SMPL');
+    const sr = p.locator('.row', {hasText: 'trk.smp'});
+    await sr.scrollIntoViewIfNeeded();
+    chk((await sr.locator('.v').textContent()).includes('sc-test-stereo'),
+        'der Sample-Platz zeigt den Namen nicht');
+  }
 
   grp('Keine Fehler in der Konsole');
   chk(fehler.length === 0, 'Fehler: ' + fehler.join(' | '));

@@ -103,8 +103,12 @@ Entscheidend ist, dass der Platz ein ganz normaler **lockbarer** Spurparameter i
 jeder Step kann ein anderes Sample anschlagen, ohne dass der Sampler dafür etwas Eigenes braucht.
 Die Tonhöhe entsteht aus der Abspielgeschwindigkeit; Note 60 spielt in Aufnahmegeschwindigkeit.
 
-In der Oberfläche entpackt der **Browser** die Dateien (WAV, MP3, was er kann) und schiebt
-Fließkommazahlen in den Kern. Zwei Fälle, die ein Test aufgedeckt hat und die leicht zu übersehen
+**WAV liest die Oberfläche selbst** — PCM 8/16/24/32 Bit und Fließkomma, mono und stereo. Das
+wichtigste Format soll nicht davon abhängen, was der Browser gerade entpacken will; auf dem
+iPhone will er nicht immer. Alles andere (MP3, M4A, FLAC …) geht weiterhin an den Browser.
+Zwei Dinge, die auf dem iPhone den Dateiwähler blockieren und die man nicht ahnt: ein mit
+`display:none` verstecktes Dateifeld öffnet dort oft gar nichts, und `accept="audio/*"` allein
+gräut `.wav` aus — die Endungen müssen ausdrücklich dastehen. Zwei Fälle, die ein Test aufgedeckt hat und die leicht zu übersehen
 sind: Samples, die **vor** dem ersten PLAY geladen werden, erreichen den Audio-Faden sonst nie —
 sie werden beim Start nachgereicht; und ein Punkt in der Liste zeigt, dass der Klang-Kern das
 Sample wirklich hat, nicht nur die Anzeige.

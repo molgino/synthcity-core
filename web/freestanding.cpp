@@ -6,9 +6,18 @@ extern "C" {
 
 static unsigned char* scHeap = 0;
 
+// Der Speicher waechst mit. Vorher lief der Zeiger ueber das Ende hinaus, und die
+// Oberflaeche bekam eine Adresse, die es nicht gibt ("offset is out of bounds") -
+// genau dann, wenn man mehrere Samples hintereinander laedt.
 void* malloc(size_t n) {
     if (!scHeap) scHeap = &__heap_base;
     unsigned char* p = (unsigned char*)(((size_t)scHeap + 15) & ~(size_t)15);
+    size_t need = (size_t)p + n;
+    size_t have = (size_t)__builtin_wasm_memory_size(0) * 65536u;
+    if (need > have) {
+        size_t pages = (need - have + 65535u) / 65536u;
+        if (__builtin_wasm_memory_grow(0, pages) == (size_t)-1) return 0;   // kein Platz mehr
+    }
     scHeap = p + n;
     return p;
 }
