@@ -54,7 +54,8 @@ const grp = n => console.log('- ' + n);
   chk(str(x.scParamText(idxOf('trk.flt.type'), 0, -1)) === 'TIEFPASS', 'Filtertyp zeigt keinen Namen');
   chk(str(x.scParamText(idxOf('trk.cond'), 0, -1)) === '--', 'COND 0 ist nicht leer');
   chk(x.scEnumCount(idxOf('trk.cond')) > 50, 'zu wenige Bedingungen zur Auswahl');
-  chk(x.scEnumCount(idxOf('trk.machine')) === 3, 'Machine-Liste falsch lang');
+  chk(x.scEnumCount(idxOf('trk.machine')) === 4, 'Machine-Liste falsch lang');
+  chk(str(x.scParamText(idxOf('trk.machine'), 3, -1)) === 'SMPL', 'Machine 3 heisst nicht SMPL');
   chk(str(x.scParamText(idxOf('trk.machine'), 1, -1)) === 'FM', 'Machine 1 heisst nicht FM');
   chk(str(x.scParamText(idxOf('trk.machine'), 2, -1)) === 'DRUM', 'Machine 2 heisst nicht DRUM');
   // Dieselbe Zahl heisst je Machine etwas anderes - das ist der Sinn des Machine-Prinzips.
@@ -108,6 +109,33 @@ const grp = n => console.log('- ' + n);
   chk(peak > 0.01 && peak <= 1.0, 'Pegel unplausibel (' + peak.toFixed(3) + ')');
   chk(Math.sqrt(sum / (N * 2)) > 0.01, 'kaum Klang');
   x.scStop();
+
+  grp('Sample-Vorrat');
+  {
+    const n = 24000;
+    const p2 = x.scAlloc(n * 4);
+    const f32 = new Float32Array(x.memory.buffer, p2, n);
+    for (let i = 0; i < n; i++) f32[i] = Math.sin(2 * Math.PI * 440 * i / 48000);
+    const namePtr = x.scAlloc(16);
+    new Uint8Array(x.memory.buffer, namePtr, 16).set(new TextEncoder().encode('sinus\0'));
+    chk(x.scSmpSet(0, p2, n, 48000, namePtr, 1) === 1, 'Sample laesst sich nicht ablegen');
+    chk(x.scSmpFrames(0) === n, 'Laenge stimmt nicht');
+    chk(str(x.scSmpName(0)) === 'sinus', 'Name stimmt nicht');
+    chk(x.scSmpFrames(5) === 0, 'ein leerer Platz meldet Laenge');
+    chk(x.scSmpFree() > 0 && x.scSmpFree() < 1 << 21, 'freier Platz unplausibel');
+
+    x.scSet(0, slotOf('trk.machine'), 3);
+    x.scSet(0, slotOf('trk.smp'), 0);
+    x.scSet(0, slotOf('trk.note'), 60);
+    x.scSet(0, slotOf('trk.flt.freq'), 127);
+    x.scStepSet(0, 0, 1);
+    x.scStart();
+    const f = render(24000);
+    chk(bin(f, 24000, 440) > bin(f, 24000, 880) * 6, 'das Sample klingt nicht richtig');
+    x.scStop();
+    x.scSmpClear();
+    chk(x.scSmpFrames(0) === 0, 'der Vorrat laesst sich nicht leeren');
+  }
 
   grp('Dokument: speichern und laden');
   x.scDemo();

@@ -125,6 +125,25 @@ void scPlayNote(int t, int note, int vel) {
     gEng.fire(e);
 }
 
+// --- Sample-Vorrat ------------------------------------------------------------------------------
+// Geladen wird hier, im Hauptfaden; der Audio-Faden liest nur. Die Oberflaeche schiebt die
+// entpackten Samples als Fliesskomma herein - das Entpacken macht der Browser.
+int   scSmpSlots()        { return SMP_SLOTS; }
+int   scSmpFrames(int i)  { return (i >= 0 && i < SMP_SLOTS) ? gEng.pool.s[i].n : 0; }
+float scSmpRate(int i)    { return (i >= 0 && i < SMP_SLOTS) ? gEng.pool.s[i].rate : 0.0f; }
+int   scSmpLoop(int i)    { return (i >= 0 && i < SMP_SLOTS) ? gEng.pool.s[i].loop : 0; }
+const char* scSmpName(int i) { return (i >= 0 && i < SMP_SLOTS) ? gEng.pool.s[i].name : ""; }
+int   scSmpFree()         { return gEng.pool.freeFrames(); }
+// Zeiger auf die Samples selbst - die Oberflaeche liest sie zurueck, um sie dem Audio-Faden
+// nachzureichen (und spaeter, um die Wellenform zu zeichnen).
+const float* scSmpData(int i) {
+    return (i >= 0 && i < SMP_SLOTS) ? gEng.pool.data + gEng.pool.s[i].at : gEng.pool.data;
+}
+void  scSmpClear()        { gEng.pool.clear(); }
+int   scSmpSet(int slot, const float* d, int n, float rate, const char* name, int loop) {
+    return gEng.pool.set(slot, d, n, rate, name, loop != 0) ? 1 : 0;
+}
+
 // --- Dokument: dieselben Zeilen wie die Datei und wie der Plugin-Zustand ------------------------
 const char* scSave() {
     static Doc d;

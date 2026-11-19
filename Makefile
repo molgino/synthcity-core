@@ -9,7 +9,7 @@ endif
 
 WASMFLAGS = --target=wasm32 -O2 -std=c++17 -nostdlib -ffreestanding -fno-exceptions -fno-rtti \
             -fno-threadsafe-statics -DSC_NO_FILES -Iweb/stub -include web/freestanding.h \
-            -Wl,--no-entry -Wl,--export-all -Wl,--initial-memory=33554432
+            -Wl,--no-entry -Wl,--export-all -Wl,--initial-memory=67108864
 BINS = tests/unit tests/render tests/plugin tools/bench tools/demo build/synthcity.clap web/synthcity.wasm
 HDRS = $(wildcard src/*.h)
 

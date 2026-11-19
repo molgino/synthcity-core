@@ -45,7 +45,7 @@ header {
   display: flex; align-items: center; gap: 10px; padding: 8px max(10px, env(safe-area-inset-left, 0px));
   border-bottom: 1px solid var(--line); background: var(--surface); min-height: 52px;
 }
-.brand { font-weight: 700; letter-spacing: .18em; font-size: 13px; }
+.brand { font-weight: 700; letter-spacing: .18em; font-size: 13px; white-space: nowrap; }
 .brand span { color: var(--amber); }
 button {
   font-family: var(--font); font-weight: 600; color: var(--fg); background: var(--raised);
@@ -154,6 +154,15 @@ footer {
 }
 .sheet button.cur { background: var(--amber); color: #15100a; border-color: var(--amber); }
 .sheet button .n { font-family: var(--mono); font-size: 12px; }
+#smpFile { display: none; }
+.filebtn {
+  display: grid; place-items: center; min-height: 44px; border-radius: 6px;
+  background: var(--raised); border: 1px solid var(--line); font-weight: 600;
+  font-size: 12px; letter-spacing: .08em; cursor: pointer;
+}
+.filebtn:active { background: #27333b; }
+.smprow { display: flex; align-items: center; gap: 8px; }
+.smprow .s { font-family: var(--mono); color: var(--dim); font-size: 11px; }
 .row.pick { cursor: pointer; }
 .row.pick .v::after { content: ' \25be'; color: var(--dim); }
 
@@ -172,8 +181,8 @@ textarea {
 
 @media (max-width: 560px) {
   :root { --rail: 62px; }
+  .brand { display: none; }          /* schmaler Schirm: die Knoepfe sind wichtiger */
   .padgrid { grid-template-columns: repeat(4, 1fr); }
-  .brand { font-size: 11px; }
 }
 
 /* Querformat am Handy: wenig Hoehe, viel Breite. Quadratische Pads wuerden die Reglerliste
@@ -216,6 +225,7 @@ textarea {
       <button class="tiny" id="bpmUp" aria-label="Tempo hoch">+</button>
     </div>
     <span class="klang" id="klang" title="Klang-Kern"><i></i>KLANG</span>
+    <button class="tiny" id="smpBtn">SMP</button>
     <button class="tiny" id="docBtn">DOK</button>
   </header>
 
@@ -260,6 +270,23 @@ textarea {
   </div>
 </dialog>
 
+<dialog id="smp">
+  <div class="dlg">
+    <div class="lbl">Sample-Vorrat</div>
+    <p class="hint">Dateien werden im Browser entpackt und in den Vorrat gelegt - eine Spur
+      spielt sie mit der Machine <b>SMPL</b>. Note 60 spielt in Aufnahmegeschwindigkeit.</p>
+    <label class="filebtn" for="smpFile">DATEIEN WAEHLEN</label>
+    <input type="file" id="smpFile" accept="audio/*" multiple>
+    <div class="sheet" id="smpList"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button id="smpUse">AUF DIESE SPUR</button>
+      <button id="smpClear">VORRAT LEEREN</button>
+      <div class="spacer"></div>
+      <button id="smpClose">SCHLIESSEN</button>
+    </div>
+  </div>
+</dialog>
+
 <dialog id="doc">
   <div class="dlg">
     <div class="lbl">Projekt als Dokument</div>
@@ -291,7 +318,10 @@ let posSteps = new Array(8).fill(-1);
 const P = [];                 // Parametertabelle, aus dem Kern gelesen
 const el = id => document.getElementById(id);
 const machOf = t => X.scGet(t, P.find(p => p.id === 'trk.machine').slot);
-const ptext = (p, v) => str(X.scParamText(p.i, v, machOf(sel)));
+const ptext = (p, v) => {
+  if (p.id === 'trk.smp') return X.scSmpFrames(v) ? str(X.scSmpName(v)) : (v + 1) + '  leer';
+  return str(X.scParamText(p.i, v, machOf(sel)));
+};
 // Wie die beiden Quellregler heissen, sagt die Machine - nicht die Tabelle.
 const rowName = p => {
   if (p.id === 'trk.src.a') return str(X.scMachLabel(machOf(sel), 0));
@@ -348,8 +378,11 @@ async function audioOn() {
     if (e.data.type === 'pos') posSteps = e.data.steps;
     if (e.data.type === 'ready') el('klang').classList.add('on');
     if (e.data.type === 'fehler') console.error('Audio-Kern:', e.data.text);
+    if (e.data.type === 'smp') { if (e.data.n) smpAck.add(e.data.slot); smpPaint(); }
   };
   node.connect(ctx.destination);
+  // Was vor dem ersten PLAY geladen wurde, kennt der Audio-Faden noch nicht - nachreichen.
+  for (let i = 0; i < X.scSmpSlots(); i++) smpSendToAudio(i);
 }
 
 // --- Spurleiste --------------------------------------------------------------------------------
@@ -441,7 +474,7 @@ function buildParams() {
       box.appendChild(h);
     }
     const row = document.createElement('div');
-    row.className = 'row' + (X.scEnumCount(p.i) ? ' pick' : '');
+    row.className = 'row' + (X.scEnumCount(p.i) || p.id === 'trk.smp' ? ' pick' : '');
     row.innerHTML = `<div class="nm">${rowName(p)}<small>${p.id}</small></div>
                      <div style="display:flex;align-items:center"><span class="v"></span></div>
                      <div class="bar"></div>`;
@@ -468,6 +501,7 @@ function writeValue(p, v) {
 // Werte mit Bedeutung (Engine, Filtertyp, Bedingung) kommen als Liste - eine Zahl,
 // die man nachschlagen muss, waere keine Anzeige.
 function openPick(p) {
+  if (p.id === 'trk.smp') return openSmpPick(p);
   const n = X.scEnumCount(p.i);
   if (!n) return;
   const cur = valueOf(p).v;
@@ -496,6 +530,24 @@ function openPick(p) {
   el('pick').showModal();
 }
 
+// Der Sample-Platz hat keine feste Liste - er zeigt, was gerade im Vorrat liegt.
+function openSmpPick(p) {
+  const cur = valueOf(p).v;
+  el('pickTitle').textContent = 'SAMPLE  trk.smp';
+  const list = el('pickList');
+  list.innerHTML = '';
+  let letzter = 0;
+  for (let i = 0; i < X.scSmpSlots(); i++) if (X.scSmpFrames(i)) letzter = i;
+  for (let i = 0; i <= Math.min(letzter + 1, X.scSmpSlots() - 1); i++) {
+    const b = document.createElement('button');
+    b.className = i === cur ? 'cur' : '';
+    b.innerHTML = `<span class="n">${smpLabel(i)}</span>`;
+    b.onclick = () => { writeValue(p, i); paint(); el('pick').close(); };
+    list.appendChild(b);
+  }
+  el('pick').showModal();
+}
+
 // Erst die Richtung entscheiden, dann handeln: sonst verstellt man beim Blaettern Werte.
 function dragRow(row, p) {
   let id = null, x0 = 0, y0 = 0, start = 0, mode = 0;
@@ -518,7 +570,7 @@ function dragRow(row, p) {
     paint();
   });
   const end = e => {
-    if (id !== null && mode === 0 && X.scEnumCount(p.i)) openPick(p);   // getippt, nicht gezogen
+    if (id !== null && mode === 0 && (X.scEnumCount(p.i) || p.id === 'trk.smp')) openPick(p);
     id = null; mode = 0;
   };
   row.addEventListener('pointerup', end);
@@ -587,6 +639,93 @@ el('lenDn').onclick = () => cmd('scSetTrackLen', sel, Math.max(1, X.scTrackLen(s
 el('lockDone').onclick = closeLock;
 el('lockPrev').onclick = () => jumpTrig(-1);
 el('lockNext').onclick = () => jumpTrig(1);
+
+// --- Sample-Vorrat --------------------------------------------------------------------------
+let smpSel = 0;
+const smpAck = new Set();          // Plaetze, die der Audio-Faden bestaetigt hat
+const smpSlot = () => P.find(p => p.id === 'trk.smp').slot;
+const machSlot = () => P.find(p => p.id === 'trk.machine').slot;
+
+function smpLabel(i) {
+  const n = X.scSmpFrames(i);
+  if (!n) return (i + 1) + '  leer';
+  const ack = smpAck.has(i) ? ' \u25cf' : (node ? ' \u2026' : '');
+  return (i + 1) + '  ' + str(X.scSmpName(i)) + '  ' + (n / X.scSmpRate(i)).toFixed(2) + ' s' + ack;
+}
+// Ein Sample aus dem Modell in den Audio-Faden schicken (auch nachtraeglich).
+function smpSendToAudio(i) {
+  const n = X.scSmpFrames(i);
+  if (!node || !n) return;
+  const data = new Float32Array(X.memory.buffer, X.scSmpData(i), n).slice();
+  node.port.postMessage({fn: 'smp', slot: i, data, rate: X.scSmpRate(i),
+                         name: new TextEncoder().encode(str(X.scSmpName(i))),
+                         loop: X.scSmpLoop(i)});
+}
+function smpPaint() {
+  const list = el('smpList');
+  list.innerHTML = '';
+  let belegt = 0;
+  for (let i = 0; i < X.scSmpSlots(); i++) {
+    if (!X.scSmpFrames(i) && i > belegt + 1) continue;      // leere Plaetze nur bis zum naechsten
+    if (X.scSmpFrames(i)) belegt = i;
+    const b = document.createElement('button');
+    b.className = i === smpSel ? 'cur' : '';
+    b.innerHTML = `<span class="n">${smpLabel(i)}</span>`;
+    b.onclick = () => { smpSel = i; smpPaint(); };
+    list.appendChild(b);
+  }
+}
+// Entpacken macht der Browser; in den Kern gehen fertige Fliesskommazahlen.
+async function smpLoadFiles(files) {
+  const ac = ctx || new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(1, 1, 48000);
+  const erster = smpSel;
+  let slot = smpSel;
+  for (const f of files) {
+    if (slot >= X.scSmpSlots()) break;
+    try {
+      const buf = await ac.decodeAudioData(await f.arrayBuffer());
+      const n = buf.length;
+      const mono = new Float32Array(n);
+      for (let c = 0; c < buf.numberOfChannels; c++) {
+        const d = buf.getChannelData(c);
+        for (let i = 0; i < n; i++) mono[i] += d[i] / buf.numberOfChannels;
+      }
+      const name = f.name.replace(/\.[^.]+$/, '').slice(0, 20);
+      const nb = new TextEncoder().encode(name);
+      const dp = X.scAlloc(n * 4);
+      new Float32Array(X.memory.buffer, dp, n).set(mono);
+      const np = X.scAlloc(nb.length + 1);
+      const nm = new Uint8Array(X.memory.buffer, np, nb.length + 1);
+      nm.set(nb); nm[nb.length] = 0;
+      if (!X.scSmpSet(slot, dp, n, buf.sampleRate, np, 0)) {
+        el('smpList').innerHTML = '<div class="err">Der Vorrat ist voll.</div>';
+        return;
+      }
+      smpSendToAudio(slot);
+      slot++;
+    } catch (e) {
+      el('smpList').innerHTML = '<div class="err">' + f.name + ' liess sich nicht lesen: '
+                                + e.message + '</div>';
+      return;
+    }
+  }
+  smpSel = erster;            // das eben Geladene ist gewaehlt, nicht der naechste freie Platz
+  smpPaint();
+  buildParams();
+}
+el('smpBtn').onclick = () => { smpPaint(); el('smp').showModal(); };
+el('smpClose').onclick = () => el('smp').close();
+el('smpFile').onchange = e => { smpLoadFiles([...e.target.files]); e.target.value = ''; };
+el('smpClear').onclick = () => {
+  cmd('scSmpClear'); smpAck.clear(); smpSel = 0; smpPaint(); buildParams();
+};
+// Ein Sample auf die gewaehlte Spur legen heisst: Machine auf SMPL und den Platz einstellen.
+el('smpUse').onclick = () => {
+  cmd('scSet', sel, machSlot(), 3);
+  cmd('scSet', sel, smpSlot(), smpSel);
+  el('smp').close();
+  buildParams();
+};
 
 el('pickClose').onclick = () => el('pick').close();
 el('docBtn').onclick = () => { el('docText').value = str(X.scSave()); el('doc').showModal(); };

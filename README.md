@@ -5,7 +5,7 @@ Konzept: `../r36-groovebox/docs/konzept-neu.md`.
 
 Kein Framework, keine Abhängigkeiten, keine STL-Container im Kern — C++17 und fertig.
 
-## Stand: Meilenstein 6 — drei Machines und zwei Effekt-Busse
+## Stand: Meilenstein 7 — der Sampler
 
 | Baustein | Datei | Zustand |
 | --- | --- | --- |
@@ -15,13 +15,14 @@ Kein Framework, keine Abhängigkeiten, keine STL-Container im Kern — C++17 und
 | Scheduler in Samples, Conditions, Micro-Timing, Ratchets | `src/seq.h` | steht |
 | Lock-freie Befehls-Queue (Oberfläche → Audio) | `src/queue.h` | steht |
 | DSP-Bausteine: PolyBLEP, TPT-Filter, Hüllkurve, Skalen | `src/dsp.h` | steht |
-| Machines: `POLY`, `FM`, `DRUM` — austauschbar hinter denselben Reglern | `src/machine.h` | steht |
+| Machines: `POLY`, `FM`, `DRUM`, `SMPL` — hinter denselben Reglern | `src/machine.h` | steht |
+| Sample-Vorrat (64 Plätze, gemeinsamer Block, mono) | `src/sample.h` | steht |
 | Sende-Effekte: Delay im Takt, Hall (FDN) | `src/fx.h` | steht |
 | Stimmen, Filter, Hüllkurve, Panorama, Summe | `src/engine.h` | steht |
 | Slides als Rampen, Scenes + Morph, Mute, Step-Loop | `src/engine.h`, `src/model.h` | steht |
 | CLAP-Plugin (Parameter, Zustand, Noten, Transport) | `plugin/clap_plugin.cpp` | steht |
 | Oberfläche (WebAssembly + Touch), baut sich aus der Tabelle | `web/` | steht |
-| Sampler, Song-Modus, Gerät | — | später |
+| Song-Modus, Gerät, Sampler-Aufnahme | — | später |
 
 ```
 make test        # 60 + 25 + 73 + 19 Prüfungen
@@ -56,6 +57,26 @@ Drei Entscheidungen, die den Rest tragen:
   Das war zuerst falsch: der Schnappschuss fror alles ein, und ein gedrehter Filterregler
   blieb am klingenden Ton wirkungslos.
 
+## Der Sampler
+
+Der Vorrat ist **ein** Speicherblock mit 64 Plätzen (rund 44 Sekunden). Geladen wird außerhalb
+des Audio-Threads, gelesen wird dort nur — die Regel aus Meilenstein 1 gilt auch hier.
+
+Entscheidend ist, dass der Platz ein ganz normaler **lockbarer** Spurparameter ist (`trk.smp`):
+jeder Step kann ein anderes Sample anschlagen, ohne dass der Sampler dafür etwas Eigenes braucht.
+Die Tonhöhe entsteht aus der Abspielgeschwindigkeit; Note 60 spielt in Aufnahmegeschwindigkeit.
+
+In der Oberfläche entpackt der **Browser** die Dateien (WAV, MP3, was er kann) und schiebt
+Fließkommazahlen in den Kern. Zwei Fälle, die ein Test aufgedeckt hat und die leicht zu übersehen
+sind: Samples, die **vor** dem ersten PLAY geladen werden, erreichen den Audio-Faden sonst nie —
+sie werden beim Start nachgereicht; und ein Punkt in der Liste zeigt, dass der Klang-Kern das
+Sample wirklich hat, nicht nur die Anzeige.
+
+Was noch fehlt: **Stereo** (ein Stereo-Sample wird beim Laden zusammengelegt), **Aufnahme** im
+Gerät, und die Samples stehen **nicht im Dokument** — ein gespeichertes Projekt merkt sich die
+Platznummer, nicht die Datei. Das ist der nächste Schritt, denn ohne ihn überlebt ein Projekt den
+Neustart nur halb.
+
 ## Machines und Effekte
 
 **Drei Machines hinter denselben zwei Reglern** — das Elektron-Prinzip. Dieselbe Zahl heißt je
@@ -66,6 +87,7 @@ Machine etwas anderes, und *die Machine sagt, was sie heißt*:
 | `POLY` | DTUN | SHAPE | `+0.00 Halbt.` |
 | `FM` | RATIO | INDEX | `5.00 : 1` |
 | `DRUM` | SWEEP | RAUSCH | `24 Halbt.` |
+| `SMPL` | START | FEIN | `50 %` |
 
 Die Parametertabelle nennt die beiden nur noch `QUELLE A` und `QUELLE B`; den echten Namen
 liefert `Machine::labelA/labelB`, den Anzeigetext `Machine::text`. Damit stimmt die Beschriftung
@@ -201,8 +223,9 @@ Last (x86, ein Kern): 580× Echtzeit mit einer Spur, 33× im schlimmsten Fall mi
 
 ## Als Nächstes
 
-7. Sampler im Kern (Machine `SMPL`), Song-Modus.
-8. Gerät: R36S-Build, Dateien, Gamepad-Bedienung.
+8. Samples ins Dokument (nach Name, nachladbar) — sonst überlebt ein Projekt den Neustart nur halb.
+9. Song-Modus, Pattern-Bänke.
+10. Gerät: R36S-Build, Aufnahme, Gamepad-Bedienung.
 
 Offen aus Meilenstein 2: das DSP ist **neu geschrieben**, nicht aus SYNTH CITY portiert — ein
 Bit-Vergleich gegen den alten Render steht deshalb aus. Die Referenz-WAV sichert ab jetzt den

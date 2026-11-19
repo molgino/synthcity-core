@@ -26,7 +26,21 @@ class SynthCityNode extends AudioWorkletProcessor {
   }
   apply(m) {
     if (m.fn === 'scLoad') { this.load(m.doc); return; }
+    if (m.fn === 'smp')    { this.sample(m); return; }
     if (this.x[m.fn]) this.x[m.fn](...(m.args || []));
+  }
+
+  // Ein Sample kommt als fertige Fliesskommazahlen herueber - entpackt wird im Hauptfaden.
+  sample(m) {
+    const p = this.x.scAlloc(m.data.length * 4);
+    new Float32Array(this.x.memory.buffer, p, m.data.length).set(m.data);
+    const nb = m.name;
+    const np = this.x.scAlloc(nb.length + 1);
+    const nm = new Uint8Array(this.x.memory.buffer, np, nb.length + 1);
+    nm.set(nb); nm[nb.length] = 0;
+    this.x.scSmpSet(m.slot, p, m.data.length, m.rate, np, m.loop ? 1 : 0);
+    // Rueckmeldung: die Oberflaeche zeigt erst dann an, dass der Klang-Kern es wirklich hat.
+    this.port.postMessage({type: 'smp', slot: m.slot, n: this.x.scSmpFrames(m.slot)});
   }
 
   load(bytes) {

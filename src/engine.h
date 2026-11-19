@@ -30,6 +30,7 @@ struct Voice {
     Env      env;
     float    panL = 0.7071f, panR = 0.7071f;
     float    base = 1000.0f, q = 0.7f, envAmt = 0.0f, gain = 1.0f;
+    const SamplePool* pool = nullptr;
     FltType  ft = FLT_LP;
     const Machine* mach = nullptr;
 
@@ -60,8 +61,9 @@ struct Voice {
     }
 
     void start(const Machine* mc, int tr, int st, const float* pp, float v,
-               int64_t lenSamples, float sr, uint64_t when, uint64_t lockMask, const float* live) {
-        mach = mc; track = (uint8_t)tr; step = (uint8_t)st; born = when;
+               int64_t lenSamples, float sr, uint64_t when, uint64_t lockMask, const float* live,
+               const SamplePool& pl) {
+        mach = mc; pool = &pl; track = (uint8_t)tr; step = (uint8_t)st; born = when;
         for (int i = 0; i < 64; i++) pf[i] = pp[i];
         locked = lockMask;
         nRamp = 0; vel = v; left = lenSamples; used = true; age = 0;
@@ -71,7 +73,7 @@ struct Voice {
         env.setup(pTime(pf[s.atk]), pTime(pf[s.dec]), pLevel(pf[s.sus]), pTime(pf[s.rel]), sr);
         env.kill(); env.gate();
         ctl(sr, live);
-        mach->start(ms, hz, vel, pf, sr);
+        mach->start(ms, hz, vel, pf, sr, *pool);
     }
     void release() { env.release(); left = -1; }
 
@@ -131,7 +133,7 @@ struct Voice {
         int done = 0;
         while (done < n) {
             int c = n - done; if (c > MACH_CHUNK) c = MACH_CHUNK;
-            mach->render(ms, pf, hz, buf, c, sr);
+            mach->render(ms, pf, hz, buf, c, sr, *pool);
             for (int i = 0; i < c; i++) {
                 if (left > 0) { if (--left == 0) release(); }
                 float e = env.tick();
@@ -170,8 +172,9 @@ struct Engine : Sink {
     // kann laengst verklungen sein, wenn der naechste Trig kommt.
     float trkVal[NTRACKS][64];
 
-    Delay  delay;
-    Reverb reverb;
+    Delay      delay;
+    Reverb     reverb;
+    SamplePool pool;
 
     Ev   q[256];
     int  qoff[256];
@@ -248,7 +251,7 @@ struct Engine : Sink {
         int mi = tr.p[paramSlot(paramFind("trk.machine"))];
         int i = pick();
         v[i].start(machineAt(mi), e.track, e.step, snap, e.vel / 127.0f, e.len, sr, clock++,
-                   lockMask, live[e.track]);
+                   lockMask, live[e.track], pool);
         for (int li = 0; li < tr.s[e.step].nLock; li++) {    // Slides: von dort, wo die Spur steht
             const Lock& l = tr.s[e.step].lock[li];
             if (l.slide) v[i].slide(l.slot, from[l.slot], (float)l.val, glide);

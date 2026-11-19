@@ -386,6 +386,72 @@ int main() {
         chk(sane(b, N * 2), "DRUM laeuft aus dem Ruder");
     }
 
+    grp("Sampler");
+    {
+        const int N = 24000;
+        static float b[24000 * 2];
+        // Ein Sample bauen: eine Sekunde 440 Hz. Note 60 muss es unveraendert abspielen.
+        static float sine[48000];
+        for (int i = 0; i < 48000; i++) sine[i] = sinf(6.2831853f * 440.0f * i / 48000.0f);
+
+        e.prepare(48000.0f);
+        chk(e.pool.set(0, sine, 48000, 48000.0f, "sinus", true), "Sample laesst sich nicht ablegen");
+        chk(e.pool.s[0].n == 48000 && !e.pool.empty(0), "Sample liegt nicht im Vorrat");
+        chk(e.pool.empty(1), "ein leerer Platz gilt als belegt");
+
+        setupBeat(e, 60);
+        Track& t = e.P.pat[0].t[0];
+        t.p[SL("trk.machine")] = 3;                       // SMPL
+        t.p[SL("trk.smp")] = 0;
+        t.p[SL("trk.flt.freq")] = 127; t.p[SL("trk.amp.sus")] = 100;
+        t.p[SL("trk.amp.dec")] = 127; t.p[SL("trk.len")] = 127;
+        e.start(); e.render(b, N);
+        chk(bin(b, N, 440.0f, 48000.0f) > bin(b, N, 880.0f, 48000.0f) * 8.0f,
+            "Note 60 spielt das Sample nicht in seiner Geschwindigkeit");
+
+        e.prepare(48000.0f);
+        e.pool.set(0, sine, 48000, 48000.0f, "sinus", true);
+        setupBeat(e, 72);                                  // eine Oktave hoeher
+        Track& t2 = e.P.pat[0].t[0];
+        t2.p[SL("trk.machine")] = 3; t2.p[SL("trk.smp")] = 0;
+        t2.p[SL("trk.flt.freq")] = 127; t2.p[SL("trk.amp.sus")] = 100;
+        t2.p[SL("trk.amp.dec")] = 127; t2.p[SL("trk.len")] = 127;
+        e.start(); e.render(b, N);
+        chk(bin(b, N, 880.0f, 48000.0f) > bin(b, N, 440.0f, 48000.0f) * 8.0f,
+            "eine Oktave hoeher wird nicht doppelt so schnell abgespielt");
+
+        // Ein leerer Platz macht Stille, keinen Absturz
+        e.prepare(48000.0f);
+        setupBeat(e, 60);
+        Track& t3 = e.P.pat[0].t[0];
+        t3.p[SL("trk.machine")] = 3; t3.p[SL("trk.smp")] = 7;
+        e.start(); e.render(b, N);
+        chk(rms(b, N) == 0.0f, "ein leerer Platz klingt");
+
+        // Der Platz ist lockbar: jeder Step darf ein anderes Sample anschlagen
+        static float lo[48000], hi[48000];
+        for (int i = 0; i < 48000; i++) {
+            lo[i] = sinf(6.2831853f * 220.0f * i / 48000.0f);
+            hi[i] = sinf(6.2831853f * 1760.0f * i / 48000.0f);
+        }
+        static float c[96000 * 2];
+        e.prepare(48000.0f);
+        e.pool.set(0, lo, 48000, 48000.0f, "tief", true);
+        e.pool.set(1, hi, 48000, 48000.0f, "hoch", true);
+        setupBeat(e, 60);
+        Track& t4 = e.P.pat[0].t[0];
+        t4.p[SL("trk.machine")] = 3; t4.p[SL("trk.smp")] = 0;
+        t4.p[SL("trk.flt.freq")] = 127; t4.p[SL("trk.amp.dec")] = 90;
+        t4.s[4].setLock(SL("trk.smp"), 1);
+        e.start(); e.render(c, 48000);
+        float ersterTief = bin(c, 5000, 220.0f, 48000.0f);
+        float zweiterHoch = bin(c + 24000 * 2, 5000, 1760.0f, 48000.0f);
+        float zweiterTief = bin(c + 24000 * 2, 5000, 220.0f, 48000.0f);
+        chk(ersterTief > 0.005f, "der erste Step spielt das tiefe Sample nicht");
+        chk(zweiterHoch > zweiterTief * 4.0f, "der gelockte Step spielt nicht das andere Sample");
+        chk(sane(c, 48000 * 2), "der Sampler laeuft aus dem Ruder");
+    }
+
     grp("Sende-Effekte");
     {
         const int N = 72000;                        // anderthalb Sekunden

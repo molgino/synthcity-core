@@ -4,6 +4,7 @@
 #pragma once
 #include "dsp.h"
 #include "param.h"
+#include "sample.h"
 
 enum { MACH_STATE = 256, MACH_CHUNK = 32 };
 
@@ -22,9 +23,11 @@ struct Machine {
     virtual void text(int which, float v, char* out, int n) const {
         (void)which; snprintf(out, n, "%.0f", (double)v);
     }
-    virtual void  start(MState& m, float hz, float vel, const float* p, float sr) const = 0;
+    virtual void  start(MState& m, float hz, float vel, const float* p, float sr,
+                        const SamplePool& pool) const = 0;
     // Fuellt n Samples (n <= MACH_CHUNK). Ein Aufruf je Teilblock, nicht je Sample.
-    virtual void  render(MState& m, const float* p, float hz, float* buf, int n, float sr) const = 0;
+    virtual void  render(MState& m, const float* p, float hz, float* buf, int n, float sr,
+                         const SamplePool& pool) const = 0;
 };
 
 // --- POLY: zwei verstimmte Oszillatoren, stufenlos von Saege nach Rechteck ---------------------
@@ -43,7 +46,8 @@ struct MachPoly : Machine {
     static int slotA() { static const int s = paramSlot(paramFind("trk.src.a")); return s; }
     static int slotB() { static const int s = paramSlot(paramFind("trk.src.b")); return s; }
 
-    void start(MState& m, float hz, float vel, const float* p, float sr) const override {
+    void start(MState& m, float hz, float vel, const float* p, float sr,
+               const SamplePool& pool) const override {
         St& s = m.as<St>();
         s.a.reset(0.0f);
         s.b.reset(0.25f);           // feste Phasenlage: gleicher Anschlag klingt immer gleich.
@@ -51,7 +55,8 @@ struct MachPoly : Machine {
         s.width = 0.5f;
         (void)vel; (void)p; (void)hz; (void)sr;
     }
-    void render(MState& m, const float* p, float hz, float* buf, int n, float sr) const override {
+    void render(MState& m, const float* p, float hz, float* buf, int n, float sr,
+                const SamplePool& pool) const override {
         St& s = m.as<St>();
         float dt = pBip(p[slotA()]) * 0.25f;          // bis zu einem Viertelton Verstimmung
         float shape = pUni(p[slotB()]);               // 0 = Saege, 1 = schmaler Puls
@@ -92,12 +97,14 @@ struct MachFm : Machine {
     static int slotA() { static const int s = paramSlot(paramFind("trk.src.a")); return s; }
     static int slotB() { static const int s = paramSlot(paramFind("trk.src.b")); return s; }
 
-    void start(MState& m, float hz, float vel, const float* p, float sr) const override {
+    void start(MState& m, float hz, float vel, const float* p, float sr,
+               const SamplePool& pool) const override {
         St& s = m.as<St>();
         s.car.reset(0.0f); s.mod.reset(0.0f); s.z = 0.0f;
         (void)hz; (void)vel; (void)p; (void)sr;
     }
-    void render(MState& m, const float* p, float hz, float* buf, int n, float sr) const override {
+    void render(MState& m, const float* p, float hz, float* buf, int n, float sr,
+                const SamplePool& pool) const override {
         St& s = m.as<St>();
         float r = ratios()[ratioIdx(p[slotA()])];
         float idx = pUni(p[slotB()]) * 8.0f;
@@ -131,14 +138,16 @@ struct MachDrum : Machine {
     static int slotA() { static const int s = paramSlot(paramFind("trk.src.a")); return s; }
     static int slotB() { static const int s = paramSlot(paramFind("trk.src.b")); return s; }
 
-    void start(MState& m, float hz, float vel, const float* p, float sr) const override {
+    void start(MState& m, float hz, float vel, const float* p, float sr,
+               const SamplePool& pool) const override {
         St& s = m.as<St>();
         s.osc.reset(0.0f);
         s.env = 1.0f;
         s.rng = 0x1234567u + (uint32_t)(hz * 7.0f);
         (void)vel; (void)p; (void)sr;
     }
-    void render(MState& m, const float* p, float hz, float* buf, int n, float sr) const override {
+    void render(MState& m, const float* p, float hz, float* buf, int n, float sr,
+                const SamplePool& pool) const override {
         St& s = m.as<St>();
         float sweep = pUni(p[slotA()]) * 48.0f;        // Halbtoene nach oben beim Anschlag
         float mix = pUni(p[slotB()]);
@@ -154,14 +163,67 @@ struct MachDrum : Machine {
     }
 };
 
+// --- SMPL: ein Sample abspielen --------------------------------------------------------------
+// Die Tonhoehe entsteht aus der Abspielgeschwindigkeit, wie bei jedem Sampler. Der Platz
+// steht in trk.smp und ist lockbar: jeder Step kann ein anderes Sample anschlagen.
+struct MachSmpl : Machine {
+    struct St { double pos; int32_t at, n; uint8_t loop; float step; };
+    static_assert(sizeof(St) <= MACH_STATE, "Zustand passt nicht in den Block");
+
+    const char* name()   const override { return "SMPL"; }
+    const char* labelA() const override { return "START"; }
+    const char* labelB() const override { return "FEIN"; }
+    void text(int which, float v, char* out, int n) const override {
+        if (which == 0) snprintf(out, n, "%.0f %%", (double)(v * 100.0f / 127.0f));
+        else            snprintf(out, n, "%+.0f ct", (double)(pBip(v) * 100.0f));
+    }
+    static int slotA()  { static const int s = paramSlot(paramFind("trk.src.a")); return s; }
+    static int slotB()  { static const int s = paramSlot(paramFind("trk.src.b")); return s; }
+    static int slotSmp(){ static const int s = paramSlot(paramFind("trk.smp")); return s; }
+
+    void start(MState& m, float hz, float vel, const float* p, float sr,
+               const SamplePool& pool) const override {
+        St& st = m.as<St>();
+        int k = (int)(p[slotSmp()] + 0.5f);
+        if (pool.empty(k)) { st.n = 0; st.pos = 0; return; }
+        const SamplePool::Slot& sl = pool.s[k];
+        st.at = sl.at; st.n = sl.n; st.loop = sl.loop;
+        st.pos = (double)(int)(pUni(p[slotA()]) * (sl.n - 1));     // Startpunkt
+        (void)vel; (void)hz; (void)sr;
+    }
+    void render(MState& m, const float* p, float hz, float* buf, int n, float sr,
+                const SamplePool& pool) const override {
+        St& st = m.as<St>();
+        if (st.n <= 0) { for (int i = 0; i < n; i++) buf[i] = 0.0f; return; }
+        int k = (int)(p[slotSmp()] + 0.5f);
+        float rate = pool.empty(k) ? 48000.0f : pool.s[k].rate;
+        // Note 60 spielt das Sample in seiner Aufnahmegeschwindigkeit ab.
+        float cents = pBip(p[slotB()]) * 100.0f;
+        float step = (hz / noteHz(60.0f)) * (rate / sr) * exp2f(cents / 1200.0f);
+        for (int i = 0; i < n; i++) {
+            if (st.pos >= (double)(st.n - 1)) {
+                if (!st.loop) { buf[i] = 0.0f; continue; }
+                st.pos -= (double)(st.n - 1);
+            }
+            int i0 = (int)st.pos;
+            float f = (float)(st.pos - (double)i0);
+            float a = pool.data[st.at + i0];
+            float b = pool.data[st.at + (i0 + 1 < st.n ? i0 + 1 : i0)];
+            buf[i] = a + (b - a) * f;                               // lineare Interpolation
+            st.pos += step;
+        }
+    }
+};
+
 // Register aller Machines. trk.machine ist der Index hier - die Reihenfolge darf nie wechseln.
 inline const Machine* machineAt(int i) {
     static const MachPoly poly;
     static const MachFm   fm;
     static const MachDrum drum;
-    static const Machine* const all[] = { &poly, &fm, &drum };
+    static const MachSmpl smpl;
+    static const Machine* const all[] = { &poly, &fm, &drum, &smpl };
     enum { N = (int)(sizeof all / sizeof *all) };
     if (i < 0 || i >= N) i = 0;
     return all[i];
 }
-inline int machineCount() { return 3; }
+inline int machineCount() { return 4; }
