@@ -69,7 +69,7 @@ static int putLong(char* out, int n, int at, long v, int plus) {
     while (i-- > 0) { if (at < n - 1) out[at] = tmp[i]; at++; }
     return at;
 }
-static int putFixed(char* out, int n, int at, double v, int dec) {
+static int putFixed(char* out, int n, int at, double v, int dec, int plus) {
     if (v != v) return putStr(out, n, at, "nan");
     int neg = v < 0;
     if (neg) v = -v;
@@ -79,6 +79,7 @@ static int putFixed(char* out, int n, int at, double v, int dec) {
     long long f = (long long)((v - (double)whole) * scale + 0.5);
     if ((double)f >= scale) { f = 0; whole++; }
     if (neg) at = putStr(out, n, at, "-");
+    else if (plus) at = putStr(out, n, at, "+");
     at = putLong(out, n, at, (long)whole, 0);
     if (dec > 0) {
         at = putStr(out, n, at, ".");
@@ -101,7 +102,7 @@ int snprintf(char* out, size_t size, const char* fmt, ...) {
         switch (*f) {
         case 'd': case 'i': at = putLong(out, n, at, (long)va_arg(ap, int), plus); break;
         case 'u': at = putLong(out, n, at, (long)va_arg(ap, unsigned), 0); break;
-        case 'f': at = putFixed(out, n, at, va_arg(ap, double), dec < 0 ? 6 : dec); break;
+        case 'f': at = putFixed(out, n, at, va_arg(ap, double), dec < 0 ? 6 : dec, plus); break;
         case 's': at = putStr(out, n, at, va_arg(ap, const char*)); break;
         case 'c': if (at < n - 1) out[at] = (char)va_arg(ap, int); at++; break;
         case '%': if (at < n - 1) out[at] = '%'; at++; break;

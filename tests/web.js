@@ -44,6 +44,10 @@ const grp = n => console.log('- ' + n);
   const khz = parseFloat(str(x.scParamText(idxOf('trk.flt.freq'), 127)));
   chk(khz > 17 && khz < 19, 'FREQ bei 127 ist nicht rund 18 kHz (' + khz + ')');
   chk(str(x.scParamText(idxOf('trk.vol'), 100)).startsWith('0.0'), 'VOL 100 ist nicht 0 dB');
+  // Das eigene snprintf muss dasselbe schreiben wie das der Linux-Bibliothek - Vorzeichen eingeschlossen.
+  chk(str(x.scParamText(idxOf('trk.micro'), 24)) === '+0.00 Steps', 'MTIM zeigt kein Pluszeichen');
+  chk(str(x.scParamText(idxOf('trk.micro'), 12)) === '-0.50 Steps', 'MTIM nach vorn falsch');
+  chk(str(x.scParamText(idxOf('trk.len'), 6)) === '0.50 Steps', 'LEN halber Step falsch');
 
   grp('Auswahlwerte heissen wie ihre Bedeutung, nicht wie ihr Index');
   chk(str(x.scParamText(idxOf('trk.machine'), 0)) === 'POLY', 'ENGINE zeigt keinen Namen');

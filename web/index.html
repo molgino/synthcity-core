@@ -83,7 +83,7 @@ button:focus-visible { outline: 2px solid var(--ok); outline-offset: 2px; }
 }
 .trk.muted .m { background: var(--lock); color: #230a17; border-color: var(--lock); opacity: 1; }
 
-.work { display: grid; grid-template-rows: auto 1fr; min-height: 0; min-width: 0; }
+.work { display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; min-width: 0; }
 
 /* --- Steps: die Reihe verschwindet nie --- */
 .pads { padding: 10px; border-bottom: 1px solid var(--line); }
@@ -174,6 +174,33 @@ textarea {
   :root { --rail: 62px; }
   .padgrid { grid-template-columns: repeat(4, 1fr); }
   .brand { font-size: 11px; }
+}
+
+/* Querformat am Handy: wenig Hoehe, viel Breite. Quadratische Pads wuerden die Reglerliste
+   auf einen Spalt druecken - also stehen Steps und Regler nebeneinander, und die Pads
+   bekommen eine feste Hoehe statt eines Seitenverhaeltnisses. */
+@media (orientation: landscape) and (max-height: 560px) {
+  :root { --rail: 58px; }
+  header { min-height: 44px; padding-block: 4px; }
+  .brand { font-size: 10px; }
+  .work { grid-template-rows: minmax(0, 1fr); grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .pads { border-bottom: none; border-right: 1px solid var(--line); overflow-y: auto; padding: 8px; }
+  .params { border-left: none; }
+  .pad { aspect-ratio: auto; height: 46px; border-radius: 5px; }
+  .padgrid { grid-template-columns: repeat(4, 1fr); gap: 5px; }
+  .trk { min-height: 36px; padding: 4px 5px 4px 7px; }
+  .trk .nm { font-size: 10px; }
+  .trk .m { width: 22px; height: 22px; }
+  .row { min-height: 38px; padding-block: 5px; }
+  .grp { padding: 6px 12px 2px; }
+  footer { padding-block: 5px; gap: 8px; }
+  .play, footer button { min-height: 34px; }
+  .sheet { max-height: 46vh; }
+  textarea { height: 34vh; }
+}
+/* Breites Querformat (Tablet, Notebook): die Steps duerfen wieder in eine Reihe. */
+@media (orientation: landscape) and (max-height: 560px) and (min-width: 760px) {
+  .padgrid { grid-template-columns: repeat(8, 1fr); }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
