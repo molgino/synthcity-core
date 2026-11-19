@@ -124,6 +124,33 @@ void scPatClear(int p)  {
     patternClear(gEng.P, p);
     if (p == gEng.pat) gEng.resetTrackValues();
 }
+// --- Song ---------------------------------------------------------------------------------
+int  scSongN()          { return gEng.P.song.n; }
+int  scSongPat(int i)   { return (i >= 0 && i < gEng.P.song.n) ? gEng.P.song.e[i].pat : 0; }
+int  scSongRep(int i)   { return (i >= 0 && i < gEng.P.song.n) ? gEng.P.song.e[i].rep : 1; }
+void scSongSet(int i, int pat, int rep) {
+    if (i < 0 || i >= gEng.P.song.n) return;
+    gEng.P.song.e[i].pat = (uint8_t)(pat < 0 ? 0 : (pat >= NPATTERNS ? NPATTERNS - 1 : pat));
+    gEng.P.song.e[i].rep = (uint8_t)(rep < 1 ? 1 : (rep > 99 ? 99 : rep));
+}
+void scSongAdd(int pat, int rep) {
+    if (gEng.P.song.n >= NSONG) return;
+    gEng.P.song.e[gEng.P.song.n] = {0, 1};
+    gEng.P.song.n++;
+    scSongSet(gEng.P.song.n - 1, pat, rep);
+}
+void scSongDel(int i) {
+    Song& s = gEng.P.song;
+    if (i < 0 || i >= s.n) return;
+    for (int k = i; k < s.n - 1; k++) s.e[k] = s.e[k + 1];
+    s.n--;
+    if (!s.n) gEng.songStop();
+}
+void scSongStart()      { gEng.songStart(); }
+void scSongStop()       { gEng.songStop(); }
+int  scSongOn()         { return gEng.songOn ? 1 : 0; }
+int  scSongPos()        { return gEng.songPos; }
+
 int  scChg()            { return gEng.chgSteps; }
 void scSetChg(int n)    { gEng.chgSteps = n < 1 ? 1 : (n > NSTEPS ? NSTEPS : n); }
 

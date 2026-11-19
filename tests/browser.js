@@ -155,6 +155,46 @@ const stummMuster = async p => {
         'der Sample-Platz zeigt den Namen nicht');
   }
 
+  grp('Song: Patterns nacheinander');
+  {
+    // Anhalten, damit die Wahl sofort gilt; dann die Kette bauen: P1 einmal, P2 einmal.
+    if ((await p.locator('#play').textContent()).trim() === 'STOP') await p.locator('#play').click();
+    await p.waitForTimeout(300);
+    await p.locator('#songBtn').tap(); await p.waitForTimeout(250);
+    chk((await p.locator('#songList').textContent()).includes('Noch leer'), 'der leere Song sagt nicht, was zu tun ist');
+    chk(await p.locator('#songPlay').isDisabled(), 'ein leerer Song laesst sich einschalten');
+    await p.locator('#songClose').tap();
+    await p.locator('.pt').nth(0).tap(); await p.waitForTimeout(200);
+    await p.locator('#songBtn').tap(); await p.waitForTimeout(200);
+    await p.locator('#songAdd').tap();
+    await p.locator('#songClose').tap();
+    await p.locator('.pt').nth(1).tap(); await p.waitForTimeout(200);
+    await p.locator('#songBtn').tap(); await p.waitForTimeout(200);
+    await p.locator('#songAdd').tap();
+    const zeilen = (await p.locator('.songrow .wo').allTextContents()).map(t => t.replace(/\s+/g, ' ').trim());
+    chk(zeilen.join(' | ') === '1. P1 \u00d7 1 | 2. P2 \u00d7 1', 'die Kette stimmt nicht: ' + zeilen.join(' | '));
+
+    await p.locator('#songPlay').tap(); await p.waitForTimeout(200);
+    chk((await p.locator('#songPlay').textContent()).trim() === 'SONG AUS', 'der Song laesst sich nicht einschalten');
+    await p.locator('#songClose').tap();
+    await p.locator('#play').click();                  // der Song beginnt vorn: P1
+    await p.waitForTimeout(500);
+    const t0 = (await p.locator('.pt.cur').textContent()).trim();
+    await p.waitForTimeout(1950);                      // ein Takt bei 124 bpm sind 1,94 s
+    const t1 = (await p.locator('.pt.cur').textContent()).trim();
+    await p.waitForTimeout(1950);
+    const t2 = (await p.locator('.pt.cur').textContent()).trim();
+    chk(t0 === '1', 'der Song beginnt nicht mit P1 (' + t0 + ')');
+    chk(t1 === '2', 'nach einem Takt kommt nicht P2 (' + t1 + ')');
+    chk(t2 === '1', 'am Ende geht es nicht vorn weiter (' + t2 + ')');
+    chk(await p.locator('#songBtn').evaluate(e => e.classList.contains('on')), 'der Song-Knopf zeigt nicht, dass er laeuft');
+
+    // Ein Tipp auf ein Pattern verlaesst den Song.
+    await p.locator('.pt').nth(2).tap(); await p.waitForTimeout(300);
+    chk(!(await p.locator('#songBtn').evaluate(e => e.classList.contains('on'))),
+        'ein Tipp auf ein Pattern laesst den Song weiterlaufen');
+  }
+
   grp('Keine Fehler in der Konsole');
   chk(fehler.length === 0, 'Fehler: ' + fehler.join(' | '));
 

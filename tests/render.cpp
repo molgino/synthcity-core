@@ -634,6 +634,88 @@ int main() {
         chk(e.P.pat[0].t[0].s[3].on == 1, "das Leeren trifft das falsche Pattern");
     }
 
+    grp("Song: eine Kette aus Patterns");
+    {
+        // Pattern 0 zweimal, Pattern 1 einmal, dann wieder von vorn.
+        // Ein Takt sind bei 120 bpm 96000 Samples.
+        auto bau = [&](Engine& en) {
+            projectInit(en.P);
+            for (int p = 0; p < 2; p++) {
+                en.P.pat[p].used = 1;
+                Track& tr = en.P.pat[p].t[0];
+                tr.p[SL("trk.note")] = p == 0 ? 45 : 69;
+                tr.s[0].on = 1;
+            }
+            en.P.song.n = 2;
+            en.P.song.e[0] = {0, 2};
+            en.P.song.e[1] = {1, 1};
+            en.pat = 0;
+        };
+        e.prepare(48000.0f); bau(e);
+        e.songStart();
+        e.start();
+        chk(e.songOn && e.pat == 0 && e.songPos == 0, "der Song beginnt nicht bei Eintrag 1");
+
+        // In Bloecken rendern und mitschreiben, wann welches Pattern lief.
+        static float b[1000 * 2];
+        int64_t wechsel[8]; int pats[8], nw = 0;
+        int vorher = e.pat;
+        int64_t ursprungNachTakt1 = -1;
+        for (int k = 0; k < 400; k++) {                    // 400 000 Samples
+            e.render(b, 1000);
+            if (e.seq.pos == 97000) ursprungNachTakt1 = e.seq.origin;
+            if (e.pat != vorher && nw < 8) { wechsel[nw] = e.seq.origin; pats[nw] = e.pat; nw++; vorher = e.pat; }
+        }
+        chk(nw >= 2, "der Song wechselt nicht");
+        chk(nw >= 1 && wechsel[0] == 192000 && pats[0] == 1,
+            "nach zwei Takten Pattern 0 kommt nicht genau bei 192000 Pattern 1");
+        chk(nw >= 2 && wechsel[1] == 288000 && pats[1] == 0,
+            "nach einem Takt Pattern 1 geht es nicht genau bei 288000 von vorn los");
+        // Zwischen den Wiederholungen wird das Pattern NICHT neu begonnen - sonst bricht
+        // jede Spur mit anderer Laenge (12 gegen 16) bei jeder Wiederholung ab.
+        chk(ursprungNachTakt1 == 0, "die Wiederholung beginnt das Pattern neu");
+
+        // Unabhaengig davon, wie der Host schneidet.
+        static float a2[300000 * 2], c2[300000 * 2];
+        for (int k = 0; k < 2; k++) {
+            float* dst = k == 0 ? a2 : c2;
+            int blk = k == 0 ? 64 : 977;
+            e.prepare(48000.0f); bau(e);
+            e.songStart(); e.start();
+            int done = 0;
+            while (done < 300000) { int n = blk; if (done + n > 300000) n = 300000 - done; e.render(dst + done * 2, n); done += n; }
+        }
+        int bad = 0;
+        for (int i = 0; i < 300000 * 2; i++) if (a2[i] != c2[i]) bad++;
+        chk(bad == 0, "der Song faellt je nach Blockgroesse anders aus");
+
+        // Song einschalten, waehrend es laeuft: erst am Taktende, nicht mittendrin.
+        e.prepare(48000.0f); bau(e);
+        e.start();
+        for (int k = 0; k < 30; k++) e.render(b, 1000);    // 30 000 Samples in den Takt hinein
+        e.pat = 1; e.seq.toPattern(e.seq.pos);             // gerade laeuft ein anderes Pattern
+        e.songStart();
+        chk(e.songOn && e.pat == 1, "der Song springt sofort statt am Taktende");
+        chk(e.switchAt == 30000 + 96000, "der Song beginnt nicht am naechsten Taktende");
+        for (int k = 0; k < 100; k++) e.render(b, 1000);
+        chk(e.pat == 0 && e.songPos == 0, "nach dem Taktende spielt nicht Eintrag 1");
+
+        // Wer von Hand ein Pattern waehlt, verlaesst den Song.
+        e.prepare(48000.0f); bau(e);
+        e.songStart(); e.start();
+        e.render(b, 1000);
+        e.queuePattern(1);
+        chk(!e.songOn, "ein Tipp auf ein Pattern laesst den Song weiterlaufen");
+
+        // Der Song steht im Dokument.
+        static Doc d; d.clear();
+        projectToDoc(e.P, d);
+        static Project Q; projectFromDoc(d, Q);
+        chk(Q.song.n == 2 && Q.song.e[0].pat == 0 && Q.song.e[0].rep == 2
+            && Q.song.e[1].pat == 1 && Q.song.e[1].rep == 1, "der Song ueberlebt das Dokument nicht");
+        e.pat = 0;
+    }
+
     grp("Referenz-Aufnahme");
     {
         const int N = 96000;                         // zwei Sekunden

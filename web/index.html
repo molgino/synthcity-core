@@ -172,6 +172,13 @@ footer {
 }
 .sheet button.cur { background: var(--amber); color: #15100a; border-color: var(--amber); }
 .sheet button .n { font-family: var(--mono); font-size: 12px; }
+.songrow { display: grid; grid-template-columns: 1fr auto auto auto auto; gap: 6px; align-items: center; }
+.songrow .wo { font-family: var(--mono); font-size: 13px; padding: 0 6px; min-height: 44px;
+               display: flex; align-items: center; border-radius: 6px; background: var(--raised);
+               border: 1px solid var(--line); }
+.songrow.jetzt .wo { background: var(--ok); color: #06231a; border-color: var(--ok); }
+.songrow button { min-width: 44px; min-height: 44px; padding: 0 8px; }
+#songBtn.on { background: var(--ok); border-color: var(--ok); color: #06231a; }
 /* Nicht display:none: ein so verstecktes Dateifeld laesst sich auf dem iPhone
    nicht immer oeffnen. Es bleibt im Bild, nur unsichtbar und ohne Platzbedarf. */
 #smpFile { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
@@ -277,6 +284,7 @@ textarea {
   <footer>
     <button class="play" id="play">PLAY</button>
     <button id="fill">FILL</button>
+    <button id="songBtn">SONG</button>
     <div class="morph">
       <span class="lbl">Morph A&ndash;B</span>
       <input type="range" id="morph" min="0" max="100" value="0" aria-label="Morph zwischen Scene A und B">
@@ -289,6 +297,21 @@ textarea {
     <div class="lbl" id="pickTitle">Auswahl</div>
     <div class="sheet" id="pickList"></div>
     <button id="pickClose">ABBRECHEN</button>
+  </div>
+</dialog>
+
+<dialog id="song">
+  <div class="dlg">
+    <div class="lbl">Song</div>
+    <p class="hint">Eine Kette aus Patterns: jedes so oft, wie es dasteht, dann das naechste.
+      Am Ende geht es vorn weiter. Einschalten waehrend es laeuft beginnt am naechsten Taktende.</p>
+    <div class="sheet" id="songList"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button id="songAdd">+ PATTERN</button>
+      <button id="songPlay">SONG AN</button>
+      <div class="spacer"></div>
+      <button id="songClose">SCHLIESSEN</button>
+    </div>
   </div>
 </dialog>
 
@@ -347,6 +370,7 @@ let sel = 0, lockStep = -1, playing = false;
 let posSteps = new Array(8).fill(-1);
 let patNextView = -1;          // was der Klang-Kern in der Warteschlange hat
 let meterPeak = 0;
+let songView = {on: false, pos: -1};    // was der Klang-Kern ueber den Song sagt
 const P = [];                 // Parametertabelle, aus dem Kern gelesen
 const el = id => document.getElementById(id);
 const machOf = t => X.scGet(t, P.find(p => p.id === 'trk.machine').slot);
@@ -410,6 +434,7 @@ async function audioOn() {
     if (e.data.type === 'pos') {
       posSteps = e.data.steps;
       patNextView = e.data.next;
+      songView = {on: !!e.data.songOn, pos: e.data.songPos};
       // Der Spitzenwert wird kurz gehalten, sonst zeigt die Anzeige fast immer null.
       const pk = e.data.peak || 0;
       meterPeak = pk > meterPeak ? pk : meterPeak * 0.82;
@@ -448,6 +473,7 @@ async function audioOn() {
   for (let t = 0; t < X.scNTracks(); t++)
     node.port.postMessage({fn: 'scMute', args: [t, X.scIsMute(t)]});
   node.port.postMessage({fn: 'scSetMorph', args: [X.scGetMorph()]});
+  if (X.scSongOn()) node.port.postMessage({fn: 'scSongStart', args: []});
   for (let i = 0; i < X.scSmpSlots(); i++) smpSendToAudio(i);
 }
 
@@ -710,6 +736,11 @@ function paint() {
   for (let t = 0; t < rail.length; t++) {
     rail[t].classList.toggle('sel', t === sel);
     rail[t].classList.toggle('muted', !!X.scIsMute(t));
+  }
+  el('songBtn').classList.toggle('on', songAn());
+  if (el('song').open) {
+    const rows = el('songList').querySelectorAll('.songrow');
+    rows.forEach((r, i) => r.classList.toggle('jetzt', songAn() && songView.pos === i));
   }
   const pats = el('pats').children;
   for (let i = 0; i < pats.length; i++) {
@@ -995,6 +1026,50 @@ function smpPut(slot, data, rate, ch, name) {
   smpSendToAudio(slot);
   return true;
 }
+
+// --- Song ---------------------------------------------------------------------------------
+// Die Kette ist Projektdaten: jede Aenderung geht an beide Kerne. Ob der Song laeuft und wo
+// er steht, sagt der Klang-Kern.
+const songAn = () => (node && playing) ? songView.on : !!X.scSongOn();
+function songPaint() {
+  const list = el('songList');
+  list.innerHTML = '';
+  const n = X.scSongN();
+  if (!n) {
+    list.innerHTML = '<p class="hint">Noch leer. <b>+ PATTERN</b> haengt das gerade gewaehlte an.</p>';
+  }
+  for (let i = 0; i < n; i++) {
+    const row = document.createElement('div');
+    row.className = 'songrow' + (songAn() && songView.pos === i ? ' jetzt' : '');
+    row.innerHTML = `<span class="wo">${i + 1}.  P${X.scSongPat(i) + 1}  \u00d7 ${X.scSongRep(i)}</span>
+      <button data-a="pat" aria-label="anderes Pattern">P</button>
+      <button data-a="minus" aria-label="weniger Wiederholungen">\u2212</button>
+      <button data-a="plus" aria-label="mehr Wiederholungen">+</button>
+      <button data-a="weg" aria-label="Eintrag entfernen">\u00d7</button>`;
+    row.querySelector('[data-a=pat]').onclick = () => {
+      cmd('scSongSet', i, (X.scSongPat(i) + 1) % X.scNPatterns(), X.scSongRep(i)); songPaint();
+    };
+    row.querySelector('[data-a=minus]').onclick = () => {
+      cmd('scSongSet', i, X.scSongPat(i), X.scSongRep(i) - 1); songPaint();
+    };
+    row.querySelector('[data-a=plus]').onclick = () => {
+      cmd('scSongSet', i, X.scSongPat(i), X.scSongRep(i) + 1); songPaint();
+    };
+    row.querySelector('[data-a=weg]').onclick = () => { cmd('scSongDel', i); songPaint(); };
+    list.appendChild(row);
+  }
+  el('songPlay').textContent = songAn() ? 'SONG AUS' : 'SONG AN';
+  el('songPlay').disabled = !n;
+}
+el('songBtn').onclick = () => { songPaint(); el('song').showModal(); };
+el('songClose').onclick = () => el('song').close();
+el('songAdd').onclick = () => { cmd('scSongAdd', X.scPattern(), 1); songPaint(); };
+el('songPlay').onclick = () => {
+  if (songAn()) cmd('scSongStop');
+  else cmd('scSongStart');
+  if (node && playing) songView.on = !songView.on;    // bis der Klang-Kern es bestaetigt
+  songPaint();
+};
 
 el('pickClose').onclick = () => el('pick').close();
 el('docBtn').onclick = () => { el('docText').value = str(X.scSave()); el('doc').showModal(); };

@@ -192,6 +192,15 @@ struct Engine : Sink {
     int     chgSteps = 16;         // Wechsellaenge in Sechzehnteln
     int64_t switchAt = -1;         // genaue Sample-Position des Wechsels
 
+    // --- Song --------------------------------------------------------------------------------
+    // Der Song benutzt denselben Wechsel wie ein Tipp auf ein Pattern - nur entscheidet er
+    // selbst, wann. Gewechselt wird erst nach allen Wiederholungen, und zwar ohne das Pattern
+    // dazwischen neu anzufangen: eine Spur mit 12 Steps laeuft ueber die Wiederholungen
+    // hinweg weiter gegen die 16.
+    bool songOn = false;
+    int  songPos = 0;              // welcher Eintrag gerade spielt
+    bool songArmed = false;        // der anstehende Wechsel kommt vom Song
+
     Ev   q[256];
     int  qoff[256];
     int  nq = 0;
@@ -211,13 +220,17 @@ struct Engine : Sink {
     void prepare(float rate) {
         sr = rate; seq.sr = rate;
         seq.stop();
-        patNext = -1; switchAt = -1;
+        patNext = -1; switchAt = -1; songArmed = false;
         recStop();
         for (int i = 0; i < NVOICES; i++) { v[i].used = false; v[i].env.kill(); }
         delay.reset(); reverb.reset();
         resetTrackValues();
     }
-    void start() { seq.bpm = P.g[paramSlot(paramFind("bpm"))]; seq.start(); }
+    void start() {
+        seq.bpm = P.g[paramSlot(paramFind("bpm"))];
+        if (songOn) { seq.stop(); songStart(); }         // der Song faengt vorn an
+        seq.start();
+    }
 
     // Platz reservieren und scharf stellen. Gibt die moegliche Laenge in Bildern zurueck, 0 = kein Platz.
     int recStart(int slot, float seconds, const char* name, int ch = 2) {
@@ -232,8 +245,49 @@ struct Engine : Sink {
     int  recFrames() const { return (recSlot >= 0) ? pool.s[recSlot].n : 0; }
     void stop()  { seq.stop(); for (int i = 0; i < NVOICES; i++) v[i].release(); }
 
+    double cycleLen() const {
+        double sp16 = seq.sr * 60.0 / ((seq.bpm < 20.0 ? 20.0 : seq.bpm) * 4.0);
+        return sp16 * (chgSteps < 1 ? 1 : chgSteps);
+    }
+
+    // Song an. Steht die Uhr, beginnt Eintrag 1 sofort; laeuft sie, am naechsten Taktende -
+    // ein Sprung mitten im Takt klaenge wie ein Fehler.
+    void songStart() {
+        if (!P.song.n) { songOn = false; return; }
+        songOn = true;
+        if (seq.running) {
+            songPos = P.song.n - 1;                    // als ginge der letzte Eintrag gerade zu Ende
+            patNext = P.song.e[0].pat;
+            double cyc = cycleLen();
+            int64_t k = (int64_t)((double)(seq.pos - seq.origin) / cyc) + 1;
+            switchAt = seq.origin + (int64_t)llround((double)k * cyc);
+            songArmed = true;
+            return;
+        }
+        songPos = 0; songArmed = false;
+        patNext = -1; switchAt = -1;
+        pat = P.song.e[0].pat;
+        seq.toPattern(seq.pos);
+        resetTrackValues();
+    }
+    void songStop() { songOn = false; if (songArmed) { patNext = -1; switchAt = -1; songArmed = false; } }
+
+    // Den naechsten Wechsel des Songs einplanen: am Ende der letzten Wiederholung.
+    void songPlan() {
+        if (!songOn || !P.song.n || patNext >= 0 || !seq.running) return;
+        if (songPos >= P.song.n) songPos = 0;
+        int rep = P.song.e[songPos].rep < 1 ? 1 : P.song.e[songPos].rep;
+        int nx = (songPos + 1) % P.song.n;
+        patNext = P.song.e[nx].pat;
+        switchAt = seq.origin + (int64_t)llround(cycleLen() * rep);
+        if (switchAt <= seq.pos) switchAt = seq.pos;      // verspaetet: sofort
+        songArmed = true;
+    }
+
     // Ein Pattern waehlen. Steht die Uhr, gilt es sofort; laeuft sie, am naechsten Taktende.
+    // Wer von Hand waehlt, verlaesst den Song.
     void queuePattern(int p) {
+        if (songOn) songStop();
         if (p < 0 || p >= NPATTERNS) return;
         if (!seq.running) {
             pat = p; patNext = -1; switchAt = -1;
@@ -242,8 +296,7 @@ struct Engine : Sink {
             return;
         }
         patNext = p;
-        double sp16 = seq.sr * 60.0 / ((seq.bpm < 20.0 ? 20.0 : seq.bpm) * 4.0);
-        double cyc = sp16 * (chgSteps < 1 ? 1 : chgSteps);
+        double cyc = cycleLen();
         double rel = (double)(seq.pos - seq.origin);
         int64_t k = (int64_t)(rel / cyc) + 1;
         switchAt = seq.origin + (int64_t)llround((double)k * cyc);
@@ -336,6 +389,7 @@ struct Engine : Sink {
     // der Wechsel davon ab, wie der Host schneidet.
     void render(float* out, int frames) {
         int done = 0;
+        songPlan();
         while (done < frames) {
             int c = frames - done;
             if (patNext >= 0 && switchAt > seq.pos && switchAt - seq.pos < (int64_t)c)
@@ -346,6 +400,11 @@ struct Engine : Sink {
                 pat = patNext; patNext = -1; switchAt = -1;
                 seq.toPattern(seq.pos);
                 resetTrackValues();
+                if (songArmed) {
+                    songArmed = false;
+                    songPos = P.song.n ? (songPos + 1) % P.song.n : 0;
+                    songPlan();                          // gleich den naechsten einplanen
+                }
             }
         }
     }

@@ -5,7 +5,7 @@ Konzept: `../r36-groovebox/docs/konzept-neu.md`.
 
 Kein Framework, keine Abhängigkeiten, keine STL-Container im Kern — C++17 und fertig.
 
-## Stand: Meilenstein 9 — mehrere Patterns
+## Stand: Meilenstein 10 — Song-Modus
 
 | Baustein | Datei | Zustand |
 | --- | --- | --- |
@@ -18,6 +18,7 @@ Kein Framework, keine Abhängigkeiten, keine STL-Container im Kern — C++17 und
 | Machines: `POLY`, `FM`, `DRUM`, `SMPL` — hinter denselben Reglern | `src/machine.h` | steht |
 | Sample-Vorrat (64 Plätze, mono **und stereo**), Aufnahme | `src/sample.h` | steht |
 | 16 Patterns, Wechsel im Takt, kopieren und leeren | `src/engine.h`, `src/model.h` | steht |
+| Song: Kette aus Patterns mit Wiederholungen | `src/engine.h`, `src/model.h` | steht |
 | Dokument mit Namen (nicht nur Zahlen) | `src/doc.h` | steht |
 | Sende-Effekte: Delay im Takt, Hall (FDN) | `src/fx.h` | steht |
 | Stimmen, Filter, Hüllkurve, Panorama, Summe | `src/engine.h` | steht |
@@ -58,6 +59,21 @@ Drei Entscheidungen, die den Rest tragen:
   solange dieser Step es nicht gelockt hat und gerade kein Slide darauf läuft.
   Das war zuerst falsch: der Schnappschuss fror alles ein, und ein gedrehter Filterregler
   blieb am klingenden Ton wirkungslos.
+
+## Song
+
+Ein Song ist eine Kette: Pattern, wie oft, dann das nächste; am Ende geht es vorn weiter. Er
+benutzt **denselben Wechsel** wie ein Tipp auf ein Pattern — nur entscheidet er selbst, wann.
+Darum ist auch er sample-genau und von der Blockgröße unabhängig (ein Test vergleicht 64er und
+977er Blöcke über drei Wechsel).
+
+Die eine Feinheit, die man leicht falsch baut: Zwischen den **Wiederholungen** wird das Pattern
+**nicht** neu begonnen. Gewechselt wird erst am Ende der letzten. Sonst bräche eine Spur mit
+12 Steps bei jeder Wiederholung ab, statt weiter gegen die 16 zu laufen. Ein Mutationstest
+(„Wiederholungen ignorieren") macht drei Prüfungen rot — der Test misst also wirklich das.
+
+Einschalten, während es läuft, beginnt am **nächsten Taktende**, nicht mittendrin. Wer von Hand
+ein Pattern antippt, verlässt den Song.
 
 ## Die Oberfläche wird im Browser geprüft
 
@@ -286,7 +302,6 @@ Last (x86, ein Kern): 580× Echtzeit mit einer Spur, 33× im schlimmsten Fall mi
 
 ## Als Nächstes
 
-10. Song-Modus: eine Kette aus Patterns mit Wiederholungen.
 11. Sample trimmen und loopen, Wellenform zeichnen.
 12. Gerät: R36S-Build, echter Eingang, Gamepad-Bedienung.
 

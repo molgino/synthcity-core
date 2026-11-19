@@ -61,13 +61,23 @@ struct Pattern {
     uint8_t used = 0;
 };
 
+// Ein Song ist eine Kette: Pattern, wie oft, dann das naechste. Am Ende geht es vorn weiter.
+enum { NSONG = 64 };
+struct SongStep { uint8_t pat = 0, rep = 1; };
+struct Song {
+    uint8_t  n = 0;
+    SongStep e[NSONG];
+};
+
 struct Project {
     int16_t g[32];              // globale Parameter nach Slot
     Pattern pat[NPATTERNS];
+    Song    song;
 };
 
 // --- Grundwerte aus der Parametertabelle --------------------------------------------------
 inline void projectInit(Project& P) {
+    P.song.n = 0;
     for (int i = 0; i < NPARAMS; i++) {
         const ParamDef& d = PARAMS[i];
         int slot = paramSlot(i);
@@ -133,6 +143,13 @@ inline float effectiveF(const Pattern& pt, int t, int step, int slot, float morp
 // Parameter, den es spaeter nicht mehr gibt, stoert niemanden.
 inline void projectToDoc(const Project& P, Doc& d) {
     char k[DOC_KEY], k2[DOC_KEY];
+    if (P.song.n) {
+        d.set("song.n", P.song.n);
+        for (int i = 0; i < P.song.n; i++) {
+            snprintf(k, sizeof k, "song.%d.pat", i); d.set(k, P.song.e[i].pat);
+            snprintf(k, sizeof k, "song.%d.rep", i); d.set(k, P.song.e[i].rep);
+        }
+    }
     for (int i = 0; i < NPARAMS; i++) {
         if (PARAMS[i].scope != PS_GLOBAL) continue;
         int slot = paramSlot(i);
@@ -187,6 +204,16 @@ inline void projectToDoc(const Project& P, Doc& d) {
 inline void projectFromDoc(const Doc& d, Project& P) {
     projectInit(P);
     char k[DOC_KEY];
+    int sn = d.get("song.n", 0);
+    P.song.n = (uint8_t)(sn < 0 ? 0 : (sn > NSONG ? NSONG : sn));
+    for (int i = 0; i < P.song.n; i++) {
+        snprintf(k, sizeof k, "song.%d.pat", i);
+        int pt = d.get(k, 0);
+        P.song.e[i].pat = (uint8_t)(pt < 0 || pt >= NPATTERNS ? 0 : pt);
+        snprintf(k, sizeof k, "song.%d.rep", i);
+        int r = d.get(k, 1);
+        P.song.e[i].rep = (uint8_t)(r < 1 ? 1 : (r > 99 ? 99 : r));
+    }
     for (int i = 0; i < NPARAMS; i++) {
         if (PARAMS[i].scope != PS_GLOBAL) continue;
         P.g[paramSlot(i)] = (int16_t)d.get(PARAMS[i].id, PARAMS[i].def);
