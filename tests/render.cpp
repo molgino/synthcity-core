@@ -550,11 +550,96 @@ int main() {
         chk(sane(hall, N * 2), "der Hall laeuft aus dem Ruder");
     }
 
+    grp("Pattern wechseln");
+    {
+        // Pattern 0: tiefer Dauerton. Pattern 1: hoher Dauerton. Der Wechsel muss genau
+        // am Taktende liegen - 16 Sechzehntel bei 120 bpm sind 96000 Samples.
+        auto bau = [&](Engine& en) {
+            projectInit(en.P);
+            for (int p = 0; p < 2; p++) {
+                en.P.pat[p].used = 1;
+                Track& tr = en.P.pat[p].t[0];
+                tr.len = 16; tr.speed = 4;
+                tr.p[SL("trk.note")] = p == 0 ? 45 : 69;      // 110 Hz bzw. 440 Hz
+                tr.p[SL("trk.flt.freq")] = 127;
+                tr.p[SL("trk.amp.sus")] = 100; tr.p[SL("trk.amp.dec")] = 127;
+                tr.p[SL("trk.len")] = 127;
+                tr.s[0].on = 1;
+            }
+            en.pat = 0;
+        };
+        const int N = 144000;                                 // drei Sekunden
+        static float b[144000 * 2];
+        e.prepare(48000.0f); bau(e);
+        e.start();
+        e.queuePattern(1);
+        chk(e.patNext == 1 && e.pat == 0, "der Wechsel gilt sofort statt im Takt");
+        chk(e.switchAt == 96000, "der Wechsel liegt nicht am Taktende");
+        e.render(b, N);
+        chk(e.pat == 1 && e.patNext < 0, "es wurde nicht gewechselt");
+        // Vor dem Wechsel der tiefe Grundton, danach der hohe - gemessen an derselben
+        // Frequenz vor und nach der Grenze, nicht an Nachbarfrequenzen.
+        float tiefVor  = bin(b + 40000 * 2, 20000, 110.0f, 48000.0f);
+        float tiefNach = bin(b + 110000 * 2, 20000, 110.0f, 48000.0f);
+        float hochVor  = bin(b + 40000 * 2, 20000, 440.0f, 48000.0f);
+        float hochNach = bin(b + 110000 * 2, 20000, 440.0f, 48000.0f);
+        // 110 Hz hat bei 440 Hz eine Oberwelle - entscheidend ist, welcher Ton in SEINEM
+        // Fenster fuehrt, nicht der Vergleich derselben Frequenz ueber die Grenze hinweg.
+        chk(tiefVor > hochVor, "vor dem Wechsel fuehrt nicht der tiefe Grundton");
+        chk(hochNach > tiefNach * 10.0f, "nach dem Wechsel fuehrt nicht der hohe Grundton");
+        chk(tiefNach < tiefVor * 0.05f, "der tiefe Grundton klingt nach dem Wechsel weiter");
+
+        // Und der Wechsel haengt nicht davon ab, wie der Host schneidet.
+        static float a2[144000 * 2], c2[144000 * 2];
+        for (int k = 0; k < 2; k++) {
+            float* dst = k == 0 ? a2 : c2;
+            int blk = k == 0 ? 64 : 977;
+            e.prepare(48000.0f); bau(e);
+            e.start(); e.queuePattern(1);
+            int done = 0;
+            while (done < N) { int n = blk; if (done + n > N) n = N - done; e.render(dst + done * 2, n); done += n; }
+        }
+        int bad = 0;
+        for (int i = 0; i < N * 2; i++) if (a2[i] != c2[i]) bad++;
+        chk(bad == 0, "der Wechsel faellt je nach Blockgroesse anders aus");
+
+        // Ohne laufende Uhr gilt die Wahl sofort.
+        e.prepare(48000.0f); bau(e);
+        e.queuePattern(1);
+        chk(e.pat == 1 && e.patNext < 0, "bei stehender Uhr wird nicht sofort gewechselt");
+    }
+
+    grp("Pattern kopieren und leeren");
+    {
+        e.prepare(48000.0f);
+        projectInit(e.P);
+        e.P.pat[0].used = 1;
+        Track& t = e.P.pat[0].t[0];
+        t.p[SL("trk.note")] = 50;
+        t.s[3].on = 1;
+        t.s[3].setLock(SL("trk.flt.freq"), 42);
+        e.P.pat[0].sc[1][0].set(SL("trk.vol"), 90);
+
+        patternCopy(e.P, 0, 5);
+        chk(e.P.pat[5].used == 1, "die Kopie gilt als unbenutzt");
+        chk(e.P.pat[5].t[0].s[3].on == 1, "der Step fehlt in der Kopie");
+        const Lock* l = e.P.pat[5].t[0].s[3].findLock(SL("trk.flt.freq"));
+        chk(l && l->val == 42, "der Lock fehlt in der Kopie");
+        chk(e.P.pat[5].sc[1][0].find(SL("trk.vol")) != nullptr, "die Scene fehlt in der Kopie");
+        chk(e.P.pat[5].t[0].p[SL("trk.note")] == 50, "der Spurwert fehlt in der Kopie");
+
+        patternClear(e.P, 5);
+        chk(e.P.pat[5].used == 0 && e.P.pat[5].t[0].s[3].on == 0, "das Leeren laesst Steps stehen");
+        chk(e.P.pat[5].t[0].p[SL("trk.note")] == 60, "das Leeren setzt die Werte nicht zurueck");
+        chk(e.P.pat[0].t[0].s[3].on == 1, "das Leeren trifft das falsche Pattern");
+    }
+
     grp("Referenz-Aufnahme");
     {
         const int N = 96000;                         // zwei Sekunden
         static float b[96000 * 2];
         e.prepare(48000.0f);
+        e.pat = 0;                      // frueher Test liess ein anderes Pattern stehen
         projectInit(e.P); e.P.pat[0].used = 1;
         Track& t0 = e.P.pat[0].t[0];
         t0.len = 16; t0.speed = 4;
@@ -570,6 +655,7 @@ int main() {
         e.start(); e.render(b, N);
 
         const char* ref = "tests/ref/pattern.wav";
+        (void)0;
         int rf = 0, rs = 0, rc = 0;
         int16_t* d = wavRead(ref, &rf, &rs, &rc);
         if (!d) {

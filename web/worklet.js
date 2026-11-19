@@ -85,7 +85,7 @@ class SynthCityNode extends AudioWorkletProcessor {
       this.lastPost = currentTime;
       const steps = [];
       for (let t = 0; t < 8; t++) steps.push(this.x.scPlayStep(t));
-      this.port.postMessage({type: 'pos', steps});
+      this.port.postMessage({type: 'pos', steps, pat: this.x.scPattern(), next: this.x.scPatNext()});
     }
     return true;
   }

@@ -5,7 +5,7 @@ Konzept: `../r36-groovebox/docs/konzept-neu.md`.
 
 Kein Framework, keine Abhängigkeiten, keine STL-Container im Kern — C++17 und fertig.
 
-## Stand: Meilenstein 8 — Samples überleben den Neustart
+## Stand: Meilenstein 9 — mehrere Patterns
 
 | Baustein | Datei | Zustand |
 | --- | --- | --- |
@@ -17,6 +17,7 @@ Kein Framework, keine Abhängigkeiten, keine STL-Container im Kern — C++17 und
 | DSP-Bausteine: PolyBLEP, TPT-Filter, Hüllkurve, Skalen | `src/dsp.h` | steht |
 | Machines: `POLY`, `FM`, `DRUM`, `SMPL` — hinter denselben Reglern | `src/machine.h` | steht |
 | Sample-Vorrat (64 Plätze, mono **und stereo**), Aufnahme | `src/sample.h` | steht |
+| 16 Patterns, Wechsel im Takt, kopieren und leeren | `src/engine.h`, `src/model.h` | steht |
 | Dokument mit Namen (nicht nur Zahlen) | `src/doc.h` | steht |
 | Sende-Effekte: Delay im Takt, Hall (FDN) | `src/fx.h` | steht |
 | Stimmen, Filter, Hüllkurve, Panorama, Summe | `src/engine.h` | steht |
@@ -57,6 +58,23 @@ Drei Entscheidungen, die den Rest tragen:
   solange dieser Step es nicht gelockt hat und gerade kein Slide darauf läuft.
   Das war zuerst falsch: der Schnappschuss fror alles ein, und ein gedrehter Filterregler
   blieb am klingenden Ton wirkungslos.
+
+## Pattern wechseln
+
+Gewählt wird sofort, **gewechselt wird im Takt** — alles andere klingt wie ein Versehen. Der
+Wechselpunkt wird beim Antippen als Sample-Position ausgerechnet, und der Audio-Block wird an
+genau dieser Stelle geteilt. Darum fällt der Wechsel bei 64er und bei 977er Blöcken **bitgleich**
+aus; ein Test vergleicht beide Läufe.
+
+Damit ein neues Pattern bei Step 0 beginnt, hat der Sequencer jetzt einen **Ursprung**: die
+Sample-Position, an der das laufende Pattern anfing. Die Zeit läuft durch, der Zähler nicht —
+dieselbe Trennung wie beim Step-Loop. Was vom alten Pattern noch in der Warteschlange lag, gilt
+nicht mehr.
+
+In der Oberfläche steht die Pattern-Reihe über den Steps: antippen wählt (das wartende blinkt
+grün), lange drücken öffnet *kopieren* und *leeren*. **Die Anzeige folgt dem Klang**, nicht
+umgekehrt: während es läuft, entscheidet der Audio-Kern, wann gewechselt wird, und das Modell
+zieht nach — sonst würde man schon das neue Pattern bearbeiten, während das alte noch spielt.
 
 ## Der Sampler
 
@@ -246,9 +264,9 @@ Last (x86, ein Kern): 580× Echtzeit mit einer Spur, 33× im schlimmsten Fall mi
 
 ## Als Nächstes
 
-9. Song-Modus, Pattern-Bänke.
-10. Sample trimmen und loopen, Wellenform zeichnen.
-11. Gerät: R36S-Build, echter Eingang, Gamepad-Bedienung.
+10. Song-Modus: eine Kette aus Patterns mit Wiederholungen.
+11. Sample trimmen und loopen, Wellenform zeichnen.
+12. Gerät: R36S-Build, echter Eingang, Gamepad-Bedienung.
 
 Offen aus Meilenstein 2: das DSP ist **neu geschrieben**, nicht aus SYNTH CITY portiert — ein
 Bit-Vergleich gegen den alten Render steht deshalb aus. Die Referenz-WAV sichert ab jetzt den

@@ -72,6 +72,17 @@ inline void demoProject(Engine& e) {
     for (int s = 0; s < 16; s += 8) { pad.s[s].on = 1; pad.s[s].setLock(COND, (int16_t)condAB(2, 2, false)); }
     pad.s[8].setLock(NOTE, 60);
 
+    // Pattern 2: dieselbe Spur-Einstellung, anderer Verlauf - damit die Pattern-Reihe
+    // vom ersten Moment an etwas zu waehlen hat.
+    patternCopy(e.P, 0, 1);
+    Pattern& p2 = e.P.pat[1];
+    for (int s = 0; s < 16; s++) { p2.t[0].s[s].on = (s % 2 == 0) ? 1 : 0; }   // treibende Kick
+    p2.t[3].s[2].on = 1; p2.t[3].s[2].setLock(NOTE, 52);
+    p2.t[3].s[10].on = 1; p2.t[3].s[10].setLock(NOTE, 47);
+    for (int s = 0; s < 16; s++) p2.t[2].s[s].on = 1;                          // Hi-Hats durch
+    p2.t[4].p[SRCB] = 92;                                                      // Melodie haerter
+    p2.t[5].p[VOL] = 64;
+
     pt.sc[0][3].set(FREQ, 42);                           // Scene A: Bass dumpf
     pt.sc[1][3].set(FREQ, 92);                           // Scene B: Bass offen
     pt.sc[0][4].set(VOL, 60);                            // Scene A: Melodie leise

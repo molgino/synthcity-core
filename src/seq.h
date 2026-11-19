@@ -38,6 +38,7 @@ struct Seq {
     int  loopFrom = 0, loopLen = 4;   // die Uhr laeuft dabei ungeruehrt weiter
     uint32_t seed = 0x5eed1234;
 
+    int64_t origin = 0;         // Sample-Position, an der das laufende Pattern begann
     int64_t nextK[NTRACKS];     // naechster noch nicht bewerteter Schritt je Spur
     bool lastCond[NTRACKS];     // Ergebnis der zuletzt AUSGEWERTETEN Condition dieser Spur
     uint32_t rng[NTRACKS];
@@ -46,7 +47,7 @@ struct Seq {
 
     Seq() { reset(); }
     void reset() {
-        pos = 0; nPend = 0;
+        pos = 0; nPend = 0; origin = 0;
         for (int t = 0; t < NTRACKS; t++) { nextK[t] = 0; lastCond[t] = false; rng[t] = seed + 0x9e37u * (t + 1); }
     }
     void start() { reset(); running = true; }
@@ -85,6 +86,14 @@ struct Seq {
         return r;
     }
 
+    // Ein neues Pattern faengt bei Step 0 an - und zwar genau hier, nicht irgendwann.
+    // Was vom alten noch in der Warteschlange lag, gilt nicht mehr.
+    void toPattern(int64_t at) {
+        origin = at;
+        nPend = 0;
+        for (int t = 0; t < NTRACKS; t++) { nextK[t] = 0; lastCond[t] = false; }
+    }
+
     void push(const Ev& e) { if (nPend < (int)(sizeof pend / sizeof *pend)) pend[nPend++] = e; }
 
     // Einen Schritt bewerten und - wenn er klingt - seine Events mit absoluter Zeit ablegen.
@@ -107,7 +116,7 @@ struct Seq {
         static const int slotLen   = paramSlot(paramFind("trk.len"));
         static const int slotRtrg  = paramSlot(paramFind("trk.ratchet"));
 
-        double nominal = (double)k * sp;
+        double nominal = (double)origin + (double)k * sp;
         double micro = (effective(tr, s, slotMicro) - 24) / 24.0;   // -1 .. +1 Step
         int64_t at = (int64_t)llround(nominal + micro * sp);
 
@@ -136,7 +145,9 @@ struct Seq {
             const Track& tr = pt.t[t];
             double sp = stepLen(tr);
             double horizon = (double)(pos + frames) + sp;    // Look-ahead: ein Step dieser Spur
-            for (int64_t k = nextK[t]; (double)k * sp < horizon; k++) { evalStep(tr, t, k, sp); nextK[t] = k + 1; }
+            for (int64_t k = nextK[t]; (double)origin + (double)k * sp < horizon; k++) {
+                evalStep(tr, t, k, sp); nextK[t] = k + 1;
+            }
         }
         int64_t end = pos + frames;
         for (int i = 0; i < nPend - 1; i++)                  // nach Zeit sortieren (wenige Eintraege)

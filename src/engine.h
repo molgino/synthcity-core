@@ -186,6 +186,12 @@ struct Engine : Sink {
     bool  recOn = false;
     int   recSlot = -1, recMax = 0, recCh = 2;
 
+    // --- Pattern-Wechsel ---------------------------------------------------------------------
+    // Gewaehlt wird sofort, gewechselt wird im Takt: alles andere klingt wie ein Versehen.
+    int     patNext = -1;          // wartet auf den Wechsel
+    int     chgSteps = 16;         // Wechsellaenge in Sechzehnteln
+    int64_t switchAt = -1;         // genaue Sample-Position des Wechsels
+
     Ev   q[256];
     int  qoff[256];
     int  nq = 0;
@@ -200,8 +206,13 @@ struct Engine : Sink {
             for (int i = 0; i < 64; i++) trkVal[t][i] = (float)P.pat[pat].t[t].p[i];
     }
 
+    // Vorbereiten heisst: alles steht still. Sonst laeuft die Uhr nach einem Neuaufbau weiter,
+    // ohne dass jemand sie gestartet hat.
     void prepare(float rate) {
         sr = rate; seq.sr = rate;
+        seq.stop();
+        patNext = -1; switchAt = -1;
+        recStop();
         for (int i = 0; i < NVOICES; i++) { v[i].used = false; v[i].env.kill(); }
         delay.reset(); reverb.reset();
         resetTrackValues();
@@ -220,6 +231,24 @@ struct Engine : Sink {
     void recStop() { recOn = false; recSlot = -1; }
     int  recFrames() const { return (recSlot >= 0) ? pool.s[recSlot].n : 0; }
     void stop()  { seq.stop(); for (int i = 0; i < NVOICES; i++) v[i].release(); }
+
+    // Ein Pattern waehlen. Steht die Uhr, gilt es sofort; laeuft sie, am naechsten Taktende.
+    void queuePattern(int p) {
+        if (p < 0 || p >= NPATTERNS) return;
+        if (!seq.running) {
+            pat = p; patNext = -1; switchAt = -1;
+            seq.toPattern(seq.pos);
+            resetTrackValues();
+            return;
+        }
+        patNext = p;
+        double sp16 = seq.sr * 60.0 / ((seq.bpm < 20.0 ? 20.0 : seq.bpm) * 4.0);
+        double cyc = sp16 * (chgSteps < 1 ? 1 : chgSteps);
+        double rel = (double)(seq.pos - seq.origin);
+        int64_t k = (int64_t)(rel / cyc) + 1;
+        switchAt = seq.origin + (int64_t)llround((double)k * cyc);
+    }
+    int  patPlaying() const { return pat; }
 
     void ev(const Ev& e, int offset) override {
         if (nq < 256) { q[nq] = e; qoff[nq] = offset; nq++; }
@@ -303,7 +332,25 @@ struct Engine : Sink {
     }
 
     // out ist stereo-verschraenkt (L,R,L,R...) und wird ueberschrieben.
+    // Steht ein Pattern-Wechsel an, wird der Block an GENAU der Stelle geteilt - sonst haenge
+    // der Wechsel davon ab, wie der Host schneidet.
     void render(float* out, int frames) {
+        int done = 0;
+        while (done < frames) {
+            int c = frames - done;
+            if (patNext >= 0 && switchAt > seq.pos && switchAt - seq.pos < (int64_t)c)
+                c = (int)(switchAt - seq.pos);
+            renderPart(out + done * 2, c);
+            done += c;
+            if (patNext >= 0 && seq.pos >= switchAt) {
+                pat = patNext; patNext = -1; switchAt = -1;
+                seq.toPattern(seq.pos);
+                resetTrackValues();
+            }
+        }
+    }
+
+    void renderPart(float* out, int frames) {
         for (int i = 0; i < frames * 2; i++) out[i] = 0.0f;
         nq = 0;
         seq.process(P, pat, frames, *this);

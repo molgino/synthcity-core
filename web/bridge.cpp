@@ -106,6 +106,27 @@ int scPlayStep(int t) {
     return (int)(((k % len) + len) % len);
 }
 
+// --- Pattern ------------------------------------------------------------------------------
+int  scNPatterns()      { return NPATTERNS; }
+int  scPattern()        { return gEng.pat; }
+int  scPatNext()        { return gEng.patNext; }
+void scPatQueue(int p)  { gEng.queuePattern(p); }
+// Sofort umschalten, ohne auf einen Takt zu warten: so folgt das Modell dem Klang-Kern.
+void scSetPattern(int p) {
+    if (p < 0 || p >= NPATTERNS) return;
+    gEng.pat = p; gEng.patNext = -1; gEng.switchAt = -1;
+    gEng.seq.toPattern(gEng.seq.pos);
+    gEng.resetTrackValues();
+}
+int  scPatUsed(int p)   { return (p >= 0 && p < NPATTERNS) ? gEng.P.pat[p].used : 0; }
+void scPatCopy(int a, int b) { patternCopy(gEng.P, a, b); }
+void scPatClear(int p)  {
+    patternClear(gEng.P, p);
+    if (p == gEng.pat) gEng.resetTrackValues();
+}
+int  scChg()            { return gEng.chgSteps; }
+void scSetChg(int n)    { gEng.chgSteps = n < 1 ? 1 : (n > NSTEPS ? NSTEPS : n); }
+
 // --- Performance-Ebene -----------------------------------------------------------------------
 void  scMute(int t, int on) { gEng.mute[t] = on != 0; }
 int   scIsMute(int t)       { return gEng.mute[t] ? 1 : 0; }
@@ -162,6 +183,7 @@ const char* scSave() {
     d.clear();
     projectToDoc(gEng.P, d);
     poolToDoc(gEng.pool, d);
+    d.set("prj.pat", gEng.pat);          // mit welchem Pattern das Projekt aufgeht
     int at = 0;
     for (int i = 0; i < d.n && at < (int)sizeof gDoc - 64; i++)
         at += snprintf(gDoc + at, sizeof gDoc - at, "%s = %d\n", d.e[i].k, d.e[i].v);
@@ -196,6 +218,10 @@ void scLoad(const char* text) {
     }
     projectFromDoc(d, gEng.P);
     poolFromDoc(d, gEng.pool);
+    int p0 = d.get("prj.pat", 0);
+    gEng.pat = (p0 >= 0 && p0 < NPATTERNS) ? p0 : 0;
+    gEng.patNext = -1; gEng.switchAt = -1;
+    gEng.seq.toPattern(gEng.seq.pos);
     gEng.seq.bpm = gEng.P.g[paramSlot(paramFind("bpm"))];
     gEng.resetTrackValues();
 }

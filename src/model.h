@@ -87,6 +87,26 @@ inline void projectInit(Project& P) {
     }
 }
 
+// Pattern kopieren und leeren - ohne das kann man kein zweites Pattern bauen.
+inline void patternClear(Project& P, int i) {
+    if (i < 0 || i >= NPATTERNS) return;
+    Pattern& pt = P.pat[i];
+    pt.used = 0;
+    for (int t = 0; t < NTRACKS; t++) {
+        Track& tr = pt.t[t];
+        tr.len = 16; tr.speed = 4;
+        for (int k = 0; k < NPARAMS; k++)
+            if (PARAMS[k].scope == PS_TRACK) tr.p[paramSlot(k)] = PARAMS[k].def;
+        for (int s = 0; s < NSTEPS; s++) { tr.s[s].on = 0; tr.s[s].nLock = 0; }
+        for (int k = 0; k < NSCENES; k++) pt.sc[k][t].n = 0;
+    }
+}
+inline void patternCopy(Project& P, int from, int to) {
+    if (from < 0 || from >= NPATTERNS || to < 0 || to >= NPATTERNS || from == to) return;
+    P.pat[to] = P.pat[from];
+    P.pat[to].used = 1;
+}
+
 // Wirksamer Wert eines Spurparameters auf einem Step (Lock schlaegt Grundwert).
 inline int16_t effective(const Track& tr, int step, int slot) {
     const Lock* l = tr.s[step].findLock(slot);

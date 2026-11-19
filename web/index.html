@@ -85,6 +85,17 @@ button:focus-visible { outline: 2px solid var(--ok); outline-offset: 2px; }
 
 .work { display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; min-width: 0; }
 
+/* --- Pattern-Reihe: immer sichtbar, eine Beruehrung entfernt --- */
+.pats { display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; margin-bottom: 8px; }
+.pt {
+  min-height: 28px; border-radius: 5px; border: 1px solid var(--line); background: var(--surface);
+  color: #55646d; font-family: var(--mono); font-size: 10px; display: grid; place-items: center;
+  cursor: pointer; user-select: none;
+}
+.pt.used { color: var(--fg); background: var(--raised); }
+.pt.cur { background: var(--amber); color: #15100a; border-color: var(--amber); font-weight: 700; }
+.pt.next { box-shadow: inset 0 0 0 2px var(--ok); color: var(--ok); }
+
 /* --- Steps: die Reihe verschwindet nie --- */
 .pads { padding: 10px; border-bottom: 1px solid var(--line); }
 .padhead { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
@@ -240,6 +251,7 @@ textarea {
           <div class="spacer"></div>
           <button class="tiny" id="lockDone">FERTIG</button>
         </div>
+        <div class="pats" id="pats"></div>
         <div class="padhead">
           <span class="lbl" id="padTitle">Spur 1 &middot; 16 Steps</span>
           <div class="spacer"></div>
@@ -322,6 +334,7 @@ let X = null;                 // der Kern im Hauptfaden: Modell, Texte, Speicher
 let ctx = null, node = null;  // der Kern im Audio-Faden
 let sel = 0, lockStep = -1, playing = false;
 let posSteps = new Array(8).fill(-1);
+let patNextView = -1;          // was der Klang-Kern in der Warteschlange hat
 const P = [];                 // Parametertabelle, aus dem Kern gelesen
 const el = id => document.getElementById(id);
 const machOf = t => X.scGet(t, P.find(p => p.id === 'trk.machine').slot);
@@ -363,7 +376,7 @@ async function boot() {
               scope: X.scParamScope(i), slot: X.scParamSlot(i),
               lo: X.scParamLo(i), hi: X.scParamHi(i), flags: X.scParamFlags(i)});
     }
-    buildRail(); buildPads(); buildParams(); tick();
+    buildRail(); buildPats(); buildPads(); buildParams(); tick();
   } catch (e) {
     document.getElementById('app').innerHTML =
       '<div class="err">Der Kern liess sich nicht laden: ' + e.message + '</div>';
@@ -382,7 +395,15 @@ async function audioOn() {
   });
   node.onprocessorerror = e => console.error('Audio-Kern:', e);
   node.port.onmessage = e => {
-    if (e.data.type === 'pos') posSteps = e.data.steps;
+    if (e.data.type === 'pos') {
+      posSteps = e.data.steps;
+      patNextView = e.data.next;
+      // Der Klang hat gewechselt - das Modell zieht nach, damit man das Richtige bearbeitet.
+      if (e.data.pat !== X.scPattern()) {
+        X.scSetPattern(e.data.pat);
+        buildPats(); buildPads(); buildParams();
+      }
+    }
     if (e.data.type === 'ready') el('klang').classList.add('on');
     if (e.data.type === 'fehler') console.error('Audio-Kern:', e.data.text);
     if (e.data.type === 'smp') { if (e.data.n) smpAck.add(e.data.slot); smpPaint(); }
@@ -404,7 +425,8 @@ async function audioOn() {
     }
   };
   node.connect(ctx.destination);
-  // Was vor dem ersten PLAY geladen wurde, kennt der Audio-Faden noch nicht - nachreichen.
+  // Was vor dem ersten PLAY eingestellt wurde, kennt der Audio-Faden noch nicht - nachreichen.
+  node.port.postMessage({fn: 'scSetPattern', args: [X.scPattern()]});
   for (let i = 0; i < X.scSmpSlots(); i++) smpSendToAudio(i);
 }
 
@@ -430,6 +452,54 @@ function buildRail() {
 }
 
 // --- Steps ---------------------------------------------------------------------------------------
+// --- Pattern ------------------------------------------------------------------------------
+// Gewaehlt wird sofort, gewechselt wird im Takt. Lange druecken oeffnet Kopieren und Leeren.
+function buildPats() {
+  const box = el('pats');
+  box.innerHTML = '';
+  for (let i = 0; i < X.scNPatterns(); i++) {
+    const d = document.createElement('div');
+    d.className = 'pt';
+    d.textContent = i + 1;
+    let timer = null, lang = false;
+    d.addEventListener('pointerdown', () => {
+      lang = false;
+      timer = setTimeout(() => { lang = true; patMenu(i); }, 400);
+    }, {passive: true});
+    const up = () => {
+      clearTimeout(timer);
+      if (lang) return;
+      // Laeuft die Uhr, entscheidet der Klang-Kern, wann gewechselt wird; das Modell
+      // zieht nach. Steht sie, gilt es sofort in beiden.
+      if (node && playing) node.port.postMessage({fn: 'scPatQueue', args: [i]});
+      else { cmd('scPatQueue', i); buildPats(); buildPads(); buildParams(); }
+    };
+    d.addEventListener('pointerup', up);
+    d.addEventListener('pointercancel', () => clearTimeout(timer));
+    box.appendChild(d);
+  }
+}
+function patMenu(i) {
+  el('pickTitle').textContent = 'PATTERN ' + (i + 1);
+  const list = el('pickList');
+  list.innerHTML = '';
+  const add = (text, fn) => {
+    const b = document.createElement('button');
+    b.innerHTML = `<span class="n">${text}</span>`;
+    b.onclick = () => { fn(); el('pick').close(); buildPats(); buildPads(); buildParams(); };
+    list.appendChild(b);
+  };
+  add('spielen', () => {
+    if (node && playing) node.port.postMessage({fn: 'scPatQueue', args: [i]});
+    else cmd('scPatQueue', i);
+  });
+  if (i !== X.scPattern())
+    add('Pattern ' + (X.scPattern() + 1) + ' hierher kopieren',
+        () => cmd('scPatCopy', X.scPattern(), i));
+  add('leeren', () => cmd('scPatClear', i));
+  el('pick').showModal();
+}
+
 function buildPads() {
   const g = el('pads');
   g.innerHTML = '';
@@ -612,6 +682,12 @@ function paint() {
     rail[t].classList.toggle('sel', t === sel);
     rail[t].classList.toggle('muted', !!X.scIsMute(t));
   }
+  const pats = el('pats').children;
+  for (let i = 0; i < pats.length; i++) {
+    pats[i].classList.toggle('used', !!X.scPatUsed(i));
+    pats[i].classList.toggle('cur', i === X.scPattern());
+    pats[i].classList.toggle('next', i === (playing ? patNextView : X.scPatNext()));
+  }
   const len = X.scTrackLen(sel);
   const pads = el('pads').children;
   for (let s = 0; s < pads.length; s++) {
@@ -638,7 +714,7 @@ function paint() {
       row.children[1].appendChild(x);
     } else if (!locked && x) x.remove();
   }
-  el('padTitle').textContent = `Spur ${sel + 1} \u00b7 ${len} Steps`;
+  el('padTitle').textContent = `Spur ${sel + 1} \u00b7 P${X.scPattern() + 1} \u00b7 ${len} Steps`;
   el('bpm').textContent = X.scGet(-1, bpmSlot());
 }
 const bpmSlot = () => P.find(p => p.id === 'bpm').slot;
@@ -855,7 +931,7 @@ el('docLoad').onclick = () => {
   X.scLoad(p);
   if (node) node.port.postMessage({fn: 'scLoad', doc: new TextEncoder().encode(t)});
   el('doc').close();
-  buildPads(); buildParams();
+  buildPats(); buildPads(); buildParams();
   smpRestoreWanted();
 };
 el('docCopy').onclick = async () => {

@@ -269,6 +269,7 @@ static bool plInit(const clap_plugin_t*) { buildParams(); return true; }
 static void plDestroy(const clap_plugin_t* pl) { delete self(pl); }
 static bool plActivate(const clap_plugin_t* pl, double sr, uint32_t, uint32_t) {
     self(pl)->eng.prepare((float)sr);
+    self(pl)->wasPlaying = false;     // prepare haelt alles an - der Transport startet es neu
     return true;
 }
 static void plDeactivate(const clap_plugin_t*) {}
