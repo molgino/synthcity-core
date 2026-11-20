@@ -137,7 +137,16 @@ button:focus-visible { outline: 2px solid var(--ok); outline-offset: 2px; }
 
 /* --- Regler der gewaehlten Spur --- */
 .params { overflow-y: auto; overscroll-behavior: contain; padding-bottom: 8px; }
-.grp { padding: 10px 12px 4px; position: sticky; top: 0; background: var(--panel); z-index: 1; }
+.grp { padding: 8px 12px 4px; }
+.ptabs { position: sticky; top: 0; z-index: 2; background: var(--panel); display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; padding: 8px 8px 6px;
+  border-bottom: 1px solid var(--line); }
+.ptab { position: relative; min-height: 34px; padding: 0 4px; font-size: 11px; letter-spacing: .06em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ptab.cur { background: var(--c, var(--amber)); color: #0b0f12; border-color: transparent; }
+.ptab i { position: absolute; top: 4px; right: 4px; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--lock); display: none; }
+.ptab.mark i { display: block; }
 .grp { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .grp .chordBtn { min-height: 0; height: 26px; padding: 0 10px; font-size: 11px; line-height: 1;
   color: var(--fg); background: var(--raised); border: 1px solid var(--line); border-radius: 6px; }
@@ -289,7 +298,9 @@ textarea {
   .trk .nm .w { display: none; }
   .trk .m { width: 32px; }
   /* Flachere Pads: im Hochformat bleibt sonst fuer die Regler kaum eine Zeile. */
-  .pad { aspect-ratio: 4 / 3; }
+  .pad { aspect-ratio: 16 / 9; }
+  .ptabs { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 3px; padding: 6px 6px 5px; }
+  .ptab { font-size: 9.5px; letter-spacing: 0; min-height: 30px; padding: 0 1px; text-overflow: clip; }
   .brand { display: none; }          /* schmaler Schirm: die Knoepfe sind wichtiger */
   .padgrid { grid-template-columns: repeat(4, 1fr); }
 }
@@ -522,9 +533,14 @@ const HUE = ['#5ec8ff', '#ffb020', '#ff4d9d', '#4fd6a0', '#b68cff', '#ff7a5c', '
 const GROUP = {note: 'Anschlag', vel: 'Anschlag', len: 'Anschlag', prob: 'Anschlag',
                cond: 'Anschlag', micro: 'Anschlag', ratchet: 'Anschlag', quant: 'Anschlag',
                nt2: 'Akkord', nt3: 'Akkord', nt4: 'Akkord', vmode: 'Akkord',
-               machine: 'Quelle', src: 'Quelle', flt: 'Filter',
+               machine: 'Quelle', smp: 'Quelle', src: 'Quelle', flt: 'Filter',
                amp: 'Huellkurve', vol: 'Ausgang', pan: 'Ausgang', send: 'Ausgang'};
 
+// Reiter ueber den Reglern: immer nur eine Gruppe, statt einer langen Liste zum Scrollen.
+const TABNAME = {Anschlag: 'TRIG', Akkord: 'AKKORD', Quelle: 'QUELLE', Filter: 'FILTER',
+                 Huellkurve: 'H\u00dcLLE', Ausgang: 'MIX'};
+let grpSel = 'Anschlag';
+try { grpSel = localStorage.getItem('synthcity-tab') || grpSel; } catch (e) {}
 let X = null;                 // der Kern im Hauptfaden: Modell, Texte, Speichern
 let ctx = null, node = null;  // der Kern im Audio-Faden
 let sel = 0, lockStep = -1, playing = false;
@@ -849,7 +865,14 @@ function jumpTrig(dir) {
 // --- Reglerliste: entsteht aus der Parametertabelle -----------------------------------------------
 function buildParams() {
   const box = el('params');
+  box.style.setProperty('--c', HUE[sel]);
+  const scroll = box.scrollTop;
   box.innerHTML = '';
+  const tabs = document.createElement('div');
+  tabs.className = 'ptabs';
+  tabs.id = 'ptabs';
+  box.appendChild(tabs);
+  const gruppen = [];
   let group = '';
   for (const p of P) {
     if (p.scope !== 1) continue;
@@ -857,18 +880,19 @@ function buildParams() {
     const g = GROUP[key] || key.toUpperCase();
     if (g !== group) {
       group = g;
-      const h = document.createElement('div');
-      h.className = 'grp lbl';
-      h.textContent = g;
+      if (!gruppen.includes(g)) gruppen.push(g);
       if (g === 'Akkord') {                // fertige Akkorde statt drei Abstaende von Hand
+        const h = document.createElement('div');
+        h.className = 'grp';
+        h.dataset.g = g;
         const b = document.createElement('button');
         b.className = 'chordBtn';
         b.id = 'chordBtn';
         b.textContent = 'AKKORD W\u00c4HLEN';
         b.onclick = openChords;
         h.appendChild(b);
+        box.appendChild(h);
       }
-      box.appendChild(h);
     }
     const row = document.createElement('div');
     row.className = 'row' + (X.scEnumCount(p.i) || p.id === 'trk.smp' ? ' pick' : '');
@@ -876,10 +900,32 @@ function buildParams() {
                      <div style="display:flex;align-items:center"><span class="v"></span></div>
                      <div class="bar"></div>`;
     row.dataset.p = p.i;
+    row.dataset.g = g;
     dragRow(row, p);
     box.appendChild(row);
   }
+  if (!gruppen.includes(grpSel)) grpSel = gruppen[0];
+  for (const g of gruppen) {
+    const t = document.createElement('button');
+    t.className = 'ptab';
+    t.dataset.g = g;
+    t.innerHTML = (TABNAME[g] || g.toUpperCase()) + '<i></i>';
+    t.onclick = () => {
+      grpSel = g;
+      try { localStorage.setItem('synthcity-tab', g); } catch (e) {}
+      zeigeGruppe(); box.scrollTop = 0;
+    };
+    tabs.appendChild(t);
+  }
+  zeigeGruppe();
+  box.scrollTop = scroll;
   paint();
+}
+function zeigeGruppe() {
+  const box = el('params');
+  for (const e of box.querySelectorAll('[data-g]'))
+    if (!e.classList.contains('ptab')) e.hidden = e.dataset.g !== grpSel;
+  for (const t of box.querySelectorAll('.ptab')) t.classList.toggle('cur', t.dataset.g === grpSel);
 }
 const valueOf = p => {
   if (sceneEdit >= 0) {
@@ -1167,7 +1213,15 @@ function paint() {
   el('bpmPat').classList.toggle('on', tempoEigen());
 }
 const bpmSlot = () => P.find(p => p.id === 'bpm').slot;
-function tick() { paint(); requestAnimationFrame(tick); }
+function tick() {
+  paint();
+  for (const t of document.querySelectorAll('.ptab')) {
+    let an = false;
+    for (const r of el('params').querySelectorAll('.row.locked, .row.inscene')) if (r.dataset.g === t.dataset.g) { an = true; break; }
+    t.classList.toggle('mark', an);
+  }
+  requestAnimationFrame(tick);
+}
 
 // --- Bedienung unten -------------------------------------------------------------------------------
 el('play').onclick = async () => {

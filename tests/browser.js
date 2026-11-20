@@ -41,6 +41,15 @@ const stummMuster = async p => {
   return r.join('');
 };
 
+// Die Regler stehen auf Reitern: erst den Reiter der gesuchten Zeile waehlen.
+async function R(p, id) {
+  await p.evaluate(id => {
+    const r = [...document.querySelectorAll('.row')].find(r => r.querySelector('small').textContent === id);
+    if (r && r.hidden) document.querySelector('.ptab[data-g="' + r.dataset.g + '"]').click();
+  }, id);
+  return p.locator('.row', {hasText: id});
+}
+
 (async () => {
   const url = process.argv[2] || 'http://localhost:8787/index.html';
   console.log('Oberflaechen-Tests (' + url + ')');
@@ -57,6 +66,15 @@ const stummMuster = async p => {
   chk(await p.locator('.trk').count() === 8, 'nicht 8 Spuren');
   chk(await p.locator('.pt').count() === 16, 'nicht 16 Patterns');
   chk(await p.locator('.row').count() > 15, 'zu wenige Regler');
+  // Reiter: es ist immer nur eine Gruppe zu sehen
+  chk(await p.locator('.ptab').count() === 6, 'nicht sechs Reiter: ' + await p.locator('.ptab').count());
+  await p.locator('.ptab', {hasText: 'FILTER'}).click(); await p.waitForTimeout(100);
+  const sichtbar = await p.evaluate(() => [...document.querySelectorAll('.row')].filter(r => !r.hidden).map(r => r.querySelector('small').textContent));
+  chk(sichtbar.length > 0 && sichtbar.every(id => id.startsWith('trk.flt.')), 'der Reiter FILTER zeigt nicht nur Filter: ' + sichtbar.join(','));
+  chk(await p.locator('.ptab', {hasText: 'FILTER'}).evaluate(e => e.classList.contains('cur')), 'der gewaehlte Reiter ist nicht markiert');
+  chk((await p.evaluate(() => [...document.querySelectorAll('.row')].filter(r => !r.hidden && r.dataset.g === 'Quelle').length)) === 0, 'QUELLE ist trotzdem zu sehen');
+  // SAMPLE steht bei QUELLE, nicht als eigene Gruppe
+  chk((await p.evaluate(() => document.querySelector('.row[data-g]') && [...document.querySelectorAll('.row')].find(r => r.querySelector('small').textContent === 'trk.smp').dataset.g)) === 'Quelle', 'SAMPLE steht nicht bei QUELLE');
   chk((await p.locator('.row .v').first().textContent()).trim().length > 0, 'kein Anzeigetext');
 
   grp('Mute trifft und schaltet - auch bei schnellen Tipps');
@@ -108,7 +126,7 @@ const stummMuster = async p => {
   chk(await p.locator('.pt.next').count() === 0, 'es wartet noch etwas');
 
   grp('Auswahllisten statt Zahlen');
-  const eng = p.locator('.row', {hasText: 'trk.machine'});
+  const eng = (await R(p, 'trk.machine'));
   await eng.scrollIntoViewIfNeeded();
   chk(['POLY', 'FM', 'DRUM', 'SMPL'].includes((await eng.locator('.v').textContent()).trim()),
       'ENGINE zeigt keinen Namen');
@@ -118,7 +136,7 @@ const stummMuster = async p => {
   chk(engListe.join(',') === 'POLY,FM,DRUM,SMPL', 'die Engine-Liste stimmt nicht');
   await p.locator('#pickList button', {hasText: 'FM'}).tap();
   await p.waitForTimeout(300);
-  const a = p.locator('.row', {hasText: 'trk.src.a'});
+  const a = (await R(p, 'trk.src.a'));
   chk((await a.locator('.nm').textContent()).includes('RATIO'), 'der Regler heisst nicht wie die Machine');
   chk((await a.locator('.v').textContent()).includes(':'), 'FM zeigt kein Verhaeltnis');
 
@@ -146,10 +164,10 @@ const stummMuster = async p => {
 
     await p.locator('#smpUse').tap();
     await p.waitForTimeout(400);
-    const eng2 = p.locator('.row', {hasText: 'trk.machine'});
+    const eng2 = (await R(p, 'trk.machine'));
     await eng2.scrollIntoViewIfNeeded();
     chk((await eng2.locator('.v').textContent()).trim() === 'SMPL', 'die Spur spielt nicht SMPL');
-    const sr = p.locator('.row', {hasText: 'trk.smp'});
+    const sr = (await R(p, 'trk.smp'));
     await sr.scrollIntoViewIfNeeded();
     chk((await sr.locator('.v').textContent()).includes('sc-test-stereo'),
         'der Sample-Platz zeigt den Namen nicht');
@@ -209,7 +227,7 @@ const stummMuster = async p => {
   {
     // Spur 1 waehlen, NOTE antippen: das Feinwert-Fenster oeffnet sich
     await p.locator('.trk').nth(0).locator('.nm').tap(); await p.waitForTimeout(200);
-    const note = p.locator('.row', {hasText: 'trk.note'});
+    const note = (await R(p, 'trk.note'));
     await note.scrollIntoViewIfNeeded();
     await note.tap(); await p.waitForTimeout(250);
     chk(await p.locator('#fine').isVisible(), 'antippen oeffnet kein Feinwert-Fenster');
@@ -230,7 +248,7 @@ const stummMuster = async p => {
     await p.locator('#fineClose').tap(); await p.waitForTimeout(150);
     chk((await note.locator('.v').textContent()).trim() === 'C4', 'die Zeile zeigt den neuen Wert nicht');
     // Ziehen bleibt fuer grobe Wege: ein Tipp darf nichts verstellen
-    const vol = p.locator('.row', {hasText: 'trk.vol'});
+    const vol = (await R(p, 'trk.vol'));
     await vol.scrollIntoViewIfNeeded();
     const v0 = (await vol.locator('.v').textContent()).trim();
     await vol.tap(); await p.waitForTimeout(200);
@@ -246,7 +264,7 @@ const stummMuster = async p => {
     await p.locator('#scnB').tap(); await p.waitForTimeout(200);
     chk(await p.locator('#scenebar').isVisible(), 'das Scene-Band erscheint nicht');
     chk(+(await p.locator('#morph').inputValue()) === 100, 'der Morph faehrt nicht auf Scene B');
-    const fr = p.locator('.row', {hasText: 'trk.flt.reso'});
+    const fr = (await R(p, 'trk.flt.reso'));
     await fr.scrollIntoViewIfNeeded();
     const grund = (await fr.locator('.v').textContent()).trim();
     await fr.tap(); await p.waitForTimeout(200);
@@ -316,7 +334,7 @@ const stummMuster = async p => {
     chk((await p.locator('.pad').first().textContent()).trim().startsWith('17'), 'Seite 2 zeigt nicht Step 17');
     await p.locator('#pages button').nth(0).tap();
     // NOTE in Tonleiterstufen: von C4 eine Stufe hoch ist D4
-    const note = p.locator('.row', {hasText: 'trk.note'});
+    const note = (await R(p, 'trk.note'));
     await note.scrollIntoViewIfNeeded(); await note.tap(); await p.waitForTimeout(200);
     await p.locator('#fineReset').tap(); await p.waitForTimeout(100);              // C4
     chk((await p.locator('#fineBtns button').nth(2).textContent()).trim() === '+STUFE', 'in einer Tonart heisst die Taste nicht +STUFE');
@@ -344,6 +362,7 @@ const stummMuster = async p => {
     if ((await p.locator('#play').textContent()).trim() === 'STOP') await p.locator('#play').click();
     await p.locator('.pt').nth(0).tap(); await p.waitForTimeout(150);
     await p.locator('.trk').nth(0).locator('.nm').tap(); await p.waitForTimeout(150);
+    await R(p, 'trk.nt2');
     const nt = i => p.locator('.row', {hasText: 'trk.nt' + i}).locator('.v');
     await p.locator('#chordBtn').scrollIntoViewIfNeeded();
     await p.locator('#chordBtn').tap(); await p.waitForTimeout(200);
@@ -364,14 +383,14 @@ const stummMuster = async p => {
     // Feinwert: eine ausgeschaltete Akkordnote beginnt beim Grundton
     await p.locator('#chordBtn').tap(); await p.waitForTimeout(200);
     await p.locator('#pickList button', {hasText: 'AUS'}).tap(); await p.waitForTimeout(200);
-    await p.locator('.row', {hasText: 'trk.nt2'}).tap(); await p.waitForTimeout(200);
+    await (await R(p, 'trk.nt2')).tap(); await p.waitForTimeout(200);
     await p.locator('#fineBtns button').nth(3).tap(); await p.waitForTimeout(150);          // +OKT
     chk((await p.locator('#fineVal').textContent()).includes('+12 Oktave'), 'von AUS aus ist +OKT nicht +12');
     await p.locator('#fineReset').tap(); await p.waitForTimeout(100);
     chk((await p.locator('#fineVal').textContent()).trim() === 'AUS', 'AUS schaltet die Akkordnote nicht ab');
     await p.locator('#fineClose').tap(); await p.waitForTimeout(150);
     // Stimmenmodus als Liste
-    const vm = p.locator('.row', {hasText: 'trk.vmode'});
+    const vm = (await R(p, 'trk.vmode'));
     await vm.tap(); await p.waitForTimeout(200);
     await p.locator('#pickList button', {hasText: 'LEGATO'}).tap(); await p.waitForTimeout(200);
     chk((await vm.locator('.v').textContent()).trim() === 'LEGATO', 'der Stimmenmodus laesst sich nicht waehlen');
@@ -470,7 +489,7 @@ const stummMuster = async p => {
     // Trigless Lock, dann Trig drauf: die Locks bleiben
     const pad = p.locator('.pad').nth(2);
     await halten(pad);
-    const fr = p.locator('.row', {hasText: 'trk.flt.freq'});
+    const fr = (await R(p, 'trk.flt.freq'));
     await fr.scrollIntoViewIfNeeded(); await fr.tap(); await p.waitForTimeout(200);
     await p.locator('#fineBtns button').nth(0).tap(); await p.waitForTimeout(100);       // -10
     await p.locator('#fineClose').tap(); await p.waitForTimeout(150);

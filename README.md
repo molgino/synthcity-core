@@ -159,6 +159,13 @@ benutzt — vorher fehlten Patterns, die nur über Trigs gefüllt wurden, im Dok
 nach dem nächsten Laden. Das Dokument schreibt jetzt zusätzlich jedes Pattern mit Trigs mit,
 benutzt oder nicht.
 
+## Reiter statt langer Liste
+
+Die Regler einer Spur stehen auf sechs Reitern — **TRIG · AKKORD · QUELLE · FILTER · HÜLLE ·
+MIX** —, sichtbar ist immer nur eine Gruppe. Der Reiter bleibt beim Spurwechsel stehen (und
+über das Neuladen hinweg); ein Punkt am Reiter zeigt, dass dort auf dem gehaltenen Step ein Lock
+oder in der Scene ein Wert liegt. Im Hochformat sind die Pads dafür etwas flacher.
+
 ## Genaue Werte per Touch
 
 Ziehen ist für grobe Wege — eine Note höher trifft man damit nur durch Glück. **Antippen**
