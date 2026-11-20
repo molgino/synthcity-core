@@ -332,6 +332,26 @@ const stummMuster = async p => {
     chk(r.scroll <= r.W, name + ': die Seite ist breiter als der Schirm (' + r.scroll + ' > ' + r.W + ')');
     chk(r.fehlt.length === 0, name + ': nicht zu treffen: ' + r.fehlt.join(', '));
     chk(r.sichtbar >= 2, name + ': fuer die Regler bleibt kein Platz');
+    // Auch jedes Fenster muss auf den Schirm passen, samt allem, was darin ist.
+    const dlg = await q.evaluate(() => {
+      const W = document.documentElement.clientWidth, out = [];
+      for (const d of document.querySelectorAll('dialog')) {
+        d.showModal();
+        const br = d.getBoundingClientRect();
+        if (br.right > W + 1 || br.left < -1) out.push(d.id + ' breiter als der Schirm');
+        if (d.scrollWidth > d.clientWidth + 1) out.push(d.id + ' laeuft quer ueber');
+        for (const el of d.querySelectorAll('button, canvas, label')) {
+          const b = el.getBoundingClientRect();
+          if (b.width > 0 && (b.right > br.right + 1 || b.left < br.left - 1)) out.push(d.id + ': ' + (el.id || el.textContent.trim().slice(0, 14)));
+        }
+        d.close();
+      }
+      // Keine Escape-Schreibweise als sichtbarer Text
+      if (/\\u[0-9a-f]{4}/i.test(document.body.innerText + [...document.querySelectorAll('dialog')].map(d => d.textContent).join(' ')))
+        out.push('\\u... steht als Text da');
+      return out;
+    });
+    chk(dlg.length === 0, name + ': ' + dlg.slice(0, 4).join(' | '));
     if (!name.includes('landscape')) { await ctx.close(); continue; }
     chk(await q.locator('.trk').nth(7).locator('.m').isVisible(), name + ': Spur 8 ist nicht zu sehen');
     await ctx.close();
