@@ -53,6 +53,10 @@ struct SceneTrack {
         v[n++] = {(uint16_t)slot, val, 0};
         return true;
     }
+    bool clear(int slot) {
+        for (int i = 0; i < n; i++) if (v[i].slot == slot) { v[i] = v[--n]; return true; }
+        return false;
+    }
 };
 
 struct Pattern {

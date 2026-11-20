@@ -238,6 +238,48 @@ const stummMuster = async p => {
     await p.locator('#fineClose').tap();
   }
 
+  grp('Scenes bearbeiten');
+  {
+    if ((await p.locator('#play').textContent()).trim() === 'STOP') await p.locator('#play').click();
+    await p.locator('.pt').nth(0).tap(); await p.waitForTimeout(150);
+    await p.locator('.trk').nth(3).locator('.nm').tap(); await p.waitForTimeout(150);   // Spur 4 (Bass)
+    await p.locator('#scnB').tap(); await p.waitForTimeout(200);
+    chk(await p.locator('#scenebar').isVisible(), 'das Scene-Band erscheint nicht');
+    chk(+(await p.locator('#morph').inputValue()) === 100, 'der Morph faehrt nicht auf Scene B');
+    const fr = p.locator('.row', {hasText: 'trk.flt.reso'});
+    await fr.scrollIntoViewIfNeeded();
+    const grund = (await fr.locator('.v').textContent()).trim();
+    await fr.tap(); await p.waitForTimeout(200);
+    for (let i = 0; i < 3; i++) await p.locator('#fineBtns button').nth(3).tap();         // +10 dreimal
+    await p.locator('#fineClose').tap(); await p.waitForTimeout(200);
+    chk(await fr.evaluate(e => e.classList.contains('inscene')), 'der Scene-Wert ist nicht als solcher zu sehen');
+    const sceneWert = (await fr.locator('.v').textContent()).trim();
+    chk(sceneWert !== grund, 'der Scene-Wert wurde nicht gesetzt');
+    // Ausserhalb des Scene-Modus steht der Grundwert unveraendert da
+    await p.locator('#sceneDone').tap(); await p.waitForTimeout(200);
+    chk((await fr.locator('.v').textContent()).trim() === grund, 'die Scene hat den Grundwert ueberschrieben');
+    chk(await p.locator('#scnB').evaluate(e => e.classList.contains('has')), 'B zeigt nicht, dass es etwas enthaelt');
+    // Im Dokument
+    await p.locator('#docBtn').tap(); await p.waitForTimeout(200);
+    chk(/pat\.0\.sc\.1\.trk\.3\.flt\.reso = \d+/.test(await p.locator('#docText').inputValue()),
+        'die Scene steht nicht im Dokument');
+    await p.locator('#docClose').tap();
+    // Lock-Modus und Scene-Modus schliessen einander aus
+    await p.locator('#scnA').tap(); await p.waitForTimeout(150);
+    await p.locator('.pad').first().dispatchEvent('pointerdown'); await p.waitForTimeout(450);
+    await p.locator('.pad').first().dispatchEvent('pointerup'); await p.waitForTimeout(150);
+    chk(await p.locator('#lockbar').isVisible() && !(await p.locator('#scenebar').isVisible()),
+        'Lock- und Scene-Modus sind gleichzeitig offen');
+    await p.locator('#lockDone').tap();
+    // Scene leeren braucht zwei Tipps
+    await p.locator('#scnB').tap(); await p.waitForTimeout(150);
+    await p.locator('#sceneClear').tap(); await p.waitForTimeout(100);
+    chk(await p.locator('#scnB').evaluate(e => e.classList.contains('has')), 'ein einziger Tipp leert die Scene');
+    await p.locator('#sceneClear').tap(); await p.waitForTimeout(200);
+    chk(!(await p.locator('#scnB').evaluate(e => e.classList.contains('has'))), 'zwei Tipps leeren die Scene nicht');
+    await p.locator('#sceneDone').tap();
+  }
+
   grp('Tempo je Pattern');
   {
     const bpm = async () => +(await p.locator('#bpm').textContent()).trim();

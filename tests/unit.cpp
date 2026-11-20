@@ -202,6 +202,13 @@ static void testScenes() {
     R.pat[0].sc[1][0].set(sl, 120);
     CHECK(sceneValue(R.pat[0], 0, sl, 0.0f) == 60.0f, "halbe Scene: A ist nicht der Grundwert");
     CHECK(sceneValue(R.pat[0], 0, sl, 1.0f) == 120.0f, "halbe Scene: B fehlt");
+    // Ein Wert laesst sich wieder entfernen - dann gilt dort der Grundwert.
+    static Project S2; demoPattern(S2);
+    S2.pat[0].t[0].p[sl] = 77;
+    S2.pat[0].sc[0][0].set(sl, 10);
+    CHECK(S2.pat[0].sc[0][0].clear(sl), "ein Scene-Wert laesst sich nicht entfernen");
+    CHECK(!S2.pat[0].sc[0][0].clear(sl), "ein schon entfernter Wert wird nochmal entfernt");
+    CHECK(sceneValue(S2.pat[0], 0, sl, 0.0f) == 77.0f, "nach dem Entfernen gilt nicht der Grundwert");
     // Ein Lock schlaegt die Scene
     P.pat[0].t[0].s[4].setLock(sl, 15);
     CHECK(effectiveF(P.pat[0], 0, 4, sl, 1.0f) == 15.0f, "Lock verliert gegen die Scene");

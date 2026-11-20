@@ -155,6 +155,21 @@ button:focus-visible { outline: 2px solid var(--ok); outline-offset: 2px; }
   padding: 2px 5px; margin-left: 8px;
 }
 
+/* --- Scene-Band: dieselbe Idee wie das Lock-Band, eigene Farbe --- */
+:root { --scene: #b68cff; }
+.scenebar {
+  display: flex; align-items: center; gap: 8px; padding: 7px 12px; margin-bottom: 8px; border-radius: 6px;
+  background: var(--scene); color: #1b1030; font-size: 11px; font-weight: 700; letter-spacing: .1em;
+}
+.scenebar button { background: #1b1030; color: #ece2ff; border-color: #1b1030; min-height: 32px; }
+.scn { min-width: 40px; padding: 0 8px; font-family: var(--mono); }
+.scn.on { background: var(--scene); border-color: var(--scene); color: #1b1030; }
+.scn.has { box-shadow: inset 0 -3px 0 var(--scene); }
+.row.inscene .bar { background: var(--scene); }
+.row.inscene .v { color: var(--scene); }
+.row .xs { font-size: 10px; color: var(--scene); border: 1px solid var(--scene); border-radius: 4px;
+           padding: 2px 5px; margin-left: 8px; }
+
 /* --- Lock-Band --- */
 .lockbar {
   display: flex; align-items: center; gap: 8px; padding: 7px 12px;
@@ -168,7 +183,7 @@ footer {
   padding: 8px max(10px, env(safe-area-inset-left, 0px)) max(8px, env(safe-area-inset-bottom, 0px));
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
 }
-.morph { display: flex; align-items: center; gap: 8px; flex: 1 1 160px; min-width: 0; }
+.morph { display: flex; align-items: center; gap: 6px; flex: 1 1 160px; min-width: 0; }
 .morph input { flex: 1; accent-color: var(--amber); min-width: 80px; }
 .play { min-width: 78px; }
 .play.on { background: var(--ok); border-color: var(--ok); color: #06231a; }
@@ -242,6 +257,9 @@ textarea {
   header .tiny { padding: 0 8px; min-width: 34px; }
   footer { gap: 6px; padding-inline: 8px; }
   footer button { padding: 0 10px; }
+  .scn { min-width: 34px; padding: 0 4px; }
+  .morph { gap: 4px; }
+  .morph input { min-width: 40px; }
   /* Schmal: die Spur heisst nur noch ihre Nummer, in ihrer Farbe - so bleibt Platz
      fuer einen M-Knopf, den man mit dem Daumen trifft. */
   :root { --rail: 66px; }
@@ -273,8 +291,11 @@ textarea {
   .trk .dot, .trk .nm .w { display: none; }
   .trk .nm { color: var(--c); font-size: 14px; font-family: var(--mono); font-weight: 700; text-align: center; }
   .trk .m { width: 28px; min-height: 0; }
+  /* Eine Spalte, in der die Pads den Rest bekommen - egal ob Lock- oder Scene-Band dazukommt. */
   .pads { border-bottom: none; border-right: 1px solid var(--line); padding: 6px;
-          display: grid; grid-template-rows: auto auto minmax(0, 1fr); min-height: 0; }
+          display: flex; flex-direction: column; min-height: 0; }
+  .padgrid { flex: 1 1 0; }
+  .lockbar, .scenebar { padding-block: 3px; margin-bottom: 4px; }
   .pats { margin-bottom: 4px; gap: 3px; }
   .pt { min-height: 22px; }
   .padhead { margin-bottom: 4px; }
@@ -321,6 +342,12 @@ textarea {
           <button class="tiny" id="lockDone">FERTIG</button>
         </div>
         <div class="pats" id="pats"></div>
+        <div class="scenebar" id="scenebar" hidden>
+          <span id="sceneTxt">SCENE A</span>
+          <div class="spacer"></div>
+          <button class="tiny" id="sceneClear">LEEREN</button>
+          <button class="tiny" id="sceneDone">FERTIG</button>
+        </div>
         <div class="padhead">
           <span class="lbl" id="padTitle">Spur 1 &middot; 16 Steps</span>
           <div class="spacer"></div>
@@ -338,8 +365,9 @@ textarea {
     <button id="fill">FILL</button>
     <button id="songBtn">SONG</button>
     <div class="morph">
-      <span class="lbl">Morph A&ndash;B</span>
+      <button class="scn" id="scnA" aria-label="Scene A bearbeiten">A</button>
       <input type="range" id="morph" min="0" max="100" value="0" aria-label="Morph zwischen Scene A und B">
+      <button class="scn" id="scnB" aria-label="Scene B bearbeiten">B</button>
     </div>
   </footer>
 </div>
@@ -462,6 +490,7 @@ const GROUP = {note: 'Anschlag', vel: 'Anschlag', len: 'Anschlag', prob: 'Anschl
 let X = null;                 // der Kern im Hauptfaden: Modell, Texte, Speichern
 let ctx = null, node = null;  // der Kern im Audio-Faden
 let sel = 0, lockStep = -1, playing = false;
+let sceneEdit = -1;            // -1 = aus, 0 = Scene A, 1 = Scene B
 let posSteps = new Array(8).fill(-1);
 let patNextView = -1;          // was der Klang-Kern in der Warteschlange hat
 let meterPeak = 0;
@@ -596,7 +625,11 @@ function buildRail() {
     };
     m.addEventListener('pointerdown', ev => { ev.preventDefault(); schalten(ev); });
     m.addEventListener('click', schalten);
-    d.addEventListener('click', () => { sel = t; lockStep = -1; buildPads(); buildParams(); });
+    d.addEventListener('click', () => {
+      sel = t;
+      if (lockStep >= 0) closeLock();
+      buildPads(); buildParams();                      // der Scene-Modus bleibt: naechste Spur, dieselbe Scene
+    });
     r.appendChild(d);
   }
 }
@@ -685,6 +718,7 @@ function clearLocks(s) {
   for (const p of P) if (p.scope === 1) cmd('scLockClear', sel, s, p.slot);
 }
 function openLock(s) {
+  if (sceneEdit >= 0) closeScene();
   lockStep = s;
   el('lockbar').hidden = false;
   el('lockTxt').textContent = `LOCK \u00b7 STEP ${s + 1}`;
@@ -728,6 +762,11 @@ function buildParams() {
   paint();
 }
 const valueOf = p => {
+  if (sceneEdit >= 0) {
+    const sv = X.scSceneGet(sceneEdit, sel, p.slot);
+    if (sv !== -32768) return {v: sv, locked: false, scene: true};
+    return {v: X.scGet(sel, p.slot), locked: false, scene: false};
+  }
   if (lockStep >= 0) {
     const l = X.scLockGet(sel, lockStep, p.slot);
     if (l !== -32768) return {v: l, locked: true};
@@ -736,6 +775,7 @@ const valueOf = p => {
 };
 function writeValue(p, v) {
   v = Math.max(p.lo, Math.min(p.hi, Math.round(v)));
+  if (sceneEdit >= 0) { cmd('scSceneSet', sceneEdit, sel, p.slot, v); return; }
   if (lockStep >= 0) {
     if (!X.scStepGet(sel, lockStep)) cmd('scStepSet', sel, lockStep, 2);  // trigless: nur Werte
     cmd('scLockSet', sel, lockStep, p.slot, v, 0);
@@ -832,9 +872,10 @@ el('fineReset').onclick = () => { if (fine && fine.reset) { fine.reset(); fineSh
 
 function openFineParam(p) {
   const istNote = p.id === 'trk.note';
-  const lockMode = lockStep >= 0;
+  const lockMode = lockStep >= 0, sceneMode = sceneEdit >= 0;
   openFine({
-    title: rowName(p) + (lockMode ? '  \u00b7  LOCK STEP ' + (lockStep + 1) : '') + '   ' + p.id,
+    title: rowName(p) + (sceneMode ? '  \u00b7  SCENE ' + 'AB'[sceneEdit]
+                                   : lockMode ? '  \u00b7  LOCK STEP ' + (lockStep + 1) : '') + '   ' + p.id,
     lo: p.lo, hi: p.hi,
     get: () => valueOf(p).v,
     set: v => writeValue(p, v),
@@ -842,9 +883,10 @@ function openFineParam(p) {
     steps: istNote ? [['\u2212OKT', -12], ['\u22121', -1], ['+1', 1], ['+OKT', 12]]
                    : [['\u221210', -10], ['\u22121', -1], ['+1', 1], ['+10', 10]],
     hint: istNote ? 'Ein Schritt ist ein Halbton.' : '',
-    resetLabel: lockMode ? 'LOCK ENTFERNEN' : 'GRUNDWERT',
+    resetLabel: sceneMode ? 'SCENE-WERT ENTFERNEN' : lockMode ? 'LOCK ENTFERNEN' : 'GRUNDWERT',
     reset: () => {
-      if (lockMode) cmd('scLockClear', sel, lockStep, p.slot);
+      if (sceneMode) cmd('scSceneClear', sceneEdit, sel, p.slot);
+      else if (lockMode) cmd('scLockClear', sel, lockStep, p.slot);
       else cmd('scSet', sel, p.slot, X.scParamDef(p.i));
     },
   });
@@ -890,6 +932,13 @@ function paint() {
     rail[t].classList.toggle('muted', !!X.scIsMute(t));
   }
   el('songBtn').classList.toggle('on', songAn());
+  for (const k of [0, 1]) {
+    const b = el(k ? 'scnB' : 'scnA');
+    b.classList.toggle('on', sceneEdit === k);
+    let hat = false;
+    for (let t = 0; t < 8 && !hat; t++) if (X.scSceneCount(k, t)) hat = true;
+    b.classList.toggle('has', hat);
+  }
   if (el('song').open) {
     const rows = el('songList').querySelectorAll('.songrow');
     rows.forEach((r, i) => r.classList.toggle('jetzt', songAn() && songView.pos === i));
@@ -913,8 +962,16 @@ function paint() {
   }
   for (const row of el('params').querySelectorAll('.row')) {
     const p = P[+row.dataset.p];
-    const {v, locked} = valueOf(p);
+    const {v, locked, scene} = valueOf(p);
     row.classList.toggle('locked', locked);
+    row.classList.toggle('inscene', !!scene);
+    let xs = row.querySelector('.xs');
+    if (scene && !xs) {
+      xs = document.createElement('span');
+      xs.className = 'xs'; xs.textContent = 'SCENE \u00d7';
+      xs.onclick = ev => { ev.stopPropagation(); cmd('scSceneClear', sceneEdit, sel, p.slot); paint(); };
+      row.children[1].appendChild(xs);
+    } else if (!scene && xs) xs.remove();
     row.querySelector('.v').textContent = ptext(p, v);
     row.querySelector('.nm').firstChild.textContent = rowName(p);
     row.querySelector('.bar').style.width = ((v - p.lo) / (p.hi - p.lo) * 100) + '%';
@@ -976,6 +1033,37 @@ el('bpm').onclick = () => openFine({
 el('lenUp').onclick = () => cmd('scSetTrackLen', sel, Math.min(16, X.scTrackLen(sel) + 1));
 el('lenDn').onclick = () => cmd('scSetTrackLen', sel, Math.max(1, X.scTrackLen(sel) - 1));
 el('lockDone').onclick = closeLock;
+
+// --- Scenes bearbeiten -----------------------------------------------------------------------
+// A oder B antippen: ab jetzt landen Regler-Aenderungen in dieser Scene, fuer die gewaehlte
+// Spur. Damit man hoert, was man einstellt, faehrt der Morph auf die Seite der Scene.
+function openScene(k) {
+  if (lockStep >= 0) closeLock();
+  sceneEdit = k;
+  el('scenebar').hidden = false;
+  el('sceneTxt').textContent = 'SCENE ' + 'AB'[k] + ' \u00b7 REGLER SETZEN DIE SCENE';
+  el('morph').value = k ? 100 : 0;
+  cmd('scSetMorph', k ? 1 : 0);
+  buildParams();
+}
+function closeScene() { sceneEdit = -1; el('scenebar').hidden = true; buildParams(); }
+el('scnA').onclick = () => sceneEdit === 0 ? closeScene() : openScene(0);
+el('scnB').onclick = () => sceneEdit === 1 ? closeScene() : openScene(1);
+el('sceneDone').onclick = closeScene;
+// Zweimal tippen, um eine ganze Scene zu leeren - einmal waere zu leicht passiert.
+let leerenScharf = 0;
+el('sceneClear').onclick = () => {
+  if (Date.now() - leerenScharf > 2500) {
+    leerenScharf = Date.now();
+    el('sceneClear').textContent = 'WIRKLICH?';
+    setTimeout(() => { el('sceneClear').textContent = 'LEEREN'; }, 2500);
+    return;
+  }
+  leerenScharf = 0;
+  cmd('scSceneClearAll', sceneEdit);
+  el('sceneClear').textContent = 'LEEREN';
+  buildParams();
+};
 el('lockPrev').onclick = () => jumpTrig(-1);
 el('lockNext').onclick = () => jumpTrig(1);
 

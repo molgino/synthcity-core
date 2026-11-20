@@ -176,6 +176,19 @@ void  scStepLoop(int on, int from, int len) {
     gEng.seq.loopOn = on != 0; gEng.seq.loopFrom = from; gEng.seq.loopLen = len;
 }
 void  scSceneSet(int scene, int t, int slot, int v) { gEng.P.pat[gEng.pat].sc[scene][t].set(slot, (int16_t)v); }
+void  scSceneClear(int scene, int t, int slot) {
+    if (scene < 0 || scene >= NSCENES || t < 0 || t >= NTRACKS) return;
+    gEng.P.pat[gEng.pat].sc[scene][t].clear(slot);
+}
+// Eine ganze Scene des laufenden Patterns leeren - alle Spuren.
+void  scSceneClearAll(int scene) {
+    if (scene < 0 || scene >= NSCENES) return;
+    for (int t = 0; t < NTRACKS; t++) gEng.P.pat[gEng.pat].sc[scene][t].n = 0;
+}
+int   scSceneCount(int scene, int t) {
+    if (scene < 0 || scene >= NSCENES || t < 0 || t >= NTRACKS) return 0;
+    return gEng.P.pat[gEng.pat].sc[scene][t].n;
+}
 int   scSceneGet(int scene, int t, int slot) {
     const Lock* l = gEng.P.pat[gEng.pat].sc[scene][t].find(slot);
     return l ? l->val : -32768;

@@ -288,6 +288,11 @@ Eine Scene hält je Spur eine Handvoll abweichender Werte; wo sie nichts sagt, w
 Grundwert gefahren (wie der Crossfader des Octatrack). Der Morph-Regler wirkt auch auf einen
 schon klingenden Ton, nicht erst auf den nächsten Anschlag.
 
+**Bearbeitet** werden Scenes wie Locks, nur mit eigener Farbe: **A** oder **B** neben dem
+Morph-Regler antippen, dann landet jede Regleränderung in dieser Scene, für die gewählte Spur.
+Der Morph fährt dabei auf die Seite der Scene, damit man hört, was man einstellt. Lock- und
+Scene-Modus schließen einander aus; eine ganze Scene zu leeren braucht zwei Tipps.
+
 **Slides** machen aus der Stufe zwischen zwei Locks eine Rampe — und zwar ab dem Wert, an dem
 die *Spur* gerade steht, nicht ab einer noch klingenden Stimme. Das war der entscheidende Punkt:
 die vorige Stimme ist meistens längst verklungen, wenn der nächste Trig kommt. Weil die Tonhöhe

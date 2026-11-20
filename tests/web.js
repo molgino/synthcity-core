@@ -159,6 +159,19 @@ const grp = n => console.log('- ' + n);
   x.scLockClear(3, 5, t0);
   chk(x.scLockGet(3, 5, t0) === -32768, 'Lock nicht entfernt');
 
+  grp('Scenes setzen und entfernen');
+  {
+    const fs2 = slotOf('trk.flt.freq');
+    x.scSceneSet(1, 2, fs2, 99);
+    chk(x.scSceneGet(1, 2, fs2) === 99, 'Scene-Wert nicht gesetzt');
+    chk(x.scSceneCount(1, 2) === 1, 'Scene-Zaehler falsch');
+    x.scSceneClear(1, 2, fs2);
+    chk(x.scSceneGet(1, 2, fs2) === -32768, 'Scene-Wert nicht entfernt');
+    x.scSceneSet(0, 1, fs2, 10); x.scSceneSet(0, 3, fs2, 20);
+    x.scSceneClearAll(0);
+    chk(x.scSceneCount(0, 1) === 0 && x.scSceneCount(0, 3) === 0, 'Scene A nicht ganz geleert');
+  }
+
   grp('Zeigerstand');
   x.scStart();
   render(6000);
