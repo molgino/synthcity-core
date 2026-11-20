@@ -153,7 +153,7 @@ button:focus-visible { outline: 2px solid var(--ok); outline-offset: 2px; }
 .row {
   display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 10px;
   padding: 9px 12px; min-height: 46px; border-bottom: 1px solid #1a2228;
-  touch-action: pan-y; cursor: ew-resize; position: relative;
+  touch-action: pan-y; cursor: ew-resize; position: relative; scroll-margin-top: 52px;
 }
 .row .bar {
   position: absolute; left: 0; bottom: 0; height: 2px; background: var(--dim); transition: width .05s linear;
@@ -569,6 +569,20 @@ const rowName = p => {
   if (p.id === 'trk.src.b') return str(X.scMachLabel(machOf(sel), 1));
   return p.name;
 };
+
+// Geister-Klick: ein Fenster, das beim Loslassen aufgeht, bekommt sonst gleich den Klick
+// desselben Tipps ab - und waehlt den Eintrag, der zufaellig unter dem Finger liegt.
+// Ein Klick zaehlt im Fenster nur, wenn sein Finger erst NACH dem Oeffnen aufgesetzt hat.
+{
+  const orig = HTMLDialogElement.prototype.showModal;
+  let gedrueckt = 0;
+  HTMLDialogElement.prototype.showModal = function () { this._auf = performance.now(); return orig.call(this); };
+  document.addEventListener('pointerdown', () => { gedrueckt = performance.now(); }, true);
+  document.addEventListener('click', e => {
+    const d = e.target.closest && e.target.closest('dialog');
+    if (d && d._auf && gedrueckt < d._auf) { e.stopPropagation(); e.preventDefault(); }
+  }, true);
+}
 
 // --- Kern laden -------------------------------------------------------------------------------
 const str = p => {
