@@ -161,8 +161,8 @@ benutzt oder nicht.
 
 ## Reiter statt langer Liste
 
-Die Regler einer Spur stehen auf sechs Reitern — **TRIG · AKKORD · QUELLE · FILTER · HÜLLE ·
-MIX** —, sichtbar ist immer nur eine Gruppe. Der Reiter bleibt beim Spurwechsel stehen (und
+Die Regler einer Spur stehen auf Reitern — **TRIG · AKKORD · QUELLE · FILTER · HÜLLE ·
+MIX** —, dazu **FX** für die Projektwerte (Echo, Hall, Summe; ohne Lock und Scene), sichtbar ist immer nur eine Gruppe. Der Reiter bleibt beim Spurwechsel stehen (und
 über das Neuladen hinweg); ein Punkt am Reiter zeigt, dass dort auf dem gehaltenen Step ein Lock
 oder in der Scene ein Wert liegt. Im Hochformat sind die Pads dafür etwas flacher.
 

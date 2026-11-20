@@ -77,7 +77,23 @@ async function R(p, id) {
   const mach = (await p.locator('.row[data-id="trk.machine"] .v').textContent()).trim();
   chk((await smpSichtbar()) === (mach === 'SMPL'), 'SAMPLE ist bei ' + mach + ' falsch ein- oder ausgeblendet');
   // Reiter: es ist immer nur eine Gruppe zu sehen
-  chk(await p.locator('.ptab').count() === 6, 'nicht sechs Reiter: ' + await p.locator('.ptab').count());
+  chk(await p.locator('.ptab').count() === 7, 'nicht sieben Reiter: ' + await p.locator('.ptab').count());
+  // FX: Echo, Hall und Summe sind Projektwerte und lassen sich verstellen
+  await p.locator('.ptab', {hasText: 'FX'}).click(); await p.waitForTimeout(100);
+  const fxIds = await p.evaluate(() => [...document.querySelectorAll('.row')].filter(r => !r.hidden).map(r => r.dataset.id));
+  chk(['fx.a.div', 'fx.a.fb', 'fx.b.size', 'fx.b.dec', 'master.vol'].every(i => fxIds.includes(i)), 'der FX-Reiter zeigt nicht alle Effekte: ' + fxIds.join(','));
+  const hz = p.locator('.row[data-id="fx.b.dec"]');
+  const hzVor = (await hz.locator('.v').textContent()).trim();
+  await hz.click(); await p.waitForTimeout(200);
+  await p.locator('#fineBtns button').nth(3).click(); await p.waitForTimeout(100);       // +10
+  await p.locator('#fineClose').click(); await p.waitForTimeout(150);
+  chk((await hz.locator('.v').textContent()).trim() !== hzVor, 'die Hallzeit laesst sich nicht verstellen');
+  await p.locator('#docBtn').click(); await p.waitForTimeout(150);
+  chk(/^fx\.b\.dec = 102$/m.test(await p.locator('#docText').inputValue()), 'die Hallzeit steht nicht im Dokument');
+  await p.locator('#docClose').click();
+  await p.locator('.row[data-id="fx.a.div"]').click(); await p.waitForTimeout(200);
+  chk(await p.locator('#pick').isVisible() && await p.locator('#pickList button').count() === 9, 'ECHO hat keine Auswahlliste der Notenwerte');
+  await p.locator('#pickClose').click(); await p.waitForTimeout(100);
   await p.locator('.ptab', {hasText: 'FILTER'}).click(); await p.waitForTimeout(100);
   const sichtbar = await p.evaluate(() => [...document.querySelectorAll('.row')].filter(r => !r.hidden).map(r => r.querySelector('small').textContent));
   chk(sichtbar.length > 0 && sichtbar.every(id => id.startsWith('trk.flt.')), 'der Reiter FILTER zeigt nicht nur Filter: ' + sichtbar.join(','));

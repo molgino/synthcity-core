@@ -143,7 +143,7 @@ button:focus-visible { outline: 2px solid var(--ok); outline-offset: 2px; }
 .params { overflow-y: auto; overscroll-behavior: contain; padding-bottom: 8px; }
 .grp { padding: 8px 12px 4px; }
 .ptabs { position: sticky; top: 0; z-index: 2; background: var(--panel); display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; padding: 8px 8px 6px;
+  grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; padding: 8px 8px 6px;
   border-bottom: 1px solid var(--line); }
 .ptab { position: relative; min-height: 34px; padding: 0 4px; font-size: 11px; letter-spacing: .06em;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -303,7 +303,7 @@ textarea {
   .trk .m { width: 32px; }
   /* Flachere Pads: im Hochformat bleibt sonst fuer die Regler kaum eine Zeile. */
   .pad { aspect-ratio: 16 / 9; }
-  .ptabs { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 3px; padding: 6px 6px 5px; }
+  .ptabs { grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 3px; padding: 6px 6px 5px; }
   .ptab { font-size: 9.5px; letter-spacing: 0; min-height: 30px; padding: 0 1px; text-overflow: clip; }
   .brand { display: none; }          /* schmaler Schirm: die Knoepfe sind wichtiger */
   .padgrid { grid-template-columns: repeat(4, 1fr); }
@@ -543,7 +543,7 @@ const GROUP = {note: 'Anschlag', vel: 'Anschlag', len: 'Anschlag', prob: 'Anschl
 
 // Reiter ueber den Reglern: immer nur eine Gruppe, statt einer langen Liste zum Scrollen.
 const TABNAME = {Anschlag: 'TRIG', Akkord: 'AKKORD', Quelle: 'QUELLE', Filter: 'FILTER',
-                 Huellkurve: 'H\u00dcLLE', Ausgang: 'MIX'};
+                 Huellkurve: 'H\u00dcLLE', Ausgang: 'MIX', FX: 'FX'};
 let grpSel = 'Anschlag';
 try { grpSel = localStorage.getItem('synthcity-tab') || grpSel; } catch (e) {}
 let X = null;                 // der Kern im Hauptfaden: Modell, Texte, Speichern
@@ -571,7 +571,13 @@ const ptext = (p, v) => {
   return str(X.scParamText(p.i, v, machOf(sel)));
 };
 // Wie die beiden Quellregler heissen, sagt die Machine - nicht die Tabelle.
+// Im FX-Reiter stehen die Regler unter ihrem Effekt - dort reichen klare Namen.
+// (Die Tabelle behaelt die kurzen, eindeutigen Namen fuer den Plugin-Host.)
+const FXNAME = {'fx.a.div': 'NOTENWERT', 'fx.a.fb': 'FEEDBACK', 'fx.a.tone': 'TON', 'fx.a.vol': 'PEGEL',
+                'fx.b.size': 'RAUM', 'fx.b.dec': 'NACHHALL', 'fx.b.damp': 'D\u00c4MPFUNG', 'fx.b.vol': 'PEGEL',
+                'master.vol': 'SUMME'};
 const rowName = p => {
+  if (FXNAME[p.id]) return FXNAME[p.id];
   if (p.id === 'trk.src.a') return str(X.scMachLabel(machOf(sel), 0));
   if (p.id === 'trk.src.b') return str(X.scMachLabel(machOf(sel), 1));
   return p.name;
@@ -926,6 +932,28 @@ function buildParams() {
     dragRow(row, p);
     box.appendChild(row);
   }
+  // Effekte und Summe gehoeren dem Projekt, nicht der Spur - eigener Reiter.
+  gruppen.push('FX');
+  let fxKopf = '';
+  const fxReihe = id => id.startsWith('fx.a') ? 0 : id.startsWith('fx.b') ? 1 : 2;
+  for (const p of P.filter(q => q.scope !== 1 && /^(fx\.|master\.)/.test(q.id))
+                   .sort((a, b) => fxReihe(a.id) - fxReihe(b.id) || a.i - b.i)) {
+    const k = p.id.startsWith('fx.a') ? 'ECHO (SEND A)' : p.id.startsWith('fx.b') ? 'HALL (SEND B)' : 'SUMME';
+    if (k !== fxKopf) {
+      fxKopf = k;
+      const h = document.createElement('div');
+      h.className = 'grp lbl'; h.dataset.g = 'FX'; h.textContent = k;
+      box.appendChild(h);
+    }
+    const row = document.createElement('div');
+    row.className = 'row' + (X.scEnumCount(p.i) ? ' pick' : '');
+    row.innerHTML = `<div class="nm">${rowName(p)}<small>${p.id}</small></div>
+                     <div style="display:flex;align-items:center"><span class="v"></span></div>
+                     <div class="bar"></div>`;
+    row.dataset.p = p.i; row.dataset.g = 'FX'; row.dataset.id = p.id;
+    dragRow(row, p);
+    box.appendChild(row);
+  }
   if (!gruppen.includes(grpSel)) grpSel = gruppen[0];
   for (const g of gruppen) {
     const t = document.createElement('button');
@@ -952,6 +980,7 @@ function zeigeGruppe() {
   for (const t of box.querySelectorAll('.ptab')) t.classList.toggle('cur', t.dataset.g === grpSel);
 }
 const valueOf = p => {
+  if (p.scope !== 1) return {v: X.scGet(-1, p.slot), locked: false};   // Projektwerte: kein Lock, keine Scene
   if (sceneEdit >= 0) {
     const sv = X.scSceneGet(sceneEdit, sel, p.slot);
     if (sv !== -32768) return {v: sv, locked: false, scene: true};
@@ -965,6 +994,7 @@ const valueOf = p => {
 };
 function writeValue(p, v) {
   v = Math.max(p.lo, Math.min(p.hi, Math.round(v)));
+  if (p.scope !== 1) { cmd('scSet', -1, p.slot, v); return; }
   if (sceneEdit >= 0) { cmd('scSceneSet', sceneEdit, sel, p.slot, v); return; }
   if (lockStep >= 0) {
     if (!X.scStepGet(sel, lockStep)) cmd('scStepSet', sel, lockStep, 2);  // trigless: nur Werte
@@ -1104,7 +1134,8 @@ function openFineParam(p) {
   const istNt = p.id.startsWith('trk.nt');
   const qSlot = P.find(q => q.id === 'trk.quant').slot;
   const stufen = istNote && X.scPatScale(X.scPattern()) > 0 && X.scGet(sel, qSlot) > 0;
-  const lockMode = lockStep >= 0, sceneMode = sceneEdit >= 0;
+  const projekt = p.scope !== 1;
+  const lockMode = lockStep >= 0 && !projekt, sceneMode = sceneEdit >= 0 && !projekt;
   openFine({
     title: rowName(p) + (sceneMode ? '  \u00b7  SCENE ' + 'AB'[sceneEdit]
                                    : lockMode ? '  \u00b7  LOCK STEP ' + (lockStep + 1) : '') + '   ' + p.id,
@@ -1127,6 +1158,7 @@ function openFineParam(p) {
     reset: () => {
       if (sceneMode) cmd('scSceneClear', sceneEdit, sel, p.slot);
       else if (lockMode) cmd('scLockClear', sel, lockStep, p.slot);
+      else if (projekt) cmd('scSet', -1, p.slot, X.scParamDef(p.i));
       else cmd('scSet', sel, p.slot, X.scParamDef(p.i));
     },
   });
