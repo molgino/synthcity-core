@@ -143,6 +143,13 @@ Jeder Speicher-Zugriff hat eine Frist, damit ein hängender Browser-Speicher das
 blockiert. `tests/konto.js` spielt zwei Geräte gegen ein nachgebautes Konto durch. **NEU (DEMO)** im DOK-Fenster (zwei Tipps) fängt von vorn an. Ein Browser-Test ändert das
 Tempo, lädt neu und vergleicht das ganze Dokument.
 
+## Notenlänge bis INF
+
+`trk.len` reichte bis 10,6 Steps. Jetzt: 1–96 fein in Zwölfteln eines Steps (bis 8 Steps, wie
+bisher), 97–126 grob von 9 bis 256 Steps, 127 = **INF** — die Note klingt, bis die Spur das
+nächste Mal anschlägt (in jedem Stimmenmodus). Ein Klang-Test hält eine INF-Note über 11 Steps
+und prüft, dass der nächste Trig sie beendet.
+
 ## Kopieren und Einfügen
 
 - **Pattern:** lange auf die Pattern-Nummer drücken → *kopieren*, dann auf dem Ziel → *einfügen*.

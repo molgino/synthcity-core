@@ -108,7 +108,11 @@ inline void paramText(const ParamDef& d, float v, char* out, int n, int mach = -
     }
     // Werte, deren Einheit nur aus ihrer Bedeutung folgt, stehen vor der allgemeinen Regel.
     if (!strcmp(d.id, "trk.len")) {          // Zwoelftel eines Steps: 12 = ein ganzer Step
-        snprintf(out, n, "%.2f Steps", (double)v / 12.0);
+        int i = (int)(v + 0.5f);
+        double st = lenSteps(i);
+        if (st < 0)       snprintf(out, n, "INF");
+        else if (i <= 96) snprintf(out, n, "%.2f Steps", st);
+        else              snprintf(out, n, "%.0f Steps", st);
         return;
     }
     if (!strcmp(d.id, "trk.micro")) {        // Verschiebung in Zwoelfteln, 24 = genau auf dem Step

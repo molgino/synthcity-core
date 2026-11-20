@@ -98,3 +98,16 @@ inline int paramOfSlot(PScope s, int slot) {
     for (int i = 0; i < NPARAMS; i++) if (PARAMS[i].scope == s) { if (k == slot) return i; k++; }
     return -1;
 }
+
+// --- Notenlaenge (trk.len) -------------------------------------------------------------------
+// 1..96 in Zwoelfteln eines Steps (fein, bis 8 Steps), 97..126 grob bis 256 Steps, 127 = INF:
+// die Note klingt, bis die Spur das naechste Mal anschlaegt.
+static const int LEN_INF = 127;
+static const int LEN_GROB[30] = {9, 10, 11, 12, 13, 14, 15, 16, 18, 20, 22, 24, 26, 28, 32, 36, 40,
+                                 44, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 256};
+inline double lenSteps(int v) {
+    if (v <= 96) return v / 12.0;
+    if (v >= LEN_INF) return -1.0;
+    return (double)LEN_GROB[v - 97];
+}
+

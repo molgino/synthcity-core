@@ -1,6 +1,7 @@
 // Klang-Tests. Gemessen wird am ERGEBNIS (Pegel, Frequenz, Gleichheit), nicht an internen
 // Zwischenwerten - so bleiben die Tests gueltig, wenn die Umsetzung sich aendert.
 #include "../src/engine.h"
+#include "../src/text.h"
 #include "../src/wav.h"
 #include <stdio.h>
 #include <math.h>
@@ -111,7 +112,7 @@ int main() {
         const int N = 24000;
         float* b = buf(N);
         e.prepare(48000.0f); setupBeat(e, 57);
-        e.P.pat[0].t[0].p[SL("trk.len")] = 127;         // lange Note, sonst greift der Anstieg nicht
+        e.P.pat[0].t[0].p[SL("trk.len")] = 98;         // lange Note, sonst greift der Anstieg nicht
         e.P.pat[0].t[0].p[SL("trk.amp.atk")] = 100;     // langsam
         e.P.pat[0].t[0].p[SL("trk.amp.dec")] = 127;
         e.P.pat[0].t[0].p[SL("trk.amp.sus")] = 100;
@@ -213,7 +214,7 @@ int main() {
         static float b[24000 * 2];
         e.prepare(48000.0f); setupBeat(e, 45);
         Track& tr = e.P.pat[0].t[0];
-        tr.p[SL("trk.len")] = 127; tr.p[SL("trk.amp.sus")] = 100; tr.p[SL("trk.amp.dec")] = 127;
+        tr.p[SL("trk.len")] = 98; tr.p[SL("trk.amp.sus")] = 100; tr.p[SL("trk.amp.dec")] = 127;
         e.P.pat[0].sc[0][0].set(SL("trk.flt.freq"), 30);
         e.P.pat[0].sc[1][0].set(SL("trk.flt.freq"), 110);
         e.morph = 0.0f; e.start();
@@ -282,7 +283,7 @@ int main() {
         e.prepare(48000.0f); setupBeat(e, 45);
         Track& t = e.P.pat[0].t[0];
         t.p[SL("trk.flt.freq")] = 127; t.p[SL("trk.amp.sus")] = 100;
-        t.p[SL("trk.amp.dec")] = 127; t.p[SL("trk.len")] = 127;
+        t.p[SL("trk.amp.dec")] = 127; t.p[SL("trk.len")] = 98;
         e.start();
         e.render(b, 12000);
         e.P.pat[0].t[0].p[SL("trk.flt.freq")] = 30;        // mitten im Ton zudrehen
@@ -296,7 +297,7 @@ int main() {
         e.prepare(48000.0f); setupBeat(e, 45);
         Track& t2 = e.P.pat[0].t[0];
         t2.p[SL("trk.flt.freq")] = 127; t2.p[SL("trk.amp.sus")] = 100;
-        t2.p[SL("trk.amp.dec")] = 127; t2.p[SL("trk.len")] = 127;
+        t2.p[SL("trk.amp.dec")] = 127; t2.p[SL("trk.len")] = 98;
         t2.s[0].setLock(SL("trk.flt.freq"), 127);
         e.start();
         e.render(c, 12000);
@@ -311,7 +312,7 @@ int main() {
         e.prepare(48000.0f); setupBeat(e, 45);
         Track& t4 = e.P.pat[0].t[0];
         t4.p[SL("trk.flt.freq")] = 127; t4.p[SL("trk.amp.sus")] = 100;
-        t4.p[SL("trk.amp.dec")] = 127; t4.p[SL("trk.len")] = 127;
+        t4.p[SL("trk.amp.dec")] = 127; t4.p[SL("trk.len")] = 98;
         t4.s[1].on = 2;                                   // trigless: nur Werte, kein Anschlag
         t4.s[1].setLock(SL("trk.flt.freq"), 30);
         e.start();
@@ -325,7 +326,7 @@ int main() {
         e.prepare(48000.0f); setupBeat(e, 45);
         Track& t3 = e.P.pat[0].t[0];
         t3.p[SL("trk.flt.freq")] = 127; t3.p[SL("trk.amp.sus")] = 100;
-        t3.p[SL("trk.amp.dec")] = 127; t3.p[SL("trk.len")] = 127;
+        t3.p[SL("trk.amp.dec")] = 127; t3.p[SL("trk.len")] = 98;
         e.start();
         e.render(d, 6000);
         e.P.pat[0].t[0].p[SL("trk.note")] = 69;
@@ -345,7 +346,7 @@ int main() {
         t.p[SL("trk.src.a")] = 24;                  // Verhaeltnis 2.00 : 1
         t.p[SL("trk.src.b")] = 0;                   // noch ohne Modulation
         t.p[SL("trk.flt.freq")] = 127; t.p[SL("trk.amp.sus")] = 100;
-        t.p[SL("trk.amp.dec")] = 127; t.p[SL("trk.len")] = 127;
+        t.p[SL("trk.amp.dec")] = 127; t.p[SL("trk.len")] = 98;
         e.start(); e.render(a, N);
         chk(bin(a, N, 110.0f, 48000.0f) > bin(a, N, 220.0f, 48000.0f) * 4.0f,
             "FM ohne Index ist kein reiner Grundton");
@@ -354,7 +355,7 @@ int main() {
         t2.p[SL("trk.machine")] = 1;
         t2.p[SL("trk.src.a")] = 24; t2.p[SL("trk.src.b")] = 110;   // viel Modulation
         t2.p[SL("trk.flt.freq")] = 127; t2.p[SL("trk.amp.sus")] = 100;
-        t2.p[SL("trk.amp.dec")] = 127; t2.p[SL("trk.len")] = 127;
+        t2.p[SL("trk.amp.dec")] = 127; t2.p[SL("trk.len")] = 98;
         e.start(); e.render(b, N);
         chk(bin(b, N, 330.0f, 48000.0f) > bin(a, N, 330.0f, 48000.0f) * 5.0f,
             "der Index bringt keine Obertoene");
@@ -404,7 +405,7 @@ int main() {
         t.p[SL("trk.machine")] = 3;                       // SMPL
         t.p[SL("trk.smp")] = 0;
         t.p[SL("trk.flt.freq")] = 127; t.p[SL("trk.amp.sus")] = 100;
-        t.p[SL("trk.amp.dec")] = 127; t.p[SL("trk.len")] = 127;
+        t.p[SL("trk.amp.dec")] = 127; t.p[SL("trk.len")] = 98;
         e.start(); e.render(b, N);
         chk(bin(b, N, 440.0f, 48000.0f) > bin(b, N, 880.0f, 48000.0f) * 8.0f,
             "Note 60 spielt das Sample nicht in seiner Geschwindigkeit");
@@ -415,7 +416,7 @@ int main() {
         Track& t2 = e.P.pat[0].t[0];
         machineSelect(t2.p, 3); t2.p[SL("trk.smp")] = 0;
         t2.p[SL("trk.flt.freq")] = 127; t2.p[SL("trk.amp.sus")] = 100;
-        t2.p[SL("trk.amp.dec")] = 127; t2.p[SL("trk.len")] = 127;
+        t2.p[SL("trk.amp.dec")] = 127; t2.p[SL("trk.len")] = 98;
         e.start(); e.render(b, N);
         chk(bin(b, N, 880.0f, 48000.0f) > bin(b, N, 440.0f, 48000.0f) * 8.0f,
             "eine Oktave hoeher wird nicht doppelt so schnell abgespielt");
@@ -468,7 +469,7 @@ int main() {
         Track& t = e.P.pat[0].t[0];
         machineSelect(t.p, 3); t.p[SL("trk.smp")] = 0;
         t.p[SL("trk.flt.freq")] = 127; t.p[SL("trk.amp.sus")] = 100;
-        t.p[SL("trk.amp.dec")] = 127; t.p[SL("trk.len")] = 127;
+        t.p[SL("trk.amp.dec")] = 127; t.p[SL("trk.len")] = 98;
         e.start(); e.render(b, N);
         float l220 = bin(b, N, 220.0f, 48000.0f),     l880 = bin(b, N, 880.0f, 48000.0f);
         float r220 = bin(b + 1, N, 220.0f, 48000.0f), r880 = bin(b + 1, N, 880.0f, 48000.0f);
@@ -528,7 +529,7 @@ int main() {
             machineSelect(t.p, 3); t.p[SL("trk.smp")] = 0;
             t.p[SL("trk.src.a")] = (int16_t)start;
             t.p[SL("trk.flt.freq")] = 127; t.p[SL("trk.amp.sus")] = 100;
-            t.p[SL("trk.amp.dec")] = 127; t.p[SL("trk.len")] = 127;
+            t.p[SL("trk.amp.dec")] = 127; t.p[SL("trk.len")] = 98;
             for (int s = 1; s < 16; s++) t.s[s].on = 0;           // nur ein Anschlag
             e.start(); e.render(out, N);
         };
@@ -643,7 +644,7 @@ int main() {
                 tr.p[SL("trk.note")] = p == 0 ? 45 : 69;      // 110 Hz bzw. 440 Hz
                 tr.p[SL("trk.flt.freq")] = 127;
                 tr.p[SL("trk.amp.sus")] = 100; tr.p[SL("trk.amp.dec")] = 127;
-                tr.p[SL("trk.len")] = 127;
+                tr.p[SL("trk.len")] = 98;
                 tr.s[0].on = 1;
             }
             en.pat = 0;
@@ -885,7 +886,7 @@ int main() {
             e.P.pat[0].scale = 1; e.P.pat[0].root = 0;        // C-Dur
             Track& t = e.P.pat[0].t[0];
             t.p[SL("trk.flt.freq")] = 127; t.p[SL("trk.amp.sus")] = 100;
-            t.p[SL("trk.amp.dec")] = 127; t.p[SL("trk.len")] = 127;
+            t.p[SL("trk.amp.dec")] = 127; t.p[SL("trk.len")] = 98;
             t.p[SL("trk.quant")] = (int16_t)(k == 0 ? 1 : 0);
             e.start(); e.render(a, N);
             float c = bin(a, N, 261.63f, 48000.0f), cis = bin(a, N, 277.18f, 48000.0f);
@@ -915,7 +916,7 @@ int main() {
             e.prepare(48000.0f); setupBeat(e, note);
             Track& t = e.P.pat[0].t[0];
             t.p[SL("trk.flt.freq")] = 127; t.p[SL("trk.amp.sus")] = 100;
-            t.p[SL("trk.amp.dec")] = 127; t.p[SL("trk.len")] = 127; t.p[SL("trk.amp.rel")] = 90;
+            t.p[SL("trk.amp.dec")] = 127; t.p[SL("trk.len")] = 98; t.p[SL("trk.amp.rel")] = 90;
             return &t;
         };
         const int N = 12000;
@@ -994,7 +995,7 @@ int main() {
             e.prepare(48000.0f); setupBeat(e, 60);
             Track& t = e.P.pat[0].t[0];
             for (int s = 0; s < 4; s++) t.s[s].on = 1;
-            t.p[SL("trk.amp.rel")] = 90; t.p[SL("trk.len")] = 127;
+            t.p[SL("trk.amp.rel")] = 90; t.p[SL("trk.len")] = 98;
             e.P.g[SL("swing")] = (int16_t)gsw;
             e.P.pat[0].swing = (uint8_t)psw;
             e.start();
@@ -1019,6 +1020,34 @@ int main() {
         e.P.pat[9].used = 0; e.P.pat[9].t[3].s[4].on = 1;
         d.clear(); projectToDoc(e.P, d); projectFromDoc(d, Q);
         chk(Q.pat[9].used == 1 && Q.pat[9].t[3].s[4].on == 1, "ein Pattern mit Trigs fehlt im Dokument");
+    }
+
+    grp("Notenlaenge bis INF");
+    {
+        char tx[32];
+        const ParamDef& ld = PARAMS[paramFind("trk.len")];
+        paramText(ld, 12, tx, sizeof tx);  chk(!strcmp(tx, "1.00 Steps"), "12 ist nicht ein Step");
+        paramText(ld, 97, tx, sizeof tx);  chk(!strcmp(tx, "9 Steps"), "97 ist nicht 9 Steps");
+        paramText(ld, 126, tx, sizeof tx); chk(!strcmp(tx, "256 Steps"), "126 ist nicht 256 Steps");
+        paramText(ld, 127, tx, sizeof tx); chk(!strcmp(tx, "INF"), "127 ist nicht INF");
+        // INF: die Note haelt ueber viele Steps und endet erst mit dem naechsten Anschlag der Spur
+        e.prepare(48000.0f); setupBeat(e, 60);
+        Track& t = e.P.pat[0].t[0];
+        for (int s = 0; s < 16; s++) t.s[s].on = 0;
+        t.s[0].on = 1; t.s[12].on = 1;
+        t.p[SL("trk.len")] = LEN_INF; t.p[SL("trk.amp.sus")] = 100; t.p[SL("trk.amp.rel")] = 60;
+        e.start();
+        static float a[72000 * 2];
+        e.render(a, 70000);                                   // fast 12 Steps
+        int an = 0; for (int i = 0; i < NVOICES; i++) if (e.v[i].used && e.v[i].env.st != Env::REL) an++;
+        chk(an == 1, "die INF-Note klingt nach 11 Steps nicht mehr");
+        e.render(a, 4000);                                    // hinter Step 13
+        int alt = 0, neu = 0;
+        for (int i = 0; i < NVOICES; i++) if (e.v[i].used) {
+            if (e.v[i].step == 0 && e.v[i].env.st == Env::REL) alt++;
+            if (e.v[i].step == 12 && e.v[i].env.st != Env::REL) neu++;
+        }
+        chk(alt == 1 && neu == 1, "der naechste Anschlag beendet die INF-Note nicht");
     }
 
     grp("Referenz-Aufnahme");

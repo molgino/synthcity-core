@@ -135,7 +135,9 @@ struct Seq {
         int rt = effective(tr, s, slotRtrg);
         if (rt < 1) rt = 1;
         int16_t note = effective(tr, s, slotNote), vel = effective(tr, s, slotVel);
-        int32_t dur = (int32_t)(sp * effective(tr, s, slotLen) / 12.0);
+        double lst = lenSteps(effective(tr, s, slotLen));
+        double durD = lst < 0 ? 2147483647.0 : sp * lst;              // INF: bis zum naechsten Anschlag
+        int32_t dur = durD > 2147483647.0 ? 2147483647 : (int32_t)durD;
         for (int r = 0; r < rt; r++)
             push({at + (int64_t)llround(sp * r / rt), (uint8_t)t, EV_TRIG, (uint8_t)s, note, vel,
                   rt > 1 ? (int32_t)(sp / rt) : dur});

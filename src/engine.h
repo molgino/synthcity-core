@@ -31,6 +31,7 @@ struct Voice {
     float    panL = 0.7071f, panR = 0.7071f;
     float    base = 1000.0f, q = 0.7f, envAmt = 0.0f, gain = 1.0f;
     const SamplePool* pool = nullptr;
+    bool     inf = false;       // Laenge INF: klingt bis zum naechsten Anschlag der Spur
     bool     preview = false;   // vom Sample-Editor angeschlagen, gehoert keiner Spur
     FltType  ft = FLT_LP;
     const Machine* mach = nullptr;
@@ -68,6 +69,7 @@ struct Voice {
         for (int i = 0; i < 64; i++) pf[i] = pp[i];
         locked = lockMask;
         nRamp = 0; vel = v; left = lenSamples; used = true; age = 0;
+        inf = lenSamples >= 2147483647;
         liveFollow(live);
         const Slots& s = S();
         flt.reset(); fltR.reset();
@@ -474,12 +476,17 @@ struct Engine : Sink {
                 if (!w.used || w.preview || w.track != e.track || w.env.st == Env::REL) continue;
                 w.slide(sNote, w.pf[sNote], snap[sNote], (int32_t)(sr * 0.03f));
                 w.left = e.len;
+                w.inf = e.len >= 2147483647;
                 w.step = e.step;
                 for (int k2 = k + 1; k2 < NVOICES; k2++)       // was sonst noch klingt, endet
                     if (v[k2].used && !v[k2].preview && v[k2].track == e.track) v[k2].cut(sr);
                 return;
             }
         }
+        // INF-Noten der Spur enden mit diesem Anschlag (in jedem Modus).
+        for (int k = 0; k < NVOICES; k++)
+            if (v[k].used && v[k].inf && !v[k].preview && v[k].track == e.track && v[k].env.st != Env::REL)
+                { v[k].release(); v[k].inf = false; }
         // MONO und LEGATO: eine Stimme je Spur - die vorige wird abgeschnitten.
         if (mode >= 1)
             for (int k = 0; k < NVOICES; k++)
