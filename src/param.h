@@ -49,6 +49,12 @@ static const ParamDef PARAMS[] = {
     {"trk.micro",    "MTIM",   PS_TRACK,  PK_BIP,     0,  48,  24, "",    PF_LOCK},
     {"trk.ratchet",  "RTRG",   PS_TRACK,  PK_NUM,     1,   8,   1, "",    PF_LOCK},
     {"trk.quant",    "SKALA",  PS_TRACK,  PK_ONOFF,   0,   1,   1, "",    PF_LOCK},
+    // --- Spur: Akkord und Stimmen ---
+    // Akkordnoten als Abstand zur NOTE in Halbtoenen: 0 = aus, 1..49 = -24..+24 (25 = gleiche Note).
+    {"trk.nt2",      "NT2",    PS_TRACK,  PK_NUM,     0,  49,   0, "",    PF_LOCK},
+    {"trk.nt3",      "NT3",    PS_TRACK,  PK_NUM,     0,  49,   0, "",    PF_LOCK},
+    {"trk.nt4",      "NT4",    PS_TRACK,  PK_NUM,     0,  49,   0, "",    PF_LOCK},
+    {"trk.vmode",    "STIMMEN",PS_TRACK,  PK_ENUM,    0,   2,   0, "",    0},
     // --- Spur: Quelle ---
     {"trk.machine",  "ENGINE", PS_TRACK,  PK_ENUM,    0,  15,   0, "",    0},
     {"trk.smp",      "SAMPLE", PS_TRACK,  PK_ENUM,    0,  63,   0, "",    PF_LOCK},

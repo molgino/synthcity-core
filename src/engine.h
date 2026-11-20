@@ -77,6 +77,9 @@ struct Voice {
         mach->start(ms, hz, vel, pf, sr, *pool);
     }
     void release() { env.release(); left = -1; }
+    // Abschneiden in ein paar Millisekunden - fuer MONO, damit nicht zwei Toene klingen,
+    // aber ohne Knacken.
+    void cut(float sr) { env.cr = Env::coef(0.004f, sr); env.release(); left = -1; }
 
     void slide(int slot, float from, float to, int32_t samples) {
         if (samples < 1) samples = 1;
@@ -452,17 +455,64 @@ struct Engine : Sink {
         const bool rastet = ptq.scale > 0 && snap[sQuant] > 0.5f;
         if (rastet) snap[sNote] = (float)scaleQuant((int)(snap[sNote] + 0.5f), ptq.root, ptq.scale);
         int mi = tr.p[paramSlot(paramFind("trk.machine"))];
-        int i = pick();
-        v[i].start(machineAt(mi), e.track, e.step, snap, e.vel / 127.0f, e.len, sr, clock++,
-                   lockMask, live[e.track], pool);
-        for (int li = 0; li < tr.s[e.step].nLock; li++) {    // Slides: von dort, wo die Spur steht
-            const Lock& l = tr.s[e.step].lock[li];
-            if (!l.slide) continue;
-            float ziel = (float)l.val;
-            if (rastet && l.slot == sNote) ziel = (float)scaleQuant(l.val, ptq.root, ptq.scale);
-            v[i].slide(l.slot, from[l.slot], ziel, glide);
+        static const int sMode = paramSlot(paramFind("trk.vmode"));
+        static const int sNt[3] = {paramSlot(paramFind("trk.nt2")), paramSlot(paramFind("trk.nt3")),
+                                   paramSlot(paramFind("trk.nt4"))};
+        const int mode = (int)(snap[sMode] + 0.5f);          // 0 POLY, 1 MONO, 2 LEGATO
+
+        // LEGATO: klingt die Spur noch, wird der Ton nur umgestimmt - die Huellkurve laeuft
+        // weiter, kein neuer Anschlag. Ein kurzes Gleiten verbindet die beiden Noten.
+        if (mode == 2) {
+            for (int k = 0; k < NVOICES; k++) {
+                Voice& w = v[k];
+                if (!w.used || w.preview || w.track != e.track || w.env.st == Env::REL) continue;
+                w.slide(sNote, w.pf[sNote], snap[sNote], (int32_t)(sr * 0.03f));
+                w.left = e.len;
+                w.step = e.step;
+                for (int k2 = k + 1; k2 < NVOICES; k2++)       // was sonst noch klingt, endet
+                    if (v[k2].used && !v[k2].preview && v[k2].track == e.track) v[k2].cut(sr);
+                return;
+            }
         }
-        if (v[i].nRamp) v[i].ctl(sr, live[e.track]);
+        // MONO und LEGATO: eine Stimme je Spur - die vorige wird abgeschnitten.
+        if (mode >= 1)
+            for (int k = 0; k < NVOICES; k++)
+                if (v[k].used && !v[k].preview && v[k].track == e.track) v[k].cut(sr);
+
+        // Akkord: die Grundnote und bis zu drei weitere im Abstand NT2..NT4. Nur im POLY-Modus;
+        // in einer Tonart rasten auch die Akkordnoten ein - so entstehen leitereigene Akkorde.
+        float noten[4];
+        int nNoten = 0;
+        noten[nNoten++] = snap[sNote];
+        if (mode == 0)
+            for (int c = 0; c < 3; c++) {
+                int o = (int)(snap[sNt[c]] + 0.5f);
+                if (o <= 0) continue;
+                int nt = (int)(snap[sNote] + 0.5f) + (o - 25);
+                if (rastet) nt = scaleQuant(nt, ptq.root, ptq.scale);
+                if (nt < 0 || nt > 127) continue;
+                noten[nNoten++] = (float)nt;
+            }
+        for (int c = 0; c < nNoten; c++) {
+            snap[sNote] = noten[c];
+            int i = pick();
+            v[i].start(machineAt(mi), e.track, e.step, snap, e.vel / 127.0f, e.len, sr, clock++,
+                       lockMask, live[e.track], pool);
+            for (int li = 0; li < tr.s[e.step].nLock; li++) {    // Slides: von dort, wo die Spur steht
+                const Lock& l = tr.s[e.step].lock[li];
+                if (!l.slide) continue;
+                float ziel = (float)l.val;
+                float von = from[l.slot];
+                if (l.slot == sNote) {                           // Akkordnoten gleiten parallel mit
+                    if (rastet) ziel = (float)scaleQuant(l.val, ptq.root, ptq.scale);
+                    ziel += noten[c] - noten[0];
+                    von += noten[c] - noten[0];
+                }
+                v[i].slide(l.slot, von, ziel, glide);
+            }
+            if (v[i].nRamp) v[i].ctl(sr, live[e.track]);
+        }
+        snap[sNote] = noten[0];
     }
 
     // Was die Spuren gerade sagen - einmal je Block, nicht je Stimme. Darueber wirken

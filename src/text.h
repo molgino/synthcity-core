@@ -38,6 +38,21 @@ inline void condText(int v, char* out, int n) {
     }
     snprintf(out, n, "--");
 }
+// Abstand einer Akkordnote: 0 = aus, sonst Halbtoene um 25 herum, mit dem Namen des Intervalls.
+inline void chordText(int v, char* out, int n) {
+    if (v <= 0) { snprintf(out, n, "AUS"); return; }
+    static const char* iv[12] = {"Prim", "kl. Sekunde", "gr. Sekunde", "kl. Terz", "gr. Terz",
+                                 "Quarte", "Tritonus", "Quinte", "kl. Sexte", "gr. Sexte",
+                                 "kl. Septime", "gr. Septime"};
+    int d = v - 25;
+    int a = d < 0 ? -d : d;
+    if (a == 12 || a == 24) snprintf(out, n, "%+d Oktave", d);
+    else                    snprintf(out, n, "%+d %s", d, iv[a % 12]);
+}
+inline const char* vmodeName(int v) {
+    static const char* n[] = {"POLY", "MONO", "LEGATO"};
+    return n[v < 0 ? 0 : (v > 2 ? 2 : v)];
+}
 inline const char* fltTypeName(int v) {
     static const char* n[] = {"TIEFPASS", "BANDPASS", "HOCHPASS", "KERBE"};
     return n[((v % FLT_N) + FLT_N) % FLT_N];
@@ -48,6 +63,7 @@ inline const char* fltTypeName(int v) {
 inline int enumCount(const ParamDef& d) {
     if (!strcmp(d.id, "trk.machine"))  return machineCount();
     if (!strcmp(d.id, "fx.a.div"))     return DELAY_DIV_N;
+    if (!strcmp(d.id, "trk.vmode"))    return 3;
     if (!strcmp(d.id, "trk.flt.type")) return FLT_N;
     if (d.kind == PK_COND)             return 9 + 19 + 34;
     if (d.kind == PK_ONOFF)            return 2;
@@ -101,6 +117,8 @@ inline void paramText(const ParamDef& d, float v, char* out, int n, int mach = -
     }
     if (!strcmp(d.id, "trk.machine"))  { snprintf(out, n, "%s", machineAt((int)(v + 0.5f))->name()); return; }
     if (!strcmp(d.id, "trk.flt.type")) { snprintf(out, n, "%s", fltTypeName((int)(v + 0.5f))); return; }
+    if (!strncmp(d.id, "trk.nt", 6))    { chordText((int)(v + 0.5f), out, n); return; }
+    if (!strcmp(d.id, "trk.vmode"))     { snprintf(out, n, "%s", vmodeName((int)(v + 0.5f))); return; }
     if (d.kind == PK_COND)             { condText((int)(v + 0.5f), out, n); return; }
     if (!strcmp(d.id, "trk.flt.freq")) {
         float hz = pFreq(v);

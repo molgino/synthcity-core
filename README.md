@@ -5,7 +5,7 @@ Konzept: `../r36-groovebox/docs/konzept-neu.md`.
 
 Kein Framework, keine Abhängigkeiten, keine STL-Container im Kern — C++17 und fertig.
 
-## Stand: Meilenstein 12 — Skala und Tonart pro Pattern
+## Stand: Meilenstein 13 — Polyphone Spuren: Akkorde und Stimmenmodus
 
 | Baustein | Datei | Zustand |
 | --- | --- | --- |
@@ -21,6 +21,7 @@ Kein Framework, keine Abhängigkeiten, keine STL-Container im Kern — C++17 und
 | Song: Kette aus Patterns mit Wiederholungen | `src/engine.h`, `src/model.h` | steht |
 | Sample-Ausschnitt und Schleife, samplegenau; Editor mit Wellenform | `src/sample.h`, `web/` | steht |
 | Skala je Pattern (Geschwindigkeit, Wechsellänge), Tonart, Spurlänge bis 128 | `src/scale.h` | steht |
+| Akkorde je Step (NT2–NT4, lockbar, leitereigen), Stimmenmodus POLY/MONO/LEGATO | `src/engine.h` | steht |
 | Dokument mit Namen (nicht nur Zahlen) | `src/doc.h` | steht |
 | Sende-Effekte: Delay im Takt, Hall (FDN) | `src/fx.h` | steht |
 | Stimmen, Filter, Hüllkurve, Panorama, Summe | `src/engine.h` | steht |
@@ -93,6 +94,32 @@ der Leiter ein — bei Gleichstand auf den tieferen. Im Feinwert-Fenster heißt 
 dann **+STUFE**: die nächste Stufe der Leiter, nicht der nächste Halbton. Liegt eine Note nicht
 in der Leiter, zeigt die Zeile, wohin sie einrastet (`C#4 → C4`). Ein Test prüft für jede
 Leiter in allen zwölf Tonarten, dass Einrasten nie einen Ton außerhalb liefert.
+
+## Polyphone Spuren: Akkorde und Stimmen
+
+Eine polyphone Machine allein macht noch keine polyphone Spur: ein Step spielte genau eine Note.
+Jetzt hat jede Spur drei **Akkordnoten NT2–NT4** — Abstände zur NOTE in Halbtönen, ±24, oder AUS.
+Sie sind gewöhnliche Werte: als Grundwert gelten sie für die ganze Spur, als **Lock** nur für
+einen Step — so spielt jeder Step einen anderen Akkord. Mit **SKALA an** rasten auch die
+Akkordnoten in die Tonart ein; aus „Dur" wird auf der II. Stufe von C-Dur von selbst ein
+Moll-Akkord (D + gr. Terz = F# → F). Ein Slide auf der NOTE zieht alle Akkordnoten parallel mit.
+
+**AKKORD WÄHLEN** setzt die drei Abstände auf einmal (Dur, Moll, Sus2/4, vermindert,
+übermäßig, Dur 7, Maj 7, Moll 7, Quinte, Oktave …) — im Lock-Modus nur für den gehaltenen Step.
+Im Feinwert-Fenster beginnt eine ausgeschaltete Akkordnote beim Grundton.
+
+Der **Stimmenmodus** je Spur:
+
+- **POLY** — jeder Anschlag startet eigene Stimmen, lange Noten überlappen, Akkorde klingen.
+- **MONO** — eine Stimme je Spur; der nächste Anschlag schneidet die vorige in 4 ms ab
+  (ohne Knacken). Akkordnoten werden ignoriert.
+- **LEGATO** — wie MONO, aber klingt die Spur noch, wird nur umgestimmt (30 ms Gleiten):
+  die Hüllkurve läuft weiter, kein neuer Anschlag — für Bass- und Lead-Linien.
+
+Die Klang-Tests hören den Dur-Dreiklang (C, E, G), das Einrasten F# → F, den Akkord-Lock nur
+auf seinem Step, das Überlappen in POLY, genau eine Stimme in MONO und in LEGATO die neue
+Tonhöhe ohne neuen Anschlag; zwei Mutationen (MONO schneidet nicht ab, LEGATO schlägt neu an)
+werden rot.
 
 ## Genaue Werte per Touch
 

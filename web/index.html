@@ -137,6 +137,9 @@ button:focus-visible { outline: 2px solid var(--ok); outline-offset: 2px; }
 /* --- Regler der gewaehlten Spur --- */
 .params { overflow-y: auto; overscroll-behavior: contain; padding-bottom: 8px; }
 .grp { padding: 10px 12px 4px; position: sticky; top: 0; background: var(--panel); z-index: 1; }
+.grp { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.grp .chordBtn { min-height: 0; height: 26px; padding: 0 10px; font-size: 11px; line-height: 1;
+  color: var(--fg); background: var(--raised); border: 1px solid var(--line); border-radius: 6px; }
 .row {
   display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 10px;
   padding: 9px 12px; min-height: 46px; border-bottom: 1px solid #1a2228;
@@ -197,6 +200,7 @@ footer {
 }
 .sheet button.cur { background: var(--amber); color: #15100a; border-color: var(--amber); }
 .sheet button .n { font-family: var(--mono); font-size: 12px; }
+.sheet button .v { margin-left: auto; font-family: var(--mono); font-size: 11px; opacity: .7; }
 #seWave { width: 100%; max-width: 100%; height: 160px; background: var(--panel); border: 1px solid var(--line);
           border-radius: 6px; touch-action: none; display: block; }
 .semark { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
@@ -506,7 +510,8 @@ textarea {
 'use strict';
 const HUE = ['#5ec8ff', '#ffb020', '#ff4d9d', '#4fd6a0', '#b68cff', '#ff7a5c', '#8ad94f', '#5cc9c9'];
 const GROUP = {note: 'Anschlag', vel: 'Anschlag', len: 'Anschlag', prob: 'Anschlag',
-               cond: 'Anschlag', micro: 'Anschlag', ratchet: 'Anschlag',
+               cond: 'Anschlag', micro: 'Anschlag', ratchet: 'Anschlag', quant: 'Anschlag',
+               nt2: 'Akkord', nt3: 'Akkord', nt4: 'Akkord', vmode: 'Akkord',
                machine: 'Quelle', src: 'Quelle', flt: 'Filter',
                amp: 'Huellkurve', vol: 'Ausgang', pan: 'Ausgang', send: 'Ausgang'};
 
@@ -796,6 +801,14 @@ function buildParams() {
       const h = document.createElement('div');
       h.className = 'grp lbl';
       h.textContent = g;
+      if (g === 'Akkord') {                // fertige Akkorde statt drei Abstaende von Hand
+        const b = document.createElement('button');
+        b.className = 'chordBtn';
+        b.id = 'chordBtn';
+        b.textContent = 'AKKORD W\u00c4HLEN';
+        b.onclick = openChords;
+        h.appendChild(b);
+      }
       box.appendChild(h);
     }
     const row = document.createElement('div');
@@ -866,6 +879,39 @@ function openPick(p) {
   el('pick').showModal();
 }
 
+// Fertige Akkorde: schreiben NT2..NT4 auf einmal - im Lock-Modus nur fuer diesen Step.
+// Der Grundton bleibt NOTE; in einer Tonart rasten die Noten ein (leitereigene Akkorde).
+const CHORDS = [
+  ['AUS (eine Note)', []], ['DUR', [4, 7]], ['MOLL', [3, 7]], ['SUS2', [2, 7]], ['SUS4', [5, 7]],
+  ['VERMINDERT', [3, 6]], ['UEBERMAESSIG', [4, 8]], ['DUR 7', [4, 7, 10]], ['MAJ 7', [4, 7, 11]],
+  ['MOLL 7', [3, 7, 10]], ['DUR 9 (ohne Quinte)', [4, 10, 14]], ['QUINTE', [7]], ['OKTAVE', [12]],
+  ['QUINTE + OKTAVE', [7, 12]], ['OKTAVEN', [-12, 12]],
+];
+function openChords() {
+  const ns = ['trk.nt2', 'trk.nt3', 'trk.nt4'].map(id => P.find(q => q.id === id));
+  const cur = ns.map(p => valueOf(p).v).join(',');
+  el('pickTitle').textContent = 'AKKORD' + (sceneEdit >= 0 ? '  \u00b7  SCENE ' + 'AB'[sceneEdit]
+                                 : lockStep >= 0 ? '  \u00b7  LOCK STEP ' + (lockStep + 1) : '');
+  const list = el('pickList');
+  list.innerHTML = '';
+  for (const [name, iv] of CHORDS) {
+    const vals = [0, 1, 2].map(i => i < iv.length ? 25 + iv[i] : 0);
+    const b = document.createElement('button');
+    b.className = vals.join(',') === cur ? 'cur' : '';
+    const info = iv.length ? iv.map(x => (x > 0 ? '+' : '') + x).join(' ') : '';
+    b.innerHTML = `<span class="n">${name}</span><span class="v">${info}</span>`;
+    b.onclick = () => { ns.forEach((p, i) => writeValue(p, vals[i])); buildParams(); el('pick').close(); };
+    list.appendChild(b);
+  }
+  if (X.scGet(sel, P.find(q => q.id === 'trk.vmode').slot) > 0) {
+    const h = document.createElement('div');
+    h.className = 'lbl'; h.style.padding = '10px 2px 2px';
+    h.textContent = 'Akkorde klingen nur im Stimmenmodus POLY.';
+    list.appendChild(h);
+  }
+  el('pick').showModal();
+}
+
 // Der Sample-Platz hat keine feste Liste - er zeigt, was gerade im Vorrat liegt.
 function openSmpPick(p) {
   const cur = valueOf(p).v;
@@ -901,7 +947,9 @@ function openFine(o) {
     const stopp = () => { clearTimeout(t1); clearInterval(t2); t1 = t2 = null; };
     const schritt = () => {
       const jetzt = fine.get();
-      const neu = (fine.stufe && Math.abs(d) === 1) ? X.scScaleStep(jetzt, d) : jetzt + d;
+      // Eine Akkordnote, die aus ist, beginnt beim Antippen am Grundton (+-0) und geht von dort.
+      const neu = (fine.ausBei0 && jetzt === 0) ? 25 + d
+                : (fine.stufe && Math.abs(d) === 1) ? X.scScaleStep(jetzt, d) : jetzt + d;
       fine.set(Math.max(fine.lo, Math.min(fine.hi, neu))); fineShow();
     };
     b.addEventListener('pointerdown', ev => {
@@ -924,6 +972,7 @@ el('fineReset').onclick = () => { if (fine && fine.reset) { fine.reset(); fineSh
 
 function openFineParam(p) {
   const istNote = p.id === 'trk.note';
+  const istNt = p.id.startsWith('trk.nt');
   const qSlot = P.find(q => q.id === 'trk.quant').slot;
   const stufen = istNote && X.scPatScale(X.scPattern()) > 0 && X.scGet(sel, qSlot) > 0;
   const lockMode = lockStep >= 0, sceneMode = sceneEdit >= 0;
@@ -934,15 +983,18 @@ function openFineParam(p) {
     get: () => valueOf(p).v,
     set: v => writeValue(p, v),
     text: v => ptext(p, v),
-    steps: istNote ? [['\u2212OKT', -12], [stufen ? '\u2212STUFE' : '\u22121', -1],
+    steps: istNt ? [['\u2212OKT', -12], ['\u22121', -1], ['+1', 1], ['+OKT', 12]]
+         : istNote ? [['\u2212OKT', -12], [stufen ? '\u2212STUFE' : '\u22121', -1],
                       [stufen ? '+STUFE' : '+1', 1], ['+OKT', 12]]
                    : [['\u221210', -10], ['\u22121', -1], ['+1', 1], ['+10', 10]],
     // In einer Tonart heisst "eine hoeher" die naechste Stufe der Leiter, nicht der naechste Halbton.
     stufe: istNote && stufen,
+    ausBei0: istNt,
     hint: istNote ? (stufen ? 'Ein Schritt ist eine Stufe in ' + str(X.scNoteName(X.scPatRoot(X.scPattern()))) + ' '
                               + str(X.scScaleName(X.scPatScale(X.scPattern()))).toLowerCase() + '.'
-                            : 'Ein Schritt ist ein Halbton.') : '',
-    resetLabel: sceneMode ? 'SCENE-WERT ENTFERNEN' : lockMode ? 'LOCK ENTFERNEN' : 'GRUNDWERT',
+                            : 'Ein Schritt ist ein Halbton.')
+        : istNt ? 'Abstand zur NOTE in Halbtoenen. Mit SKALA rastet auch die Akkordnote in die Tonart.' : '',
+    resetLabel: sceneMode ? 'SCENE-WERT ENTFERNEN' : lockMode ? 'LOCK ENTFERNEN' : istNt ? 'AUS' : 'GRUNDWERT',
     reset: () => {
       if (sceneMode) cmd('scSceneClear', sceneEdit, sel, p.slot);
       else if (lockMode) cmd('scLockClear', sel, lockStep, p.slot);

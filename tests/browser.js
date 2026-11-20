@@ -322,6 +322,51 @@ const stummMuster = async p => {
     await p.locator('#skClose').tap(); await p.waitForTimeout(200);
   }
 
+  grp('Akkorde und Stimmen je Spur');
+  {
+    if ((await p.locator('#play').textContent()).trim() === 'STOP') await p.locator('#play').click();
+    await p.locator('.pt').nth(0).tap(); await p.waitForTimeout(150);
+    await p.locator('.trk').nth(0).locator('.nm').tap(); await p.waitForTimeout(150);
+    const nt = i => p.locator('.row', {hasText: 'trk.nt' + i}).locator('.v');
+    await p.locator('#chordBtn').scrollIntoViewIfNeeded();
+    await p.locator('#chordBtn').tap(); await p.waitForTimeout(200);
+    chk(await p.locator('#pick').isVisible(), 'AKKORD WAEHLEN oeffnet keine Liste');
+    await p.locator('#pickList button', {hasText: 'MAJ 7'}).tap(); await p.waitForTimeout(200);
+    chk((await nt(2).textContent()).includes('+4') && (await nt(3).textContent()).includes('+7')
+        && (await nt(4).textContent()).includes('+11'), 'MAJ 7 setzt nicht +4 +7 +11');
+    // Lock: Step 1 bekommt einen Moll-Akkord, der Grundwert bleibt
+    await p.locator('.pad').first().dispatchEvent('pointerdown'); await p.waitForTimeout(450);
+    await p.locator('.pad').first().dispatchEvent('pointerup'); await p.waitForTimeout(150);
+    await p.locator('#chordBtn').tap(); await p.waitForTimeout(200);
+    chk((await p.locator('#pickTitle').textContent()).includes('LOCK STEP 1'), 'die Akkordliste sagt nicht, dass sie lockt');
+    await p.locator('#pickList button', {hasText: 'MOLL'}).first().tap(); await p.waitForTimeout(200);
+    chk((await nt(2).textContent()).includes('+3') && (await nt(4).textContent()).includes('AUS'),
+        'der Moll-Lock steht nicht im Step');
+    await p.locator('#lockDone').tap(); await p.waitForTimeout(150);
+    chk((await nt(2).textContent()).includes('+4'), 'der Lock hat den Grundakkord ueberschrieben');
+    // Feinwert: eine ausgeschaltete Akkordnote beginnt beim Grundton
+    await p.locator('#chordBtn').tap(); await p.waitForTimeout(200);
+    await p.locator('#pickList button', {hasText: 'AUS'}).tap(); await p.waitForTimeout(200);
+    await p.locator('.row', {hasText: 'trk.nt2'}).tap(); await p.waitForTimeout(200);
+    await p.locator('#fineBtns button').nth(3).tap(); await p.waitForTimeout(150);          // +OKT
+    chk((await p.locator('#fineVal').textContent()).includes('+12 Oktave'), 'von AUS aus ist +OKT nicht +12');
+    await p.locator('#fineReset').tap(); await p.waitForTimeout(100);
+    chk((await p.locator('#fineVal').textContent()).trim() === 'AUS', 'AUS schaltet die Akkordnote nicht ab');
+    await p.locator('#fineClose').tap(); await p.waitForTimeout(150);
+    // Stimmenmodus als Liste
+    const vm = p.locator('.row', {hasText: 'trk.vmode'});
+    await vm.tap(); await p.waitForTimeout(200);
+    await p.locator('#pickList button', {hasText: 'LEGATO'}).tap(); await p.waitForTimeout(200);
+    chk((await vm.locator('.v').textContent()).trim() === 'LEGATO', 'der Stimmenmodus laesst sich nicht waehlen');
+    await p.locator('#docBtn').tap(); await p.waitForTimeout(200);
+    const doc = await p.locator('#docText').inputValue();
+    chk(/pat\.0\.trk\.0\.vmode = 2/.test(doc) && /pat\.0\.trk\.0\.st\.0\.nt2 = 28/.test(doc),
+        'Stimmenmodus und Akkord-Lock stehen nicht im Dokument');
+    await p.locator('#docClose').tap();
+    await vm.tap(); await p.waitForTimeout(200);
+    await p.locator('#pickList button', {hasText: 'POLY'}).tap(); await p.waitForTimeout(150);
+  }
+
   grp('Tempo je Pattern');
   {
     const bpm = async () => +(await p.locator('#bpm').textContent()).trim();

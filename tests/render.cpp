@@ -903,6 +903,90 @@ int main() {
         e.pat = 0;
     }
 
+    grp("Akkorde und Stimmen");
+    {
+        auto stimmen = [&](int track) {
+            int n = 0;
+            for (int i = 0; i < NVOICES; i++)
+                if (e.v[i].used && !e.v[i].preview && e.v[i].track == track && e.v[i].env.st != Env::REL) n++;
+            return n;
+        };
+        auto halte = [&](int note) {                        // Grundton lang und offen
+            e.prepare(48000.0f); setupBeat(e, note);
+            Track& t = e.P.pat[0].t[0];
+            t.p[SL("trk.flt.freq")] = 127; t.p[SL("trk.amp.sus")] = 100;
+            t.p[SL("trk.amp.dec")] = 127; t.p[SL("trk.len")] = 127; t.p[SL("trk.amp.rel")] = 90;
+            return &t;
+        };
+        const int N = 12000;
+        static float a[24000 * 2];
+
+        // C-Dur-Dreiklang: C4 + 4 + 7
+        Track* t = halte(60);
+        t->p[SL("trk.nt2")] = 25 + 4; t->p[SL("trk.nt3")] = 25 + 7;
+        e.start(); e.render(a, N);
+        chk(stimmen(0) == 3, "ein Akkord aus drei Noten startet nicht drei Stimmen");
+        float c = bin(a, N, 261.63f, 48000.0f), ee = bin(a, N, 329.63f, 48000.0f),
+              g = bin(a, N, 392.00f, 48000.0f), dis = bin(a, N, 311.13f, 48000.0f);
+        chk(ee > dis * 4.0f && g > dis * 4.0f && c > dis * 4.0f, "die Akkordnoten C E G klingen nicht");
+
+        // Leitereigen: D + gr. Terz waere F#, in C-Dur rastet es auf F
+        t = halte(62);
+        e.P.pat[0].scale = 1; e.P.pat[0].root = 0;
+        t->p[SL("trk.quant")] = 1; t->p[SL("trk.nt2")] = 25 + 4;
+        e.start(); e.render(a, N);
+        chk(bin(a, N, 349.23f, 48000.0f) > bin(a, N, 369.99f, 48000.0f) * 4.0f,
+            "in C-Dur rastet die Akkordnote F# nicht auf F");
+        e.P.pat[0].scale = 0;
+
+        // Akkord als Lock: nur Step 0 hat eine zweite Note
+        t = halte(60);
+        t->s[0].setLock(SL("trk.nt2"), 25 + 12);
+        e.start(); e.render(a, N);
+        chk(stimmen(0) == 2, "ein gelockter Akkord spielt nicht");
+        e.render(a, 24000);                                  // weiter bis hinter Step 4
+        int s4 = 0;
+        for (int i = 0; i < NVOICES; i++) if (e.v[i].used && e.v[i].track == 0 && e.v[i].step == 4) s4++;
+        chk(s4 == 1, "der Akkord-Lock haengt am naechsten Step noch");
+
+        // POLY: lange Noten ueberlappen. MONO: immer nur eine - auch mit Akkord.
+        for (int mode = 0; mode < 2; mode++) {
+            t = halte(60);
+            t->p[SL("trk.vmode")] = (int16_t)mode;
+            if (mode == 1) t->p[SL("trk.nt2")] = 25 + 7;
+            e.start(); e.render(a, 24000); e.render(a, 2000);   // hinter den zweiten Anschlag
+            int n = 0;
+            for (int i = 0; i < NVOICES; i++) if (e.v[i].used && e.v[i].track == 0) n++;
+            if (mode == 0) chk(n >= 2, "POLY: lange Noten ueberlappen nicht");
+            else           chk(n == 1, "MONO: es klingt mehr als eine Stimme");
+        }
+
+        // LEGATO: der zweite Anschlag stimmt nur um, die Huellkurve laeuft weiter.
+        t = halte(60);
+        t->p[SL("trk.vmode")] = 2;
+        t->s[4].setLock(SL("trk.note"), 72);
+        e.start(); e.render(a, 23000);
+        uint32_t alt = 0; for (int i = 0; i < NVOICES; i++) if (e.v[i].used) alt = e.v[i].age;
+        e.render(a, 4000);
+        int n = 0; uint32_t age = 0; float note = 0;
+        for (int i = 0; i < NVOICES; i++)
+            if (e.v[i].used) { n++; age = e.v[i].age; note = e.v[i].pf[SL("trk.note")]; }
+        chk(n == 1, "LEGATO: es klingt mehr als eine Stimme");
+        chk(age > alt, "LEGATO: die Huellkurve wurde neu angeschlagen");
+        chk(note > 71.5f && note < 72.5f, "LEGATO: der Ton wurde nicht umgestimmt");
+        e.render(a, 12000);
+        chk(bin(a, 12000, 523.25f, 48000.0f) > bin(a, 12000, 261.63f, 48000.0f) * 4.0f,
+            "LEGATO: die neue Note klingt nicht");
+
+        // Im Dokument
+        t = halte(60);
+        t->p[SL("trk.vmode")] = 1; t->s[3].setLock(SL("trk.nt3"), 32);
+        static Doc d; d.clear(); projectToDoc(e.P, d);
+        static Project Q; projectFromDoc(d, Q);
+        chk(Q.pat[0].t[0].p[SL("trk.vmode")] == 1 && Q.pat[0].t[0].s[3].nLock == 1,
+            "Akkord und Stimmenmodus ueberleben das Dokument nicht");
+    }
+
     grp("Referenz-Aufnahme");
     {
         const int N = 96000;                         // zwei Sekunden
