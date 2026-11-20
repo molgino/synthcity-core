@@ -48,6 +48,21 @@ inline int scaleStep(int note, int root, int scale, int dir) {
     return n;
 }
 
+// d Stufen der Leiter weiter (d < 0: abwaerts), vom eingerasteten Ton aus. In CHROMATIC Halbtoene.
+inline int scaleDegrees(int note, int d, int root, int scale) {
+    int n = scaleQuant(note, root, scale);
+    if (scale <= 0 || scale >= NSCALES) return n + d;
+    for (int k = 0; k < (d < 0 ? -d : d); k++) n = scaleStep(n, root, scale, d < 0 ? -1 : 1);
+    return n;
+}
+// Wie viele Toene hat die Leiter in einer Oktave (7 bei Dur, 5 bei Pentatonik)?
+inline int scaleSize(int scale) {
+    if (scale <= 0 || scale >= NSCALES) return 12;
+    int n = 0;
+    for (int i = 0; i < 12; i++) if (SCALES[scale].mask & (1 << i)) n++;
+    return n;
+}
+
 // Geschwindigkeit eines Patterns - Index 4 ist 1x.
 struct SpeedDef { const char* name; double mult; };
 static const SpeedDef SPEEDS[] = {

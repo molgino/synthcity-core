@@ -522,8 +522,9 @@ struct Engine : Sink {
             for (int k = 0; k < NVOICES; k++)
                 if (v[k].used && !v[k].preview && v[k].track == e.track) v[k].cut(sr);
 
-        // Akkord: die Grundnote und bis zu drei weitere im Abstand NT2..NT4. Nur im POLY-Modus;
-        // in einer Tonart rasten auch die Akkordnoten ein - so entstehen leitereigene Akkorde.
+        // Akkord: die Grundnote und bis zu drei weitere im Abstand NT2..NT4. Nur im POLY-Modus.
+        // Folgt die Spur einer Tonart, zaehlen die Abstaende in STUFEN der Leiter: NT2 +2 ist die
+        // Terz der Tonart, +4 die Quinte - so bleibt jeder Akkord leitereigen, auf jedem Grundton.
         float noten[4];
         int nNoten = 0;
         noten[nNoten++] = snap[sNote];
@@ -531,8 +532,8 @@ struct Engine : Sink {
             for (int c = 0; c < 3; c++) {
                 int o = (int)(snap[sNt[c]] + 0.5f);
                 if (o <= 0) continue;
-                int nt = (int)(snap[sNote] + 0.5f) + (o - 25);
-                if (rastet) nt = scaleQuant(nt, ptq.root, ptq.scale);
+                int nt = rastet ? scaleDegrees((int)(snap[sNote] + 0.5f), o - 25, ptq.root, ptq.scale)
+                                : (int)(snap[sNote] + 0.5f) + (o - 25);
                 if (nt < 0 || nt > 127) continue;
                 noten[nNoten++] = (float)nt;
             }

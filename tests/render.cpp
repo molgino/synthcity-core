@@ -931,13 +931,26 @@ int main() {
               g = bin(a, N, 392.00f, 48000.0f), dis = bin(a, N, 311.13f, 48000.0f);
         chk(ee > dis * 4.0f && g > dis * 4.0f && c > dis * 4.0f, "die Akkordnoten C E G klingen nicht");
 
-        // Leitereigen: D + gr. Terz waere F#, in C-Dur rastet es auf F
+        // Leitereigen: in einer Tonart zaehlen NT2..NT4 in Stufen. D in C-Dur, +2 und +4 Stufen
+        // = F und A (d-Moll) - nicht F# und A wie ein Dur-Akkord in Halbtoenen.
         t = halte(62);
         e.P.pat[0].scale = 1; e.P.pat[0].root = 0;
-        t->p[SL("trk.quant")] = 1; t->p[SL("trk.nt2")] = 25 + 4;
+        t->p[SL("trk.quant")] = 1; t->p[SL("trk.nt2")] = 25 + 2; t->p[SL("trk.nt3")] = 25 + 4;
         e.start(); e.render(a, N);
         chk(bin(a, N, 349.23f, 48000.0f) > bin(a, N, 369.99f, 48000.0f) * 4.0f,
-            "in C-Dur rastet die Akkordnote F# nicht auf F");
+            "in C-Dur ist +2 Stufen ueber D nicht F");
+        chk(bin(a, N, 440.0f, 48000.0f) > bin(a, N, 415.3f, 48000.0f) * 4.0f, "in C-Dur ist +4 Stufen ueber D nicht A");
+        // Auf B: +2/+4 Stufen = D und F (vermindert), ganz ohne Kreuz
+        t = halte(59);
+        e.P.pat[0].scale = 1; e.P.pat[0].root = 0;
+        t->p[SL("trk.quant")] = 1; t->p[SL("trk.nt2")] = 25 + 2; t->p[SL("trk.nt3")] = 25 + 4;
+        e.start(); e.render(a, N);
+        chk(bin(a, N, 349.23f, 48000.0f) > bin(a, N, 369.99f, 48000.0f) * 4.0f, "auf B ist +4 Stufen nicht F");
+        // Ohne KEY bleiben es Halbtoene
+        t = halte(62);
+        e.P.pat[0].scale = 1; t->p[SL("trk.quant")] = 0; t->p[SL("trk.nt2")] = 25 + 4;
+        e.start(); e.render(a, N);
+        chk(bin(a, N, 369.99f, 48000.0f) > bin(a, N, 349.23f, 48000.0f) * 4.0f, "ohne KEY ist +4 nicht vier Halbtoene");
         e.P.pat[0].scale = 0;
 
         // Akkord als Lock: nur Step 0 hat eine zweite Note

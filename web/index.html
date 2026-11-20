@@ -561,7 +561,17 @@ let songView = {on: false, pos: -1};    // was der Klang-Kern ueber den Song sag
 const P = [];                 // Parametertabelle, aus dem Kern gelesen
 const el = id => document.getElementById(id);
 const machOf = t => X.scGet(t, P.find(p => p.id === 'trk.machine').slot);
+// Folgt die gewaehlte Spur einer Tonart? Dann zaehlen Akkordnoten in Stufen der Leiter.
+const tonartAn = () => X.scPatScale(X.scPattern()) > 0 && X.scGet(sel, P.find(q => q.id === 'trk.quant').slot) > 0;
+const STUFE = ['root', '2nd', '3rd', '4th', '5th', '6th', '7th'];
 const ptext = (p, v) => {
+  if (/^trk\.nt[234]$/.test(p.id) && tonartAn()) {
+    if (v <= 0) return 'OFF';
+    const d = v - 25, np = P.find(q => q.id === 'trk.note');
+    const ziel = X.scScaleDeg(valueOf(np).v, d), n = X.scScaleSize(), a = Math.abs(d);
+    const name = a % n === 0 ? (a ? (a / n) + ' oct' : 'unison') : (n === 7 ? STUFE[a % 7] : a + ' deg');
+    return (d > 0 ? '+' : d < 0 ? '\u2212' : '\u00b1') + a + ' ' + name + ' \u00b7 ' + str(X.scParamText(np.i, ziel, -1));
+  }
   if (p.id === 'trk.smp') return X.scSmpFrames(v) ? str(X.scSmpName(v)) : (v + 1) + '  empty';
   // Liegt die Note nicht in der Tonart, sagt die Anzeige, wohin sie einrastet.
   if (p.id === 'trk.note' && X.scPatScale(X.scPattern()) > 0) {
@@ -1055,18 +1065,31 @@ const CHORDS = [
   ['MIN 7', [3, 7, 10]], ['DOM 9 (no 5th)', [4, 10, 14]], ['FIFTH', [7]], ['OCTAVE', [12]],
   ['FIFTH + OCTAVE', [7, 12]], ['OCTAVES', [-12, 12]],
 ];
+// In einer Tonart: Akkorde aus Stufen der Leiter - auf jedem Grundton leitereigen.
+const chordsInKey = n => [
+  ['OFF (single note)', []], ['TRIAD', [2, 4]], ['SEVENTH', [2, 4, 6]], ['ADD9', [2, 4, 8]],
+  ['SUS2', [1, 4]], ['SUS4', [3, 4]], ['SIXTH', [2, 4, 5]], ['SHELL (3rd + 7th)', [2, 6]],
+  ['FIFTH', [4]], ['OCTAVE', [n]], ['FIFTH + OCTAVE', [4, n]], ['OCTAVES', [-n, n]]];
 function openChords() {
   const ns = ['trk.nt2', 'trk.nt3', 'trk.nt4'].map(id => P.find(q => q.id === id));
+  const stufen = tonartAn();
+  const liste = stufen ? chordsInKey(X.scScaleSize()) : CHORDS;
   const cur = ns.map(p => valueOf(p).v).join(',');
   el('pickTitle').textContent = 'CHORD' + (sceneEdit >= 0 ? '  \u00b7  SCENE ' + 'AB'[sceneEdit]
                                  : lockStep >= 0 ? '  \u00b7  LOCK STEP ' + (lockStep + 1) : '');
   const list = el('pickList');
   list.innerHTML = '';
-  for (const [name, iv] of CHORDS) {
+  if (stufen) {
+    const h = document.createElement('div');
+    h.className = 'lbl'; h.style.padding = '2px 2px 6px';
+    h.textContent = 'In key: intervals count scale degrees, so every chord stays in the key.';
+    list.appendChild(h);
+  }
+  for (const [name, iv] of liste) {
     const vals = [0, 1, 2].map(i => i < iv.length ? 25 + iv[i] : 0);
     const b = document.createElement('button');
     b.className = vals.join(',') === cur ? 'cur' : '';
-    const info = iv.length ? iv.map(x => (x > 0 ? '+' : '') + x).join(' ') : '';
+    const info = iv.length ? iv.map(x => (x > 0 ? '+' : '') + x).join(' ') + (stufen ? ' deg' : '') : '';
     b.innerHTML = `<span class="n">${name}</span><span class="v">${info}</span>`;
     b.onclick = () => { ns.forEach((p, i) => writeValue(p, vals[i])); buildParams(); el('pick').close(); };
     list.appendChild(b);
@@ -1152,7 +1175,8 @@ function openFineParam(p) {
     get: () => valueOf(p).v,
     set: v => writeValue(p, v),
     text: v => ptext(p, v),
-    steps: istNt ? [['\u2212OCT', -12], ['\u22121', -1], ['+1', 1], ['+OCT', 12]]
+    steps: istNt ? (tonartAn() ? [['\u2212OCT', -X.scScaleSize()], ['\u2212STEP', -1], ['+STEP', 1], ['+OCT', X.scScaleSize()]]
+                               : [['\u2212OCT', -12], ['\u22121', -1], ['+1', 1], ['+OCT', 12]])
          : istNote ? [['\u2212OCT', -12], [stufen ? '\u2212STEP' : '\u22121', -1],
                       [stufen ? '+STEP' : '+1', 1], ['+OCT', 12]]
                    : [['\u221210', -10], ['\u22121', -1], ['+1', 1], ['+10', 10]],
@@ -1162,7 +1186,8 @@ function openFineParam(p) {
     hint: istNote ? (stufen ? 'One step is one scale degree in ' + str(X.scNoteName(X.scPatRoot(X.scPattern()))) + ' '
                               + str(X.scScaleName(X.scPatScale(X.scPattern()))).toLowerCase() + '.'
                             : 'One step is one semitone.')
-        : istNt ? 'Interval to NOTE in semitones. With KEY on, chord notes snap to the key as well.' : '',
+        : istNt ? (tonartAn() ? 'In key: one step is one scale degree (+2 = the 3rd, +4 = the 5th of the key).'
+                         : 'Interval to NOTE in semitones. With a key and KEY on, it counts scale degrees.') : '',
     resetLabel: sceneMode ? 'CLEAR SCENE VALUE' : lockMode ? 'CLEAR LOCK' : istNt ? 'OFF' : 'DEFAULT',
     reset: () => {
       if (sceneMode) cmd('scSceneClear', sceneEdit, sel, p.slot);

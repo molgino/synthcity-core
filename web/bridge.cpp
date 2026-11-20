@@ -245,6 +245,11 @@ int  scScaleStep(int note, int dir) {
     const Pattern& pt = gEng.P.pat[gEng.pat];
     return scaleStep(note, pt.root, pt.scale, dir);
 }
+int  scScaleDeg(int note, int d) {
+    const Pattern& pt = gEng.P.pat[gEng.pat];
+    return scaleDegrees(note, d, pt.root, pt.scale);
+}
+int  scScaleSize() { return scaleSize(gEng.P.pat[gEng.pat].scale); }
 int  scScaleQuant(int note) {
     const Pattern& pt = gEng.P.pat[gEng.pat];
     return scaleQuant(note, pt.root, pt.scale);

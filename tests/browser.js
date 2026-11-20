@@ -393,6 +393,20 @@ async function R(p, id) {
     await p.locator('#fineBtns button').nth(2).tap(); await p.waitForTimeout(150);
     chk((await p.locator('#fineVal').textContent()).trim() === 'E4', 'zwei Stufen ueber C4 ist nicht E4');
     await p.locator('#fineClose').tap(); await p.waitForTimeout(150);
+    // Akkorde in der Tonart: Stufen statt Halbtoene (NOTE steht hier auf E4: Terz G4, Quarte A4)
+    await (await R(p, 'trk.nt2'));
+    await p.locator('#chordBtn').tap(); await p.waitForTimeout(200);
+    chk(await p.locator('#pickList button', {hasText: 'TRIAD'}).count() === 1, 'in der Tonart gibt es keinen TRIAD');
+    await p.locator('#pickList button', {hasText: 'TRIAD'}).tap(); await p.waitForTimeout(200);
+    const nt2 = (await p.locator('.row[data-id="trk.nt2"] .v').textContent()).trim();
+    chk(nt2.startsWith('+2 3rd') && nt2.includes('G4'), 'NT2 zeigt nicht die Terz der Tonart: ' + nt2);
+    await p.locator('.row[data-id="trk.nt2"]').tap(); await p.waitForTimeout(200);
+    chk((await p.locator('#fineBtns button').nth(2).textContent()).trim() === '+STEP', 'NT in der Tonart hat keine +STEP-Taste');
+    await p.locator('#fineBtns button').nth(2).tap(); await p.waitForTimeout(150);
+    chk((await p.locator('#fineVal').textContent()).includes('+3 4th') && (await p.locator('#fineVal').textContent()).includes('A4'), 'eine Stufe weiter ist nicht die Quarte A4: ' + await p.locator('#fineVal').textContent());
+    await p.locator('#fineClose').tap(); await p.waitForTimeout(150);
+    await p.locator('#chordBtn').tap(); await p.waitForTimeout(200);
+    await p.locator('#pickList button', {hasText: 'OFF'}).tap(); await p.waitForTimeout(150);
     // Zuruecksetzen fuer die folgenden Gruppen
     await p.locator('#padTitle').tap(); await p.waitForTimeout(200);
     await chip('SCALE', 'CHROMATIC').tap();
