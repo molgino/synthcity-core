@@ -66,6 +66,16 @@ async function R(p, id) {
   chk(await p.locator('.trk').count() === 8, 'nicht 8 Spuren');
   chk(await p.locator('.pt').count() === 16, 'nicht 16 Patterns');
   chk(await p.locator('.row').count() > 15, 'zu wenige Regler');
+  // Pattern-Auswahl: zugeklappt, der Knopf sagt, was laeuft; aufgeklappt 16 Patterns
+  chk(!(await p.locator('#pats').isVisible()), 'die Pattern-Auswahl ist nicht zugeklappt');
+  chk((await p.locator('#patToggle').textContent()).startsWith('P1'), 'der Knopf nennt das Pattern nicht');
+  await p.locator('#patToggle').click(); await p.waitForTimeout(150);
+  chk(await p.locator('#pats').isVisible(), 'die Pattern-Auswahl klappt nicht auf');
+  // SAMPLE nur bei einer Engine, die Samples spielt
+  const smpSichtbar = async () => p.evaluate(() => !document.querySelector('.row[data-id="trk.smp"]').hidden);
+  await p.locator('.ptab', {hasText: 'QUELLE'}).click(); await p.waitForTimeout(100);
+  const mach = (await p.locator('.row[data-id="trk.machine"] .v').textContent()).trim();
+  chk((await smpSichtbar()) === (mach === 'SMPL'), 'SAMPLE ist bei ' + mach + ' falsch ein- oder ausgeblendet');
   // Reiter: es ist immer nur eine Gruppe zu sehen
   chk(await p.locator('.ptab').count() === 6, 'nicht sechs Reiter: ' + await p.locator('.ptab').count());
   await p.locator('.ptab', {hasText: 'FILTER'}).click(); await p.waitForTimeout(100);
@@ -139,6 +149,12 @@ async function R(p, id) {
   const a = (await R(p, 'trk.src.a'));
   chk((await a.locator('.nm').textContent()).includes('RATIO'), 'der Regler heisst nicht wie die Machine');
   chk((await a.locator('.v').textContent()).includes(':'), 'FM zeigt kein Verhaeltnis');
+  chk(await p.evaluate(() => document.querySelector('.row[data-id="trk.smp"]').hidden), 'bei FM steht SAMPLE noch da');
+  await (await R(p, 'trk.machine')).tap(); await p.waitForTimeout(300);
+  await p.locator('#pickList button', {hasText: 'SMPL'}).tap(); await p.waitForTimeout(300);
+  chk(await p.evaluate(() => !document.querySelector('.row[data-id="trk.smp"]').hidden), 'bei SMPL fehlt SAMPLE');
+  await (await R(p, 'trk.machine')).tap(); await p.waitForTimeout(300);
+  await p.locator('#pickList button', {hasText: 'FM'}).tap(); await p.waitForTimeout(300);
 
   grp('Samples auswaehlen und laden');
   {
@@ -569,11 +585,12 @@ async function R(p, id) {
     const q = await ctx.newPage();
     await q.goto(url);
     await q.waitForTimeout(1000);
+    await q.locator('#patToggle').click(); await q.waitForTimeout(150);   // aufgeklappt: der engere Fall
     const r = await q.evaluate(() => {
       const W = document.documentElement.clientWidth;
       const fehlt = [];
       for (const s of ['.trk .m', '#play', '#fill', '#songBtn', '#smpBtn', '#docBtn',
-                       '#bpmUp', '#bpmDn', '.pt', '#morph', '.pad'])
+                       '#bpmUp', '#bpmDn', '.pt', '#patToggle', '#morph', '.pad'])
         for (const el of document.querySelectorAll(s)) {
           const b = el.getBoundingClientRect();
           const t = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);

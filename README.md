@@ -166,6 +166,11 @@ MIX** —, sichtbar ist immer nur eine Gruppe. Der Reiter bleibt beim Spurwechse
 über das Neuladen hinweg); ein Punkt am Reiter zeigt, dass dort auf dem gehaltenen Step ein Lock
 oder in der Scene ein Wert liegt. Im Hochformat sind die Pads dafür etwas flacher.
 
+Die **Pattern-Auswahl** ist zugeklappt; der Knopf links über den Pads sagt, was läuft (`P3`) und
+was wartet (`P3 → 5`, grün umrandet). Ein Tipp klappt die 16 Patterns auf, der Zustand bleibt
+gespeichert. **SAMPLE** erscheint nur bei einer Engine, die Samples spielt (`usesSample()` der
+Machine) — bei POLY, FM und DRUM wäre die Zeile nur ein Platzhalter.
+
 ## Genaue Werte per Touch
 
 Ziehen ist für grobe Wege — eine Note höher trifft man damit nur durch Glück. **Antippen**

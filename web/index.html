@@ -113,6 +113,10 @@ button:focus-visible { outline: 2px solid var(--ok); outline-offset: 2px; }
 .pt.used { color: var(--fg); background: var(--raised); }
 .pt.cur { background: var(--amber); color: #15100a; border-color: var(--amber); font-weight: 700; }
 .pt.next { box-shadow: inset 0 0 0 2px var(--ok); color: var(--ok); }
+.pats.zu { display: none; }
+.patbtn { font-family: var(--mono); font-weight: 700; padding: 0 10px; white-space: nowrap;
+  background: var(--amber); color: #15100a; border-color: var(--amber); align-self: center; }
+.patbtn.wartet { box-shadow: inset 0 0 0 2px var(--ok); }
 
 /* --- Steps: die Reihe verschwindet nie --- */
 .pads { padding: 10px; border-bottom: 1px solid var(--line); }
@@ -380,6 +384,7 @@ textarea {
           <button class="tiny" id="sceneDone">FERTIG</button>
         </div>
         <div class="padhead">
+          <button class="tiny patbtn" id="patToggle" aria-label="Pattern-Auswahl auf- und zuklappen">P1 &#9662;</button>
           <button class="lbl padtitle" id="padTitle" aria-label="Skala einstellen">Spur 1 &middot; 16 Steps</button>
           <div class="spacer"></div>
           <button class="tiny" id="lenDn" aria-label="Spur kuerzer">&minus;</button>
@@ -547,6 +552,8 @@ let sel = 0, lockStep = -1, playing = false;
 let sceneEdit = -1;            // -1 = aus, 0 = Scene A, 1 = Scene B
 let page = 0;                  // welche 16 Steps die Pads zeigen
 let posSteps = new Array(8).fill(-1);
+let patsOffen = false;          // Pattern-Auswahl aufgeklappt?
+try { patsOffen = localStorage.getItem('synthcity-pats') === '1'; } catch (e) {}
 let patNextView = -1;          // was der Klang-Kern in der Warteschlange hat
 let meterPeak = 0;
 let songView = {on: false, pos: -1};    // was der Klang-Kern ueber den Song sagt
@@ -915,6 +922,7 @@ function buildParams() {
                      <div class="bar"></div>`;
     row.dataset.p = p.i;
     row.dataset.g = g;
+    row.dataset.id = p.id;
     dragRow(row, p);
     box.appendChild(row);
   }
@@ -937,8 +945,10 @@ function buildParams() {
 }
 function zeigeGruppe() {
   const box = el('params');
+  const mitSample = X.scMachUsesSmp(machOf(sel));
   for (const e of box.querySelectorAll('[data-g]'))
-    if (!e.classList.contains('ptab')) e.hidden = e.dataset.g !== grpSel;
+    if (!e.classList.contains('ptab'))
+      e.hidden = e.dataset.g !== grpSel || (e.dataset.id === 'trk.smp' && !mitSample);
   for (const t of box.querySelectorAll('.ptab')) t.classList.toggle('cur', t.dataset.g === grpSel);
 }
 const valueOf = p => {
@@ -1221,7 +1231,14 @@ function paint() {
   }
   const tonart = X.scPatScale(X.scPattern()) ? ' \u00b7 ' + str(X.scNoteName(X.scPatRoot(X.scPattern()))) + ' '
                  + str(X.scScaleName(X.scPatScale(X.scPattern()))).toLowerCase() : '';
-  el('padTitle').textContent = `Spur ${sel + 1} \u00b7 P${X.scPattern() + 1} \u00b7 ${len} Steps${tonart}`;
+  el('padTitle').textContent = `Spur ${sel + 1} \u00b7 ${len} Steps${tonart}`;
+  {
+    const nx = playing ? patNextView : X.scPatNext();
+    const t = 'P' + (X.scPattern() + 1) + (nx >= 0 ? ' \u2192 ' + (nx + 1) : '') + (patsOffen ? ' \u25b4' : ' \u25be');
+    const b = el('patToggle');
+    if (b.textContent !== t) b.textContent = t;
+    b.classList.toggle('wartet', nx >= 0);
+  }
   el('bpm').textContent = X.scTempoNow();
   el('bpm').classList.toggle('eigen', tempoEigen());
   el('bpmPat').classList.toggle('on', tempoEigen());
@@ -1345,6 +1362,14 @@ function skalaOpen(pi) {
   if (!el('skala').open) el('skala').showModal();
 }
 el('padTitle').onclick = () => skalaOpen();
+// Die 16 Patterns brauchen zwei Reihen - meistens reicht der Knopf, der sagt, was laeuft.
+function patsZeigen() { el('pats').classList.toggle('zu', !patsOffen); }
+el('patToggle').onclick = () => {
+  patsOffen = !patsOffen;
+  try { localStorage.setItem('synthcity-pats', patsOffen ? '1' : '0'); } catch (e) {}
+  patsZeigen(); paint();
+};
+patsZeigen();
 el('skClose').onclick = () => { el('skala').close(); buildPads(); buildParams(); };
 
 // --- Scenes bearbeiten -----------------------------------------------------------------------

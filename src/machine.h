@@ -35,6 +35,8 @@ struct Machine {
     // waere es die Mitte des Samples - jede Machine muss das selbst sagen.
     virtual int   defA() const { return 64; }
     virtual int   defB() const { return 64; }
+    // Spielt die Machine ein Sample aus dem Vorrat? Nur dann braucht die Spur trk.smp.
+    virtual bool  usesSample() const { return false; }
 };
 
 // --- POLY: zwei verstimmte Oszillatoren, stufenlos von Saege nach Rechteck ---------------------
@@ -184,6 +186,7 @@ struct MachSmpl : Machine {
     int defA() const override { return 0; }      // am Anfang des Samples
     int defB() const override { return 64; }
     const char* name()   const override { return "SMPL"; }
+    bool usesSample() const override { return true; }
     const char* labelA() const override { return "START"; }
     const char* labelB() const override { return "FEIN"; }
     void text(int which, float v, char* out, int n) const override {
