@@ -31,6 +31,7 @@ struct Voice {
     float    panL = 0.7071f, panR = 0.7071f;
     float    base = 1000.0f, q = 0.7f, envAmt = 0.0f, gain = 1.0f;
     const SamplePool* pool = nullptr;
+    bool     preview = false;   // vom Sample-Editor angeschlagen, gehoert keiner Spur
     FltType  ft = FLT_LP;
     const Machine* mach = nullptr;
 
@@ -63,7 +64,7 @@ struct Voice {
     void start(const Machine* mc, int tr, int st, const float* pp, float v,
                int64_t lenSamples, float sr, uint64_t when, uint64_t lockMask, const float* live,
                const SamplePool& pl) {
-        mach = mc; pool = &pl; track = (uint8_t)tr; step = (uint8_t)st; born = when;
+        mach = mc; pool = &pl; preview = false; track = (uint8_t)tr; step = (uint8_t)st; born = when;
         for (int i = 0; i < 64; i++) pf[i] = pp[i];
         locked = lockMask;
         nRamp = 0; vel = v; left = lenSamples; used = true; age = 0;
@@ -311,6 +312,39 @@ struct Engine : Sink {
         if (switchAt <= seq.pos) switchAt = seq.pos;      // verspaetet: sofort
         songArmed = true;
     }
+
+    // Vorhoeren im Sample-Editor: der Platz klingt so, wie er ist - offenes Filter, volle
+    // Lautstaerke, Note 60 - unabhaengig davon, was eine Spur gerade eingestellt hat.
+    // Alle Slots gelten als gelockt, damit keine Spur ihre Regler darueberlegt.
+    void preview(int slot, float seconds = 6.0f) {
+        previewStop();
+        if (pool.empty(slot)) return;
+        float snap[64];
+        for (int i = 0; i < 64; i++) snap[i] = 0.0f;
+        for (int i = 0; i < NPARAMS; i++)
+            if (PARAMS[i].scope == PS_TRACK) snap[paramSlot(i)] = PARAMS[i].def;
+        int16_t tmp[64];
+        for (int i = 0; i < 64; i++) tmp[i] = (int16_t)snap[i];
+        machineSelect(tmp, 3);
+        snap[paramSlot(paramFind("trk.machine"))] = 3;
+        snap[paramSlot(paramFind("trk.src.a"))] = tmp[paramSlot(paramFind("trk.src.a"))];
+        snap[paramSlot(paramFind("trk.src.b"))] = tmp[paramSlot(paramFind("trk.src.b"))];
+        snap[paramSlot(paramFind("trk.smp"))] = (float)slot;
+        snap[paramSlot(paramFind("trk.note"))] = 60;
+        snap[paramSlot(paramFind("trk.flt.freq"))] = 127;
+        snap[paramSlot(paramFind("trk.amp.sus"))] = 100;
+        snap[paramSlot(paramFind("trk.amp.dec"))] = 127;
+        snap[paramSlot(paramFind("trk.amp.rel"))] = 20;
+        snap[paramSlot(paramFind("trk.vol"))] = 100;
+        snap[paramSlot(paramFind("trk.send.a"))] = 0;
+        snap[paramSlot(paramFind("trk.send.b"))] = 0;
+        int i = pick();
+        v[i].start(machineAt(3), 0, 0, snap, 0.85f, (int64_t)(sr * seconds), sr, clock++,
+                   ~0ull, live[0], pool);
+        v[i].preview = true;
+    }
+    void previewStop() { for (int i = 0; i < NVOICES; i++) if (v[i].used && v[i].preview) v[i].release(); }
+    bool previewing() const { for (int i = 0; i < NVOICES; i++) if (v[i].used && v[i].preview) return true; return false; }
 
     // Ein Pattern waehlen. Steht die Uhr, gilt es sofort; laeuft sie, am naechsten Taktende.
     // Wer von Hand waehlt, verlaesst den Song.

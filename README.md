@@ -5,7 +5,7 @@ Konzept: `../r36-groovebox/docs/konzept-neu.md`.
 
 Kein Framework, keine Abhängigkeiten, keine STL-Container im Kern — C++17 und fertig.
 
-## Stand: Meilenstein 10 — Song-Modus
+## Stand: Meilenstein 11 — Samples trimmen und loopen
 
 | Baustein | Datei | Zustand |
 | --- | --- | --- |
@@ -19,6 +19,7 @@ Kein Framework, keine Abhängigkeiten, keine STL-Container im Kern — C++17 und
 | Sample-Vorrat (64 Plätze, mono **und stereo**), Aufnahme | `src/sample.h` | steht |
 | 16 Patterns, Wechsel im Takt, kopieren und leeren | `src/engine.h`, `src/model.h` | steht |
 | Song: Kette aus Patterns mit Wiederholungen | `src/engine.h`, `src/model.h` | steht |
+| Sample-Ausschnitt und Schleife, samplegenau; Editor mit Wellenform | `src/sample.h`, `web/` | steht |
 | Dokument mit Namen (nicht nur Zahlen) | `src/doc.h` | steht |
 | Sende-Effekte: Delay im Takt, Hall (FDN) | `src/fx.h` | steht |
 | Stimmen, Filter, Hüllkurve, Panorama, Summe | `src/engine.h` | steht |
@@ -175,7 +176,18 @@ Das ist dieselbe Mechanik, die am Gerät später den Eingang oder das Mikro aufn
 veröffentlichten Browser-Fenster ist der Mikrofonzugriff gesperrt** — deshalb nimmt die Weboberfläche
 die Summe auf, nicht das Mikro.
 
-Was noch fehlt: Trimmen und Loop-Punkte setzen, und ein Blick auf die Wellenform.
+### Ausschnitt und Schleife
+
+Start, Ende und Schleifenanfang gehören dem **Sample**, samplegenau, und stehen im Dokument.
+START auf der Spur bleibt der lockbare Versatz — *innerhalb* des Ausschnitts. Ein Sample, das
+erst später nachgereicht wird (aus dem Browser-Speicher), behält den Ausschnitt, den das
+Projekt für seinen Namen verlangt. Unsinnige Punkte rückt der Kern zurecht, statt zu stören.
+
+Im Editor (SMP → BEARBEITEN): Wellenform, Tippen oder Ziehen setzt den gewählten Punkt, die
+Tasten rücken ihn in Millisekunden, Zoom bis 256×, und **Nulldurchgang** lässt die Punkte dort
+einrasten, wo das Signal von unten durch null geht — dort knackt kein Anfang, Ende oder
+Schleifensprung. *Vorhören* spielt den Platz so, wie er ist (offenes Filter, Note 60), auch
+bei stehender Uhr, unabhängig von dem, was eine Spur eingestellt hat.
 
 ## Machines und Effekte
 
@@ -327,8 +339,8 @@ Last (x86, ein Kern): 580× Echtzeit mit einer Spur, 33× im schlimmsten Fall mi
 
 ## Als Nächstes
 
-11. Sample trimmen und loopen, Wellenform zeichnen.
 12. Gerät: R36S-Build, echter Eingang, Gamepad-Bedienung.
+13. Modulation: LFOs und Hüllkurven als Ziele aus der Parametertabelle.
 
 Offen aus Meilenstein 2: das DSP ist **neu geschrieben**, nicht aus SYNTH CITY portiert — ein
 Bit-Vergleich gegen den alten Render steht deshalb aus. Die Referenz-WAV sichert ab jetzt den

@@ -178,7 +178,7 @@ struct MachDrum : Machine {
 // Die Tonhoehe entsteht aus der Abspielgeschwindigkeit, wie bei jedem Sampler. Der Platz
 // steht in trk.smp und ist lockbar: jeder Step kann ein anderes Sample anschlagen.
 struct MachSmpl : Machine {
-    struct St { double pos; int32_t at, n; uint8_t loop, ch; float step; };
+    struct St { double pos; int32_t at, n, e, la; uint8_t loop, ch; float step; };
     static_assert(sizeof(St) <= MACH_STATE, "Zustand passt nicht in den Block");
 
     int defA() const override { return 0; }      // am Anfang des Samples
@@ -201,7 +201,9 @@ struct MachSmpl : Machine {
         if (pool.empty(k)) { st.n = 0; st.pos = 0; return; }
         const SamplePool::Slot& sl = pool.s[k];
         st.at = sl.at; st.n = sl.n; st.loop = sl.loop; st.ch = sl.ch;
-        st.pos = (double)(int)(pUni(p[slotA()]) * (sl.n - 1));     // Startpunkt
+        st.e = sl.end(); st.la = sl.loopStart();
+        // START verschiebt innerhalb des Ausschnitts, nicht im ganzen Sample.
+        st.pos = (double)sl.a + (double)(int)(pUni(p[slotA()]) * (st.e - sl.a - 1));
         (void)vel; (void)hz; (void)sr;
     }
     bool stereo(const float* p, const SamplePool& pool) const override {
@@ -221,14 +223,15 @@ struct MachSmpl : Machine {
         float cents = pBip(p[slotB()]) * 100.0f;
         float step = (hz / noteHz(60.0f)) * (rate / sr) * exp2f(cents / 1200.0f);
         const int c = st.ch;
+        const double ende = (double)(st.e - 1);
         for (int i = 0; i < n; i++) {
-            if (st.pos >= (double)(st.n - 1)) {
-                if (!st.loop) { buf[i] = 0.0f; if (bufR) bufR[i] = 0.0f; continue; }
-                st.pos -= (double)(st.n - 1);
+            if (st.pos >= ende) {
+                if (!st.loop || st.e - st.la < 2) { buf[i] = 0.0f; if (bufR) bufR[i] = 0.0f; continue; }
+                st.pos = (double)st.la + (st.pos - ende);     // zurueck an den Schleifenanfang
             }
             int i0 = (int)st.pos;
             float f = (float)(st.pos - (double)i0);
-            int j0 = st.at + i0 * c, j1 = st.at + (i0 + 1 < st.n ? i0 + 1 : i0) * c;
+            int j0 = st.at + i0 * c, j1 = st.at + (i0 + 1 < st.e ? i0 + 1 : i0) * c;
             buf[i] = pool.data[j0] + (pool.data[j1] - pool.data[j0]) * f;   // lineare Interpolation
             if (bufR)
                 bufR[i] = c == 2 ? pool.data[j0 + 1] + (pool.data[j1 + 1] - pool.data[j0 + 1]) * f

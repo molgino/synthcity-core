@@ -182,6 +182,12 @@ footer {
 }
 .sheet button.cur { background: var(--amber); color: #15100a; border-color: var(--amber); }
 .sheet button .n { font-family: var(--mono); font-size: 12px; }
+#seWave { width: 100%; height: 160px; background: var(--panel); border: 1px solid var(--line);
+          border-radius: 6px; touch-action: none; display: block; }
+.semark { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.semark button.on, #seZero.on, #seLoop.on { background: var(--amber); color: #15100a; border-color: var(--amber); }
+.semark button[data-m=a].on { background: var(--ok); border-color: var(--ok); color: #06231a; }
+.semark button[data-m=b].on { background: var(--lock); border-color: var(--lock); color: #230a17; }
 .finev { font-size: 34px; text-align: center; padding: 10px 0 2px; color: var(--fg); }
 .finebtns { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
 .finebtns button { min-height: 56px; font-size: 15px; font-family: var(--mono); }
@@ -369,6 +375,34 @@ textarea {
   </div>
 </dialog>
 
+<dialog id="smpEdit">
+  <div class="dlg">
+    <div class="lbl" id="seTitle">Sample bearbeiten</div>
+    <canvas id="seWave" width="600" height="160" aria-label="Wellenform"></canvas>
+    <div class="hint val" id="seInfo"></div>
+    <div class="semark">
+      <button data-m="a" class="on">START</button>
+      <button data-m="b">ENDE</button>
+      <button data-m="la">LOOP</button>
+    </div>
+    <div class="finebtns">
+      <button data-d="-100">\u2212100ms</button><button data-d="-1">\u22121ms</button>
+      <button data-d="1">+1ms</button><button data-d="100">+100ms</button>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button id="seZoomOut">\u2212 ZOOM</button>
+      <button id="seZoomIn">+ ZOOM</button>
+      <button id="seLoop">LOOP AUS</button>
+      <button id="seZero" class="on">NULLDURCHGANG</button>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button id="sePlay">\u25b6 VORHOEREN</button>
+      <div class="spacer"></div>
+      <button id="seClose">FERTIG</button>
+    </div>
+  </div>
+</dialog>
+
 <dialog id="smp">
   <div class="dlg">
     <div class="lbl">Sample-Vorrat</div>
@@ -387,6 +421,7 @@ textarea {
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       <button id="smpUse">AUF DIESE SPUR</button>
+      <button id="smpEditBtn">BEARBEITEN</button>
       <button id="smpClear">VORRAT LEEREN</button>
       <div class="spacer"></div>
       <button id="smpClose">SCHLIESSEN</button>
@@ -821,7 +856,7 @@ function dragRow(row, p) {
     if (id === null || e.pointerId !== id) return;
     const dx = e.clientX - x0, dy = e.clientY - y0;
     if (mode === 0) {
-      if (Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy)) { mode = 1; row.setPointerCapture(id); }
+      if (Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy)) { mode = 1; try { row.setPointerCapture(id); } catch (e) {} }
       else if (Math.abs(dy) > 8) { mode = 2; }
       else return;
     }
@@ -1036,6 +1071,8 @@ function smpSendToAudio(i) {
   node.port.postMessage({fn: 'smp', slot: i, data, rate: X.scSmpRate(i), ch,
                          name: new TextEncoder().encode(str(X.scSmpName(i))),
                          loop: X.scSmpLoop(i)});
+  // Der Ausschnitt gehoert dazu - sonst spielt der Klang-Kern das ganze Sample.
+  node.port.postMessage({fn: 'scSmpSetTrim', args: [i, X.scSmpA(i), X.scSmpB(i), X.scSmpLA(i), X.scSmpLoop(i)]});
 }
 function smpPaint() {
   const list = el('smpList');
@@ -1115,6 +1152,132 @@ for (const b of document.querySelectorAll('.rec')) {
   };
 }
 el('smpBtn').onclick = () => { smpPaint(); el('recInfo').textContent = ''; el('smp').showModal(); };
+
+// --- Sample-Editor ---------------------------------------------------------------------------
+// Start, Ende und Schleifenanfang samplegenau setzen. Die Punkte gehoeren dem Sample, nicht
+// der Spur; START auf der Spur verschiebt danach innerhalb dieses Ausschnitts.
+// Ziehen im Bild setzt den gewaehlten Punkt, die Tasten rücken ihn in Millisekunden.
+const se = {slot: -1, mark: 'a', zoom: 1, zero: true, a: 0, b: 0, la: 0, loop: 0, n: 1, rate: 48000};
+function seLoad(slot) {
+  se.slot = slot; se.n = X.scSmpFrames(slot); se.rate = X.scSmpRate(slot);
+  se.a = X.scSmpA(slot); se.b = X.scSmpB(slot); se.la = X.scSmpLA(slot); se.loop = X.scSmpLoop(slot);
+  se.zoom = 1;
+}
+function seApply() {
+  cmd('scSmpSetTrim', se.slot, se.a, se.b, se.la, se.loop);
+  se.a = X.scSmpA(se.slot); se.b = X.scSmpB(se.slot); se.la = X.scSmpLA(se.slot);   // zurechtgerueckt
+  seDraw();
+}
+function seSet(mark, f) {
+  f = Math.max(0, Math.min(se.n, Math.round(f)));
+  if (se.zero && f > 0 && f < se.n) f = X.scSmpZero(se.slot, f);
+  if (mark === 'a') se.a = Math.min(f, se.b - 2);
+  else if (mark === 'b') se.b = Math.max(f, se.a + 2);
+  else se.la = Math.max(se.a, Math.min(f, se.b - 2));
+  seApply();
+}
+// Sichtbarer Bereich: beim Zoomen bleibt der gewaehlte Punkt in der Mitte.
+function seView() {
+  const len = Math.max(64, Math.round(se.n / se.zoom));
+  const mitte = se[se.mark];
+  let v0 = Math.round(mitte - len / 2);
+  v0 = Math.max(0, Math.min(se.n - len, v0));
+  return [Math.max(0, v0), len];
+}
+function seDraw() {
+  const c = el('seWave'), g = c.getContext('2d');
+  const W = c.width = Math.round(c.clientWidth * (window.devicePixelRatio || 1));
+  const H = c.height = Math.round(160 * (window.devicePixelRatio || 1));
+  const css = getComputedStyle(document.documentElement);
+  g.fillStyle = css.getPropertyValue('--panel'); g.fillRect(0, 0, W, H);
+  if (se.slot < 0 || !se.n) return;
+  const [v0, len] = seView();
+  const ch = X.scSmpCh(se.slot);
+  const d = new Float32Array(X.memory.buffer, X.scSmpData(se.slot), se.n * ch);
+  const x = f => (f - v0) / len * W;
+  // Ausschnitt hinterlegen
+  g.fillStyle = 'rgba(79,214,160,0.10)';
+  g.fillRect(x(se.a), 0, x(se.b) - x(se.a), H);
+  if (se.loop) { g.fillStyle = 'rgba(255,176,32,0.12)'; g.fillRect(x(se.la), 0, x(se.b) - x(se.la), H); }
+  // Wellenform: je Spalte Minimum und Maximum
+  g.fillStyle = css.getPropertyValue('--dim');
+  for (let px = 0; px < W; px++) {
+    const f0 = v0 + Math.floor(px / W * len), f1 = Math.max(f0 + 1, v0 + Math.floor((px + 1) / W * len));
+    let lo = 1, hi = -1;
+    for (let f = f0; f < f1 && f < se.n; f++) {
+      const s = ch === 2 ? 0.5 * (d[f * 2] + d[f * 2 + 1]) : d[f];
+      if (s < lo) lo = s; if (s > hi) hi = s;
+    }
+    if (hi < lo) continue;
+    g.fillRect(px, (1 - hi) * H / 2, 1, Math.max(1, (hi - lo) * H / 2));
+  }
+  const strich = (f, farbe) => { g.fillStyle = farbe; g.fillRect(Math.round(x(f)) - 1, 0, 3, H); };
+  strich(se.a, css.getPropertyValue('--ok'));
+  strich(se.b, css.getPropertyValue('--lock'));
+  if (se.loop) strich(se.la, css.getPropertyValue('--amber'));
+  const sek = f => (f / se.rate).toFixed(3);
+  el('seInfo').textContent = `Start ${sek(se.a)} s \u00b7 Ende ${sek(se.b)} s \u00b7 Laenge ${sek(se.b - se.a)} s`
+    + (se.loop ? ` \u00b7 Loop ab ${sek(se.la)} s` : '') + `  \u00b7  Zoom ${se.zoom}\u00d7`;
+  el('seLoop').textContent = se.loop ? 'LOOP AN' : 'LOOP AUS';
+  el('seLoop').classList.toggle('on', !!se.loop);
+  for (const b of document.querySelectorAll('.semark button')) b.classList.toggle('on', b.dataset.m === se.mark);
+  document.querySelector('.semark button[data-m=la]').disabled = !se.loop;
+}
+el('smpEditBtn').onclick = () => {
+  if (!X.scSmpFrames(smpSel)) { el('recInfo').textContent = 'Erst ein Sample in diesen Platz laden.'; return; }
+  seLoad(smpSel);
+  el('seTitle').textContent = 'SAMPLE ' + (smpSel + 1) + '  ' + str(X.scSmpName(smpSel));
+  el('smpEdit').showModal();
+  requestAnimationFrame(seDraw);
+};
+for (const b of document.querySelectorAll('.semark button')) b.onclick = () => { se.mark = b.dataset.m; seDraw(); };
+for (const b of document.querySelectorAll('#smpEdit .finebtns button')) {
+  const d = +b.dataset.d;
+  let t1 = null, t2 = null;
+  const stopp = () => { clearTimeout(t1); clearInterval(t2); };
+  // Die Tasten ruecken ohne Einrasten - sonst springt ein kleiner Schritt zum naechsten Nulldurchgang zurueck.
+  const schritt = () => {
+    const z = se.zero; se.zero = false;
+    seSet(se.mark, se[se.mark] + d * se.rate / 1000);
+    se.zero = z;
+  };
+  b.addEventListener('pointerdown', ev => { ev.preventDefault(); schritt(); t1 = setTimeout(() => { t2 = setInterval(schritt, 70); }, 400); });
+  b.addEventListener('pointerup', stopp); b.addEventListener('pointercancel', stopp); b.addEventListener('pointerleave', stopp);
+}
+{
+  const c = el('seWave');
+  let zieht = false;
+  const hin = ev => {
+    const r = c.getBoundingClientRect();
+    const [v0, len] = seView();
+    seSet(se.mark, v0 + (ev.clientX - r.left) / r.width * len);
+  };
+  // Erst setzen, dann festhalten - und das Festhalten darf scheitern, ohne den Tipp zu verschlucken.
+  c.addEventListener('pointerdown', ev => {
+    zieht = true; hin(ev);
+    try { c.setPointerCapture(ev.pointerId); } catch (e) { /* ohne Festhalten geht es auch */ }
+  });
+  c.addEventListener('pointermove', ev => { if (zieht) hin(ev); });
+  c.addEventListener('pointerup', () => { zieht = false; });
+  c.addEventListener('pointercancel', () => { zieht = false; });
+}
+el('seZoomIn').onclick = () => { se.zoom = Math.min(256, se.zoom * 2); seDraw(); };
+el('seZoomOut').onclick = () => { se.zoom = Math.max(1, se.zoom / 2); seDraw(); };
+el('seLoop').onclick = () => {
+  se.loop = se.loop ? 0 : 1;
+  if (se.loop && se.mark === 'la') se.mark = 'a';
+  seApply();
+};
+el('seZero').onclick = () => { se.zero = !se.zero; el('seZero').classList.toggle('on', se.zero); };
+el('sePlay').onclick = async () => {
+  try { await audioOn(); } catch (e) { return; }
+  if (ctx.state === 'suspended') await ctx.resume();
+  node.port.postMessage({fn: 'scSmpPreview', args: [se.slot]});
+};
+el('seClose').onclick = () => {
+  if (node) node.port.postMessage({fn: 'scSmpPreviewStop', args: []});
+  el('smpEdit').close(); smpPaint();
+};
 el('smpClose').onclick = () => el('smp').close();
 // Der Beschriftungs-Klick allein reicht auf manchen Geraeten nicht - hier wird der
 // Auswaehler zusaetzlich von Hand geoeffnet.

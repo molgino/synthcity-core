@@ -512,6 +512,86 @@ int main() {
         chk(sane(c, 24000 * 2), "die Aufnahme laeuft aus dem Ruder");
     }
 
+    grp("Sample-Ausschnitt und Schleife");
+    {
+        // Eine Sekunde: erste Haelfte 220 Hz, zweite Haelfte 880 Hz.
+        static float z[48000];
+        for (int i = 0; i < 48000; i++)
+            z[i] = sinf(6.2831853f * (i < 24000 ? 220.0f : 880.0f) * i / 48000.0f);
+        auto spiel = [&](int a, int b, int la, bool loop, int start, float* out, int N) {
+            e.prepare(48000.0f);
+            e.pool.clear();
+            e.pool.set(0, z, 48000, 48000.0f, "zwei", false);
+            e.pool.setTrim(0, a, b, la, loop);
+            setupBeat(e, 60);
+            Track& t = e.P.pat[0].t[0];
+            machineSelect(t.p, 3); t.p[SL("trk.smp")] = 0;
+            t.p[SL("trk.src.a")] = (int16_t)start;
+            t.p[SL("trk.flt.freq")] = 127; t.p[SL("trk.amp.sus")] = 100;
+            t.p[SL("trk.amp.dec")] = 127; t.p[SL("trk.len")] = 127;
+            for (int s = 1; s < 16; s++) t.s[s].on = 0;           // nur ein Anschlag
+            e.start(); e.render(out, N);
+        };
+        static float o[48000 * 2];
+        spiel(24000, 0, 0, false, 0, o, 12000);
+        chk(bin(o, 12000, 880.0f, 48000.0f) > bin(o, 12000, 220.0f, 48000.0f) * 6.0f,
+            "der Ausschnitt beginnt nicht bei a");
+
+        spiel(0, 24000, 0, false, 0, o, 36000);
+        chk(rms(o + 26000 * 2, 8000) < 0.001f, "ohne Schleife klingt es ueber b hinaus");
+        chk(bin(o, 20000, 220.0f, 48000.0f) > bin(o, 20000, 880.0f, 48000.0f) * 6.0f,
+            "vor b klingt nicht die erste Haelfte");
+
+        // Schleife ueber die zweite Haelfte: es klingt ueber das Sample-Ende (48000) hinaus,
+        // und zwar 880 Hz. Gemessen vor dem Ende der Note (LEN endet bei 63500).
+        static float lo[96000 * 2];
+        spiel(0, 0, 24000, true, 0, lo, 96000);
+        chk(rms(lo + 50000 * 2, 8000) > 0.05f, "die Schleife haelt den Ton nicht");
+        chk(bin(lo + 50000 * 2, 8000, 880.0f, 48000.0f) > bin(lo + 50000 * 2, 8000, 220.0f, 48000.0f) * 6.0f,
+            "die Schleife springt nicht an la");
+        // Gegenprobe ohne Schleife: an derselben Stelle ist es still.
+        spiel(0, 0, 24000, false, 0, lo, 96000);
+        chk(rms(lo + 50000 * 2, 8000) < 0.001f, "ohne Schleife klingt es ueber das Ende hinaus");
+
+        // START verschiebt INNERHALB des Ausschnitts: Ausschnitt = zweite Haelfte, START ~ Mitte davon.
+        spiel(24000, 0, 0, false, 64, o, 6000);
+        chk(rms(o, 6000) > 0.05f, "START zeigt aus dem Ausschnitt hinaus");
+
+        // Vorhoeren: klingt bei stehender Uhr, und die Einstellungen einer Spur stoeren nicht.
+        e.prepare(48000.0f);
+        e.pool.clear(); e.pool.set(0, z, 48000, 48000.0f, "zwei", false);
+        projectInit(e.P);
+        e.P.pat[0].t[0].p[SL("trk.flt.freq")] = 5;          // Spur 1 fast zu - darf nicht stoeren
+        e.P.pat[0].t[0].p[SL("trk.vol")] = 0;
+        e.resetTrackValues();
+        e.preview(0);
+        chk(e.previewing(), "Vorhoeren startet nicht");
+        e.render(o, 12000);
+        chk(rms(o, 12000) > 0.05f, "Vorhoeren klingt nicht (oder die Spur legt sich darueber)");
+        e.previewStop();
+        e.render(o, 12000);
+        chk(rms(o + 6000 * 2, 6000) < 0.001f, "Vorhoeren laesst sich nicht anhalten");
+
+        // Nulldurchgang: der gefundene Punkt liegt auf einem Wechsel von <=0 nach >0.
+        e.pool.clear(); e.pool.set(0, z, 48000, 48000.0f, "zwei", false);
+        int32_t zc = e.pool.zeroCross(0, 1000);
+        chk(zc > 0 && z[zc - 1] <= 0.0f && z[zc] > 0.0f, "kein Nulldurchgang gefunden");
+        chk(abs(zc - 1000) < 220, "der Nulldurchgang liegt nicht in der Naehe");
+
+        // Ausschnitt im Dokument, und er wartet auf den Klang, wenn das Sample erst spaeter kommt.
+        e.pool.setTrim(0, 1000, 30000, 5000, true);
+        static Doc d; d.clear(); poolToDoc(e.pool, d);
+        static SamplePool leer; leer.clear(); poolFromDoc(d, leer);
+        chk(leer.wanted(0) && leer.s[0].a == 1000 && leer.s[0].b == 30000 && leer.s[0].la == 5000,
+            "der Ausschnitt steht nicht im Dokument");
+        leer.set(0, z, 48000, 48000.0f, "zwei", false);
+        chk(leer.s[0].a == 1000 && leer.s[0].end() == 30000 && leer.s[0].loopStart() == 5000 && leer.s[0].loop,
+            "der nachgereichte Klang verliert den Ausschnitt");
+        // Unsinnige Punkte werden zurechtgerueckt statt zu stoeren.
+        leer.setTrim(0, 40000, 100, 999999, false);
+        chk(leer.s[0].a < leer.s[0].end() && leer.s[0].loopStart() >= leer.s[0].a, "unsinnige Punkte bleiben stehen");
+    }
+
     grp("Sende-Effekte");
     {
         const int N = 72000;                        // anderthalb Sekunden

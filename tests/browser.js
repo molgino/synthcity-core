@@ -155,6 +155,56 @@ const stummMuster = async p => {
         'der Sample-Platz zeigt den Namen nicht');
   }
 
+  grp('Sample-Editor: Wellenform, Ausschnitt, Schleife');
+  {
+    // Der Vorrat hat das Stereo-Sample aus der Gruppe davor in Platz 1.
+    // Vorher anhalten - das Vorhoeren soll bei stehender Uhr klingen.
+    if ((await p.locator('#play').textContent()).trim() === 'STOP') await p.locator('#play').click();
+    await p.waitForTimeout(300);
+    await p.locator('#smpBtn').tap(); await p.waitForTimeout(250);
+    await p.locator('#smpList button').first().tap(); await p.waitForTimeout(150);
+    await p.locator('#smpEditBtn').tap(); await p.waitForTimeout(400);
+    chk(await p.locator('#smpEdit').isVisible(), 'der Editor oeffnet nicht');
+    // Ist eine Wellenform gezeichnet? Pixel in der Mitte des Bildes zaehlen, die nicht Hintergrund sind.
+    const gezeichnet = await p.locator('#seWave').evaluate(c => {
+      const g = c.getContext('2d'), d = g.getImageData(0, 0, c.width, c.height).data;
+      const bg = [d[0], d[1], d[2]]; let n = 0;
+      for (let i = 0; i < d.length; i += 4) if (Math.abs(d[i] - bg[0]) + Math.abs(d[i+1] - bg[1]) + Math.abs(d[i+2] - bg[2]) > 40) n++;
+      return n / (c.width * c.height);
+    });
+    chk(gezeichnet > 0.05, 'keine Wellenform zu sehen');
+    const info0 = (await p.locator('#seInfo').textContent()).trim();
+    chk(info0.includes('Start 0.000 s') && info0.includes('Ende 0.500 s'), 'der Ausschnitt steht nicht in der Anzeige: ' + info0);
+    for (let i = 0; i < 1; i++) await p.locator('#smpEdit .finebtns button[data-d="100"]').tap();
+    await p.waitForTimeout(150);
+    chk((await p.locator('#seInfo').textContent()).includes('Start 0.100 s'), 'START laesst sich nicht verschieben');
+    await p.locator('.semark button[data-m=b]').tap();
+    await p.locator('#smpEdit .finebtns button[data-d="-100"]').tap();
+    await p.waitForTimeout(150);
+    chk((await p.locator('#seInfo').textContent()).includes('Ende 0.400 s'), 'ENDE laesst sich nicht verschieben');
+    await p.locator('#seLoop').tap(); await p.waitForTimeout(150);
+    chk((await p.locator('#seInfo').textContent()).includes('Loop ab'), 'LOOP laesst sich nicht einschalten');
+    // Ziehen im Bild setzt den gewaehlten Punkt (Nulldurchgang an: er rastet ein)
+    await p.locator('.semark button[data-m=a]').tap();
+    const box = await p.locator('#seWave').boundingBox();
+    await p.locator('#seWave').dispatchEvent('pointerdown', {clientX: box.x + box.width * 0.5, clientY: box.y + 40, pointerId: 7});
+    await p.locator('#seWave').dispatchEvent('pointerup', {pointerId: 7});
+    await p.waitForTimeout(150);
+    const startNeu = (await p.locator('#seInfo').textContent()).match(/Start ([\d.]+) s/);
+    chk(startNeu && Math.abs(+startNeu[1] - 0.25) < 0.01, 'ein Tipp ins Bild setzt START nicht dorthin');
+    // Vorhoeren bei stehender Uhr: der Pegel bewegt sich
+    await p.locator('#sePlay').tap();
+    chk(await hoechsterPegel(p, 800) > 3, 'Vorhoeren klingt nicht');
+    await p.locator('#seClose').tap(); await p.waitForTimeout(200);
+    await p.locator('#smpClose').tap(); await p.waitForTimeout(150);
+    // Der Ausschnitt steht im Dokument
+    await p.locator('#docBtn').tap(); await p.waitForTimeout(200);
+    const doc = await p.locator('#docText').inputValue();
+    chk(/smp\.0\.a = \d+/.test(doc) && /smp\.0\.b = 19200/.test(doc) && /smp\.0\.loop = 1/.test(doc),
+        'der Ausschnitt steht nicht im Dokument');
+    await p.locator('#docClose').tap();
+  }
+
   grp('Genaue Werte: antippen statt ziehen');
   {
     // Spur 1 waehlen, NOTE antippen: das Feinwert-Fenster oeffnet sich

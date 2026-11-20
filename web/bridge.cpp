@@ -207,6 +207,16 @@ void  scSmpClear()        { gEng.pool.clear(); }
 int   scSmpSet(int slot, const float* d, int n, float rate, const char* name, int loop, int ch) {
     return gEng.pool.set(slot, d, n, rate, name, loop != 0, ch) ? 1 : 0;
 }
+// Ausschnitt und Schleife, samplegenau.
+int   scSmpA(int i)  { return (i >= 0 && i < SMP_SLOTS) ? gEng.pool.s[i].a : 0; }
+int   scSmpB(int i)  { return (i >= 0 && i < SMP_SLOTS) ? gEng.pool.s[i].end() : 0; }
+int   scSmpLA(int i) { return (i >= 0 && i < SMP_SLOTS) ? gEng.pool.s[i].loopStart() : 0; }
+void  scSmpSetTrim(int i, int a, int b, int la, int loop) { gEng.pool.setTrim(i, a, b, la, loop != 0); }
+int   scSmpZero(int i, int f) { return gEng.pool.zeroCross(i, f); }
+void  scSmpPreview(int i)     { gEng.preview(i); }
+void  scSmpPreviewStop()      { gEng.previewStop(); }
+int   scSmpPreviewing()       { return gEng.previewing() ? 1 : 0; }
+
 // Aufnahme: nimmt auf, was hinten herauskommt.
 int   scRecStart(int slot, float seconds, const char* name, int ch) {
     return gEng.recStart(slot, seconds, name, ch);
