@@ -190,7 +190,7 @@ struct Engine : Sink {
     // --- Pattern-Wechsel ---------------------------------------------------------------------
     // Gewaehlt wird sofort, gewechselt wird im Takt: alles andere klingt wie ein Versehen.
     int     patNext = -1;          // wartet auf den Wechsel
-    int     chgSteps = 16;         // Wechsellaenge in Sechzehnteln
+
     int64_t switchAt = -1;         // genaue Sample-Position des Wechsels
 
     // --- Song --------------------------------------------------------------------------------
@@ -229,7 +229,7 @@ struct Engine : Sink {
     }
     void start() {
         if (songOn) { seq.stop(); songStart(); }         // der Song faengt vorn an
-        seq.bpm = tempoOf(pat);
+        seq.bpm = effTempo(pat);
         seq.start();
     }
 
@@ -253,8 +253,8 @@ struct Engine : Sink {
     // BPM + feuerte sieben Anschlaege in einem Block). Darum wird der Ursprung so verschoben,
     // dass die AKTUELLE Position im Takt gleich bleibt - und alles schon Geplante mit.
     void setTempo(double bpm) {
-        if (bpm < 20.0) bpm = 20.0;
-        if (bpm > 400.0) bpm = 400.0;
+        if (bpm < 2.5) bpm = 2.5;           // 20 bpm mal 1/8x
+        if (bpm > 800.0) bpm = 800.0;       // 400 bpm mal 2x
         double alt = seq.bpm;
         if (bpm == alt) return;
         if (seq.running && alt > 0.0) {
@@ -267,15 +267,45 @@ struct Engine : Sink {
         }
         seq.bpm = bpm;
     }
+    // Teiler einer Spur aendern. Im Lauf wuerde die Spur sonst alle Steps nachholen, die
+    // mit dem neuen Teiler "schon gewesen waeren" - darum setzt sie dort fort, wo sie auf
+    // dem neuen Raster gerade steht.
+    void setDiv(int t, int d) {
+        if (t < 0 || t >= NTRACKS) return;
+        if (d < 1) d = 1;
+        if (d > 16) d = 16;
+        Track& tr = P.pat[pat].t[t];
+        tr.speed = (uint8_t)d;
+        if (seq.running) {
+            double sp = seq.stepLen(tr);
+            double rel = (double)(seq.pos - seq.origin);
+            int64_t k = (int64_t)(rel / sp);
+            if ((double)k * sp < rel) k++;                   // aufrunden, ohne libm
+            seq.nextK[t] = k < 0 ? 0 : k;
+        }
+    }
+
     // Das Tempo, das gerade gilt: das eigene des Patterns, sonst das des Projekts.
+    // Das ist das MUSIKALISCHE Tempo - so steht es in der Anzeige, und daran haengt das Echo.
     double tempoOf(int p) const {
         int pb = (p >= 0 && p < NPATTERNS) ? P.pat[p].bpm : 0;
         return pb > 0 ? (double)pb : (double)P.g[paramSlot(paramFind("bpm"))];
     }
+    double multOf(int p) const {
+        int m = (p >= 0 && p < NPATTERNS) ? P.pat[p].mult : SPEED_1X;
+        return SPEEDS[(m < 0 || m >= NSPEEDS) ? SPEED_1X : m].mult;
+    }
+    // Wie schnell der Sequencer laeuft: Tempo mal Geschwindigkeit des Patterns. Eine andere
+    // Geschwindigkeit ist fuer den Sequencer dasselbe wie ein anderes Tempo - darum gilt
+    // fuer sie auch dasselbe Umrechnen in setTempo, ohne Geknatter.
+    double effTempo(int p) const { return tempoOf(p) * multOf(p); }
 
+    // Laenge eines Wechsel-Takts: so viele Steps, wie das laufende Pattern als Wechsellaenge
+    // angibt, gemessen in Sechzehnteln seiner eigenen Geschwindigkeit.
     double cycleLen() const {
-        double sp16 = seq.sr * 60.0 / ((seq.bpm < 20.0 ? 20.0 : seq.bpm) * 4.0);
-        return sp16 * (chgSteps < 1 ? 1 : chgSteps);
+        double sp16 = seq.sr * 60.0 / ((seq.bpm < 2.5 ? 2.5 : seq.bpm) * 4.0);
+        int chg = P.pat[pat].chg;
+        return sp16 * (chg < 1 ? 1 : chg);
     }
 
     // Song an. Steht die Uhr, beginnt Eintrag 1 sofort; laeuft sie, am naechsten Taktende -
@@ -296,7 +326,7 @@ struct Engine : Sink {
         patNext = -1; switchAt = -1;
         pat = P.song.e[0].pat;
         seq.toPattern(seq.pos);
-        seq.bpm = tempoOf(pat);
+        seq.bpm = effTempo(pat);
         resetTrackValues();
     }
     void songStop() { songOn = false; if (songArmed) { patNext = -1; switchAt = -1; songArmed = false; } }
@@ -354,7 +384,7 @@ struct Engine : Sink {
         if (!seq.running) {
             pat = p; patNext = -1; switchAt = -1;
             seq.toPattern(seq.pos);
-            seq.bpm = tempoOf(p);
+            seq.bpm = effTempo(p);
             resetTrackValues();
             return;
         }
@@ -415,13 +445,22 @@ struct Engine : Sink {
 
         uint64_t lockMask = 0;
         for (int li = 0; li < tr.s[e.step].nLock; li++) lockMask |= 1ull << tr.s[e.step].lock[li].slot;
+        // Tonart: folgt die Spur der Skala, rastet die Note auf den naechsten Ton der Leiter ein.
+        static const int sNote = paramSlot(paramFind("trk.note"));
+        static const int sQuant = paramSlot(paramFind("trk.quant"));
+        const Pattern& ptq = P.pat[pat];
+        const bool rastet = ptq.scale > 0 && snap[sQuant] > 0.5f;
+        if (rastet) snap[sNote] = (float)scaleQuant((int)(snap[sNote] + 0.5f), ptq.root, ptq.scale);
         int mi = tr.p[paramSlot(paramFind("trk.machine"))];
         int i = pick();
         v[i].start(machineAt(mi), e.track, e.step, snap, e.vel / 127.0f, e.len, sr, clock++,
                    lockMask, live[e.track], pool);
         for (int li = 0; li < tr.s[e.step].nLock; li++) {    // Slides: von dort, wo die Spur steht
             const Lock& l = tr.s[e.step].lock[li];
-            if (l.slide) v[i].slide(l.slot, from[l.slot], (float)l.val, glide);
+            if (!l.slide) continue;
+            float ziel = (float)l.val;
+            if (rastet && l.slot == sNote) ziel = (float)scaleQuant(l.val, ptq.root, ptq.scale);
+            v[i].slide(l.slot, from[l.slot], ziel, glide);
         }
         if (v[i].nRamp) v[i].ctl(sr, live[e.track]);
     }
@@ -462,7 +501,7 @@ struct Engine : Sink {
             if (patNext >= 0 && seq.pos >= switchAt) {
                 pat = patNext; patNext = -1; switchAt = -1;
                 seq.toPattern(seq.pos);
-                seq.bpm = tempoOf(pat);              // Ursprung ist frisch - kein Umrechnen noetig
+                seq.bpm = effTempo(pat);              // Ursprung ist frisch - kein Umrechnen noetig
                 resetTrackValues();
                 if (songArmed) {
                     songArmed = false;
@@ -489,7 +528,7 @@ struct Engine : Sink {
         static const int sDec  = paramSlot(paramFind("fx.b.dec"));
         static const int sDamp = paramSlot(paramFind("fx.b.damp"));
         static const int sBVol = paramSlot(paramFind("fx.b.vol"));
-        delay.setTime(P.g[sDiv], (float)seq.bpm, sr);
+        delay.setTime(P.g[sDiv], (float)tempoOf(pat), sr);   // Echo am musikalischen Tempo
         reverb.setSize(pUni(P.g[sSize]), sr);
         float fb   = pUni(P.g[sFb]) * 0.95f;
         float tone = pUni(P.g[sTone]);

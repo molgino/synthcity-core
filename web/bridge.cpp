@@ -56,7 +56,7 @@ void scSet(int track, int slot, int v) {
     if (track < 0) {
         gEng.P.g[slot] = (int16_t)v;
         // Das Projekttempo gilt nur, wo das Pattern kein eigenes hat.
-        if (slot == paramSlot(paramFind("bpm"))) gEng.setTempo(gEng.tempoOf(gEng.pat));
+        if (slot == paramSlot(paramFind("bpm"))) gEng.setTempo(gEng.effTempo(gEng.pat));
     } else gEng.P.pat[gEng.pat].t[track].p[slot] = (int16_t)v;
 }
 
@@ -88,7 +88,7 @@ void scLockClear(int t, int s, int slot) {
 int  scTrackLen(int t)   { return gEng.P.pat[gEng.pat].t[t].len; }
 void scSetTrackLen(int t, int n) { gEng.P.pat[gEng.pat].t[t].len = (uint8_t)(n < 1 ? 1 : n > NSTEPS ? NSTEPS : n); }
 int  scSpeed(int t)      { return gEng.P.pat[gEng.pat].t[t].speed; }
-void scSetSpeed(int t, int n) { gEng.P.pat[gEng.pat].t[t].speed = (uint8_t)(n < 1 ? 1 : n); }
+void scSetSpeed(int t, int n) { gEng.setDiv(t, n); }
 int  scNTracks() { return NTRACKS; }
 int  scNSteps()  { return NSTEPS; }
 
@@ -117,7 +117,7 @@ void scSetPattern(int p) {
     if (p < 0 || p >= NPATTERNS) return;
     gEng.pat = p; gEng.patNext = -1; gEng.switchAt = -1;
     gEng.seq.toPattern(gEng.seq.pos);
-    gEng.seq.bpm = gEng.tempoOf(p);
+    gEng.seq.bpm = gEng.effTempo(p);
     gEng.resetTrackValues();
 }
 int  scPatUsed(int p)   { return (p >= 0 && p < NPATTERNS) ? gEng.P.pat[p].used : 0; }
@@ -158,12 +158,50 @@ int  scPatBpm(int p)    { return (p >= 0 && p < NPATTERNS) ? gEng.P.pat[p].bpm :
 void scSetPatBpm(int p, int v) {
     if (p < 0 || p >= NPATTERNS) return;
     gEng.P.pat[p].bpm = (int16_t)(v <= 0 ? 0 : (v < 30 ? 30 : (v > 300 ? 300 : v)));
-    if (p == gEng.pat) gEng.setTempo(gEng.tempoOf(p));
+    if (p == gEng.pat) gEng.setTempo(gEng.effTempo(p));
 }
 int  scTempoNow()       { return (int)(gEng.tempoOf(gEng.pat) + 0.5); }
 
-int  scChg()            { return gEng.chgSteps; }
-void scSetChg(int n)    { gEng.chgSteps = n < 1 ? 1 : (n > NSTEPS ? NSTEPS : n); }
+// --- Skala des Patterns: Geschwindigkeit, Wechsellaenge, Tonart ----------------------------
+int  scPatMult(int p)   { return (p >= 0 && p < NPATTERNS) ? gEng.P.pat[p].mult : SPEED_1X; }
+void scSetPatMult(int p, int m) {
+    if (p < 0 || p >= NPATTERNS) return;
+    gEng.P.pat[p].mult = (uint8_t)(m < 0 ? 0 : (m >= NSPEEDS ? NSPEEDS - 1 : m));
+    if (p == gEng.pat) gEng.setTempo(gEng.effTempo(p));   // umrechnen, nicht springen
+}
+int  scPatChg(int p)    { return (p >= 0 && p < NPATTERNS) ? gEng.P.pat[p].chg : 16; }
+void scSetPatChg(int p, int n) {
+    if (p < 0 || p >= NPATTERNS) return;
+    gEng.P.pat[p].chg = (uint8_t)(n < 1 ? 1 : (n > NSTEPS ? NSTEPS : n));
+}
+int  scPatRoot(int p)   { return (p >= 0 && p < NPATTERNS) ? gEng.P.pat[p].root : 0; }
+int  scPatScale(int p)  { return (p >= 0 && p < NPATTERNS) ? gEng.P.pat[p].scale : 0; }
+void scSetPatKey(int p, int root, int scale) {
+    if (p < 0 || p >= NPATTERNS) return;
+    gEng.P.pat[p].root = (uint8_t)(((root % 12) + 12) % 12);
+    gEng.P.pat[p].scale = (uint8_t)(scale < 0 ? 0 : (scale >= NSCALES ? NSCALES - 1 : scale));
+}
+int  scNSpeeds()        { return NSPEEDS; }
+const char* scSpeedName(int i) { return (i >= 0 && i < NSPEEDS) ? SPEEDS[i].name : ""; }
+int  scNScales()        { return NSCALES; }
+const char* scScaleName(int i) { return (i >= 0 && i < NSCALES) ? SCALES[i].name : ""; }
+const char* scNoteName(int i)  { return NOTE_NAMES[((i % 12) + 12) % 12]; }
+int  scNDivs()          { return NDIVS; }
+const char* scDivName(int i)   { return (i >= 0 && i < NDIVS) ? DIVS[i].name : ""; }
+int  scDivValue(int i)  { return (i >= 0 && i < NDIVS) ? DIVS[i].div : 4; }
+// Eine Stufe in der Tonart des laufenden Patterns weiter - fuer die NOTE-Tasten.
+int  scScaleStep(int note, int dir) {
+    const Pattern& pt = gEng.P.pat[gEng.pat];
+    return scaleStep(note, pt.root, pt.scale, dir);
+}
+int  scScaleQuant(int note) {
+    const Pattern& pt = gEng.P.pat[gEng.pat];
+    return scaleQuant(note, pt.root, pt.scale);
+}
+int  scScaleHas(int note) {
+    const Pattern& pt = gEng.P.pat[gEng.pat];
+    return scaleHas(note, pt.root, pt.scale) ? 1 : 0;
+}
 
 // --- Performance-Ebene -----------------------------------------------------------------------
 void  scMute(int t, int on) { gEng.mute[t] = on != 0; }
@@ -283,7 +321,7 @@ void scLoad(const char* text) {
     gEng.pat = (p0 >= 0 && p0 < NPATTERNS) ? p0 : 0;
     gEng.patNext = -1; gEng.switchAt = -1;
     gEng.seq.toPattern(gEng.seq.pos);
-    gEng.seq.bpm = gEng.tempoOf(gEng.pat);
+    gEng.seq.bpm = gEng.effTempo(gEng.pat);
     gEng.resetTrackValues();
 }
 

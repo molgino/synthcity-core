@@ -203,6 +203,20 @@ footer {
 .semark button.on, #seZero.on, #seLoop.on { background: var(--amber); color: #15100a; border-color: var(--amber); }
 .semark button[data-m=a].on { background: var(--ok); border-color: var(--ok); color: #06231a; }
 .semark button[data-m=b].on { background: var(--lock); border-color: var(--lock); color: #230a17; }
+.padtitle { background: transparent; border: none; padding: 0; min-height: 34px; text-align: left;
+            text-decoration: underline dotted; text-underline-offset: 4px; cursor: pointer; }
+.pages { display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; margin-bottom: 6px; }
+.pages button { min-height: 30px; padding: 0; font-family: var(--mono); font-size: 11px; }
+.pages button.cur { background: var(--fg); color: var(--panel); border-color: var(--fg); }
+.pages button.spielt { box-shadow: inset 0 -3px 0 var(--amber); }
+.sk { display: grid; gap: 6px; }
+.sk h4 { margin: 10px 0 2px; font-size: 10px; letter-spacing: .14em; color: var(--dim); font-weight: 600; }
+.sk .chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.sk .chips button { min-height: 38px; padding: 0 10px; font-size: 12px; font-family: var(--mono); }
+.sk .chips button.cur { background: var(--amber); color: #15100a; border-color: var(--amber); }
+.sk .zahl { display: grid; grid-template-columns: 1fr 1fr 1.4fr 1fr 1fr; gap: 5px; align-items: center; }
+.sk .zahl span { text-align: center; font-family: var(--mono); font-size: 15px; }
+.sk .zahl button { min-height: 40px; padding: 0; font-family: var(--mono); }
 .finev { font-size: 34px; text-align: center; padding: 10px 0 2px; color: var(--fg); }
 .finebtns { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
 .finebtns button { min-height: 56px; font-size: 15px; font-family: var(--mono); padding: 0 4px; min-width: 0; }
@@ -349,11 +363,12 @@ textarea {
           <button class="tiny" id="sceneDone">FERTIG</button>
         </div>
         <div class="padhead">
-          <span class="lbl" id="padTitle">Spur 1 &middot; 16 Steps</span>
+          <button class="lbl padtitle" id="padTitle" aria-label="Skala einstellen">Spur 1 &middot; 16 Steps</button>
           <div class="spacer"></div>
           <button class="tiny" id="lenDn" aria-label="Spur kuerzer">&minus;</button>
           <button class="tiny" id="lenUp" aria-label="Spur laenger">+</button>
         </div>
+        <div class="pages" id="pages" hidden></div>
         <div class="padgrid" id="pads"></div>
       </div>
       <div class="params" id="params"></div>
@@ -377,6 +392,14 @@ textarea {
     <div class="lbl" id="pickTitle">Auswahl</div>
     <div class="sheet" id="pickList"></div>
     <button id="pickClose">ABBRECHEN</button>
+  </div>
+</dialog>
+
+<dialog id="skala">
+  <div class="dlg">
+    <div class="lbl" id="skTitle">Skala</div>
+    <div class="sk" id="skBody"></div>
+    <div style="display:flex;gap:8px"><div class="spacer"></div><button id="skClose">FERTIG</button></div>
   </div>
 </dialog>
 
@@ -491,6 +514,7 @@ let X = null;                 // der Kern im Hauptfaden: Modell, Texte, Speicher
 let ctx = null, node = null;  // der Kern im Audio-Faden
 let sel = 0, lockStep = -1, playing = false;
 let sceneEdit = -1;            // -1 = aus, 0 = Scene A, 1 = Scene B
+let page = 0;                  // welche 16 Steps die Pads zeigen
 let posSteps = new Array(8).fill(-1);
 let patNextView = -1;          // was der Klang-Kern in der Warteschlange hat
 let meterPeak = 0;
@@ -500,6 +524,12 @@ const el = id => document.getElementById(id);
 const machOf = t => X.scGet(t, P.find(p => p.id === 'trk.machine').slot);
 const ptext = (p, v) => {
   if (p.id === 'trk.smp') return X.scSmpFrames(v) ? str(X.scSmpName(v)) : (v + 1) + '  leer';
+  // Liegt die Note nicht in der Tonart, sagt die Anzeige, wohin sie einrastet.
+  if (p.id === 'trk.note' && X.scPatScale(X.scPattern()) > 0) {
+    const qs = P.find(q => q.id === 'trk.quant').slot;
+    if (X.scGet(sel, qs) > 0 && !X.scScaleHas(v))
+      return str(X.scParamText(p.i, v, -1)) + ' \u2192 ' + str(X.scParamText(p.i, X.scScaleQuant(v), -1));
+  }
   return str(X.scParamText(p.i, v, machOf(sel)));
 };
 // Wie die beiden Quellregler heissen, sagt die Machine - nicht die Tabelle.
@@ -680,6 +710,7 @@ function patMenu(i) {
     add('Pattern ' + (X.scPattern() + 1) + ' hierher kopieren',
         () => cmd('scPatCopy', X.scPattern(), i));
   add('leeren', () => cmd('scPatClear', i));
+  add('Skala und Tonart \u2026', () => setTimeout(() => skalaOpen(i), 0));
   el('pick').showModal();
 }
 
@@ -687,9 +718,12 @@ function buildPads() {
   const g = el('pads');
   g.innerHTML = '';
   g.style.setProperty('--c', HUE[sel]);
-  for (let s = 0; s < 16; s++) {
+  const seiten = Math.ceil(X.scTrackLen(sel) / 16);
+  if (page >= seiten) page = Math.max(0, seiten - 1);
+  for (let i = 0; i < 16; i++) {
+    const s = page * 16 + i;                           // der Step, den dieses Pad zeigt
     const p = document.createElement('div');
-    p.className = 'pad' + (s % 4 === 0 ? ' beat' : '');
+    p.className = 'pad' + (i % 4 === 0 ? ' beat' : '');
     p.dataset.s = s;
     p.innerHTML = `${s + 1}<span class="lk" hidden></span>`;
     let timer = null, moved = false, x0 = 0, y0 = 0;
@@ -713,6 +747,20 @@ function buildPads() {
     g.appendChild(p);
   }
   el('padTitle').textContent = `Spur ${sel + 1} \u00b7 ${X.scTrackLen(sel)} Steps`;
+  buildPages();
+}
+// Seiten nur, wenn die Spur laenger als 16 Steps ist.
+function buildPages() {
+  const box = el('pages');
+  const seiten = Math.ceil(X.scTrackLen(sel) / 16);
+  box.hidden = seiten <= 1;
+  box.innerHTML = '';
+  for (let k = 0; k < seiten; k++) {
+    const b = document.createElement('button');
+    b.textContent = (k * 16 + 1) + '\u2013' + Math.min(X.scTrackLen(sel), k * 16 + 16);
+    b.onclick = () => { page = k; buildPads(); };
+    box.appendChild(b);
+  }
 }
 function clearLocks(s) {
   for (const p of P) if (p.scope === 1) cmd('scLockClear', sel, s, p.slot);
@@ -851,7 +899,11 @@ function openFine(o) {
     b.textContent = label;
     let t1 = null, t2 = null;
     const stopp = () => { clearTimeout(t1); clearInterval(t2); t1 = t2 = null; };
-    const schritt = () => { fine.set(Math.max(fine.lo, Math.min(fine.hi, fine.get() + d))); fineShow(); };
+    const schritt = () => {
+      const jetzt = fine.get();
+      const neu = (fine.stufe && Math.abs(d) === 1) ? X.scScaleStep(jetzt, d) : jetzt + d;
+      fine.set(Math.max(fine.lo, Math.min(fine.hi, neu))); fineShow();
+    };
     b.addEventListener('pointerdown', ev => {
       ev.preventDefault(); schritt();
       t1 = setTimeout(() => { t2 = setInterval(schritt, 70); }, 400);
@@ -872,6 +924,8 @@ el('fineReset').onclick = () => { if (fine && fine.reset) { fine.reset(); fineSh
 
 function openFineParam(p) {
   const istNote = p.id === 'trk.note';
+  const qSlot = P.find(q => q.id === 'trk.quant').slot;
+  const stufen = istNote && X.scPatScale(X.scPattern()) > 0 && X.scGet(sel, qSlot) > 0;
   const lockMode = lockStep >= 0, sceneMode = sceneEdit >= 0;
   openFine({
     title: rowName(p) + (sceneMode ? '  \u00b7  SCENE ' + 'AB'[sceneEdit]
@@ -880,9 +934,14 @@ function openFineParam(p) {
     get: () => valueOf(p).v,
     set: v => writeValue(p, v),
     text: v => ptext(p, v),
-    steps: istNote ? [['\u2212OKT', -12], ['\u22121', -1], ['+1', 1], ['+OKT', 12]]
+    steps: istNote ? [['\u2212OKT', -12], [stufen ? '\u2212STUFE' : '\u22121', -1],
+                      [stufen ? '+STUFE' : '+1', 1], ['+OKT', 12]]
                    : [['\u221210', -10], ['\u22121', -1], ['+1', 1], ['+10', 10]],
-    hint: istNote ? 'Ein Schritt ist ein Halbton.' : '',
+    // In einer Tonart heisst "eine hoeher" die naechste Stufe der Leiter, nicht der naechste Halbton.
+    stufe: istNote && stufen,
+    hint: istNote ? (stufen ? 'Ein Schritt ist eine Stufe in ' + str(X.scNoteName(X.scPatRoot(X.scPattern()))) + ' '
+                              + str(X.scScaleName(X.scPatScale(X.scPattern()))).toLowerCase() + '.'
+                            : 'Ein Schritt ist ein Halbton.') : '',
     resetLabel: sceneMode ? 'SCENE-WERT ENTFERNEN' : lockMode ? 'LOCK ENTFERNEN' : 'GRUNDWERT',
     reset: () => {
       if (sceneMode) cmd('scSceneClear', sceneEdit, sel, p.slot);
@@ -951,14 +1010,20 @@ function paint() {
   }
   const len = X.scTrackLen(sel);
   const pads = el('pads').children;
-  for (let s = 0; s < pads.length; s++) {
+  const pgs = el('pages').children;
+  for (let k = 0; k < pgs.length; k++) {
+    pgs[k].classList.toggle('cur', k === page);
+    pgs[k].classList.toggle('spielt', playing && Math.floor(posSteps[sel] / 16) === k);
+  }
+  for (let i = 0; i < pads.length; i++) {
+    const s = page * 16 + i;
     const on = X.scStepGet(sel, s);
-    pads[s].classList.toggle('on', on === 1);
-    pads[s].classList.toggle('trigless', on === 2);
-    pads[s].classList.toggle('out', s >= len);
-    pads[s].classList.toggle('now', playing && posSteps[sel] === s);
-    pads[s].classList.toggle('held', s === lockStep);
-    pads[s].querySelector('.lk').hidden = X.scNLocks(sel, s) === 0;
+    pads[i].classList.toggle('on', on === 1);
+    pads[i].classList.toggle('trigless', on === 2);
+    pads[i].classList.toggle('out', s >= len);
+    pads[i].classList.toggle('now', playing && posSteps[sel] === s);
+    pads[i].classList.toggle('held', s === lockStep);
+    pads[i].querySelector('.lk').hidden = X.scNLocks(sel, s) === 0;
   }
   for (const row of el('params').querySelectorAll('.row')) {
     const p = P[+row.dataset.p];
@@ -983,7 +1048,9 @@ function paint() {
       row.children[1].appendChild(x);
     } else if (!locked && x) x.remove();
   }
-  el('padTitle').textContent = `Spur ${sel + 1} \u00b7 P${X.scPattern() + 1} \u00b7 ${len} Steps`;
+  const tonart = X.scPatScale(X.scPattern()) ? ' \u00b7 ' + str(X.scNoteName(X.scPatRoot(X.scPattern()))) + ' '
+                 + str(X.scScaleName(X.scPatScale(X.scPattern()))).toLowerCase() : '';
+  el('padTitle').textContent = `Spur ${sel + 1} \u00b7 P${X.scPattern() + 1} \u00b7 ${len} Steps${tonart}`;
   el('bpm').textContent = X.scTempoNow();
   el('bpm').classList.toggle('eigen', tempoEigen());
   el('bpmPat').classList.toggle('on', tempoEigen());
@@ -1030,9 +1097,66 @@ el('bpm').onclick = () => openFine({
                      : 'Gilt fuer alle Patterns ohne eigenes Tempo. Mit P bekommt das gewaehlte Pattern ein eigenes.',
   resetLabel: 'PROJEKTTEMPO', reset: tempoEigen() ? () => cmd('scSetPatBpm', X.scPattern(), 0) : null,
 });
-el('lenUp').onclick = () => cmd('scSetTrackLen', sel, Math.min(16, X.scTrackLen(sel) + 1));
-el('lenDn').onclick = () => cmd('scSetTrackLen', sel, Math.max(1, X.scTrackLen(sel) - 1));
+el('lenUp').onclick = () => { cmd('scSetTrackLen', sel, Math.min(128, X.scTrackLen(sel) + 1)); buildPads(); };
+el('lenDn').onclick = () => { cmd('scSetTrackLen', sel, Math.max(1, X.scTrackLen(sel) - 1)); buildPads(); };
 el('lockDone').onclick = closeLock;
+
+// --- Skala: Pattern und Spur ------------------------------------------------------------
+// Was ein Pattern vorgibt (Geschwindigkeit, Wechsellaenge, Tonart) und was eine Spur selbst
+// hat (Laenge, Teiler, ob sie der Tonart folgt) - in einem Fenster, oben das Pattern.
+function skalaOpen(pi) {
+  pi = pi === undefined ? X.scPattern() : pi;
+  el('skTitle').textContent = 'SKALA \u00b7 PATTERN ' + (pi + 1) + (pi === X.scPattern() ? ' \u00b7 SPUR ' + (sel + 1) : '');
+  const body = el('skBody');
+  body.innerHTML = '';
+  const kopf = t => { const h = document.createElement('h4'); h.textContent = t; body.appendChild(h); };
+  const chips = (namen, cur, fn) => {
+    const box = document.createElement('div'); box.className = 'chips';
+    namen.forEach((n, i) => {
+      const b = document.createElement('button'); b.textContent = n;
+      b.className = i === cur ? 'cur' : '';
+      b.onclick = () => { fn(i); skalaOpen(pi); paint(); };
+      box.appendChild(b);
+    });
+    body.appendChild(box);
+  };
+  const zahl = (wert, fn, lo, hi, einheit) => {
+    const box = document.createElement('div'); box.className = 'zahl';
+    for (const [t, d] of [['\u221216', -16], ['\u22121', -1], [null, 0], ['+1', 1], ['+16', 16]]) {
+      if (t === null) { const sp = document.createElement('span'); sp.textContent = wert + ' ' + einheit; box.appendChild(sp); continue; }
+      const b = document.createElement('button'); b.textContent = t;
+      b.onclick = () => { fn(Math.max(lo, Math.min(hi, wert + d))); skalaOpen(pi); buildPads(); };
+      box.appendChild(b);
+    }
+    body.appendChild(box);
+  };
+  const liste = (n, name) => { const a = []; for (let i = 0; i < n; i++) a.push(str(name(i))); return a; };
+
+  kopf('GESCHWINDIGKEIT');
+  chips(liste(X.scNSpeeds(), X.scSpeedName), X.scPatMult(pi), i => cmd('scSetPatMult', pi, i));
+  kopf('WECHSEL NACH');
+  zahl(X.scPatChg(pi), v => cmd('scSetPatChg', pi, v), 1, 128, 'Steps');
+  kopf('GRUNDTON');
+  chips(liste(12, X.scNoteName), X.scPatRoot(pi), i => cmd('scSetPatKey', pi, i, X.scPatScale(pi)));
+  kopf('TONLEITER');
+  chips(liste(X.scNScales(), X.scScaleName), X.scPatScale(pi), i => cmd('scSetPatKey', pi, X.scPatRoot(pi), i));
+
+  if (pi === X.scPattern()) {                           // die Spur gibt es nur im laufenden Pattern
+    kopf('SPUR ' + (sel + 1) + ' \u00b7 LAENGE');
+    zahl(X.scTrackLen(sel), v => cmd('scSetTrackLen', sel, v), 1, 128, 'Steps');
+    kopf('SPUR ' + (sel + 1) + ' \u00b7 TEILER');
+    const divs = [];
+    let curDiv = -1;
+    for (let i = 0; i < X.scNDivs(); i++) { divs.push(str(X.scDivName(i))); if (X.scDivValue(i) === X.scSpeed(sel)) curDiv = i; }
+    chips(divs, curDiv, i => cmd('scSetSpeed', sel, X.scDivValue(i)));
+    kopf('SPUR ' + (sel + 1) + ' \u00b7 FOLGT DER TONART');
+    const q = P.find(p => p.id === 'trk.quant');
+    chips(['AUS', 'AN'], X.scGet(sel, q.slot), i => cmd('scSet', sel, q.slot, i));
+  }
+  if (!el('skala').open) el('skala').showModal();
+}
+el('padTitle').onclick = () => skalaOpen();
+el('skClose').onclick = () => { el('skala').close(); buildPads(); buildParams(); };
 
 // --- Scenes bearbeiten -----------------------------------------------------------------------
 // A oder B antippen: ab jetzt landen Regler-Aenderungen in dieser Scene, fuer die gewaehlte

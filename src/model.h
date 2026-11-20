@@ -4,6 +4,7 @@
 #pragma once
 #include "param.h"
 #include "doc.h"
+#include "scale.h"
 
 enum { NTRACKS = 8, NSTEPS = 128, NPATTERNS = 16, NLOCKS = 12, NSCENES = 2, NSCLOCK = 16 };
 
@@ -64,6 +65,10 @@ struct Pattern {
     SceneTrack sc[NSCENES][NTRACKS];
     uint8_t used = 0;
     int16_t bpm = 0;            // eigenes Tempo; 0 = das des Projekts
+    uint8_t mult = SPEED_1X;    // Geschwindigkeit (Index in SPEEDS)
+    uint8_t chg = 16;           // nach so vielen Steps wechselt ein angewaehltes Pattern
+    uint8_t root = 0;           // Grundton 0..11 (C..B)
+    uint8_t scale = 0;          // Tonleiter (Index in SCALES), 0 = chromatisch
 };
 
 // Ein Song ist eine Kette: Pattern, wie oft, dann das naechste. Am Ende geht es vorn weiter.
@@ -89,7 +94,8 @@ inline void projectInit(Project& P) {
         if (d.scope == PS_GLOBAL) P.g[slot] = d.def;
     }
     for (int pi = 0; pi < NPATTERNS; pi++) {
-        P.pat[pi].used = 0; P.pat[pi].bpm = 0;
+        P.pat[pi].used = 0; P.pat[pi].bpm = 0; P.pat[pi].mult = SPEED_1X;
+        P.pat[pi].chg = 16; P.pat[pi].root = 0; P.pat[pi].scale = 0;
         for (int t = 0; t < NTRACKS; t++) {
             Track& tr = P.pat[pi].t[t];
             tr.len = 16; tr.speed = 4;
@@ -106,7 +112,7 @@ inline void projectInit(Project& P) {
 inline void patternClear(Project& P, int i) {
     if (i < 0 || i >= NPATTERNS) return;
     Pattern& pt = P.pat[i];
-    pt.used = 0; pt.bpm = 0;
+    pt.used = 0; pt.bpm = 0; pt.mult = SPEED_1X; pt.chg = 16; pt.root = 0; pt.scale = 0;
     for (int t = 0; t < NTRACKS; t++) {
         Track& tr = pt.t[t];
         tr.len = 16; tr.speed = 4;
@@ -165,6 +171,10 @@ inline void projectToDoc(const Project& P, Doc& d) {
         if (!pt.used) continue;
         snprintf(k, sizeof k, "pat.%d.used", pi); d.set(k, 1);
         if (pt.bpm) { snprintf(k, sizeof k, "pat.%d.bpm", pi); d.set(k, pt.bpm); }
+        if (pt.mult != SPEED_1X) { snprintf(k, sizeof k, "pat.%d.mult", pi); d.set(k, pt.mult); }
+        if (pt.chg != 16)  { snprintf(k, sizeof k, "pat.%d.chg", pi);   d.set(k, pt.chg); }
+        if (pt.root)       { snprintf(k, sizeof k, "pat.%d.root", pi);  d.set(k, pt.root); }
+        if (pt.scale)      { snprintf(k, sizeof k, "pat.%d.scale", pi); d.set(k, pt.scale); }
         for (int t = 0; t < NTRACKS; t++) {
             const Track& tr = pt.t[t];
             if (tr.len != 16)  { snprintf(k, sizeof k, "pat.%d.trk.%d.len", pi, t);   d.set(k, tr.len); }
@@ -232,6 +242,15 @@ inline void projectFromDoc(const Doc& d, Project& P) {
         snprintf(k, sizeof k, "pat.%d.bpm", pi);
         int pb = d.get(k, 0);
         pt.bpm = (int16_t)(pb < 0 ? 0 : (pb > 300 ? 300 : pb));
+        auto lies = [&](const char* name, int def, int lo, int hi) {
+            snprintf(k, sizeof k, "pat.%d.%s", pi, name);
+            int v = d.get(k, def);
+            return (uint8_t)(v < lo ? lo : (v > hi ? hi : v));
+        };
+        pt.mult  = lies("mult", SPEED_1X, 0, NSPEEDS - 1);
+        pt.chg   = lies("chg", 16, 1, NSTEPS);
+        pt.root  = lies("root", 0, 0, 11);
+        pt.scale = lies("scale", 0, 0, NSCALES - 1);
         for (int t = 0; t < NTRACKS; t++) {
             Track& tr = pt.t[t];
             snprintf(k, sizeof k, "pat.%d.trk.%d.len", pi, t);   tr.len = (uint8_t)d.get(k, 16);

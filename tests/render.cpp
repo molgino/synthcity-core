@@ -841,6 +841,68 @@ int main() {
         e.pat = 0;
     }
 
+    grp("Skala: Geschwindigkeit, Wechsellaenge, Teiler, Tonart");
+    {
+        auto zaehle = [&](int bloecke) { uint64_t c0 = e.clock; static float bb[512 * 2];
+                                         for (int k = 0; k < bloecke; k++) e.render(bb, 512);
+                                         return (int)(e.clock - c0); };
+        // 2x: doppelt so viele Anschlaege je Sekunde
+        e.prepare(48000.0f);
+        projectInit(e.P); e.P.pat[0].used = 1; e.pat = 0;
+        for (int s = 0; s < 16; s++) e.P.pat[0].t[0].s[s].on = 1;
+        e.P.pat[0].mult = 6;                                  // 2x
+        e.start();
+        zaehle(10);
+        int n2 = zaehle(94);                                  // ~1 s
+        chk(n2 >= 15 && n2 <= 17, "2x laeuft nicht doppelt so schnell");
+
+        // Umschalten im Lauf: kein Nachholen
+        e.P.pat[0].mult = SPEED_1X; e.setTempo(e.effTempo(0));
+        chk(zaehle(1) <= 1, "Geschwindigkeit umschalten feuert mehrere Anschlaege");
+        int n1 = zaehle(94);
+        chk(n1 >= 7 && n1 <= 9, "nach dem Umschalten nicht wieder 1x");
+
+        // Teiler einer Spur im Lauf: kein Nachholen, danach das neue Raster
+        e.setDiv(0, 8);                                       // 1/32
+        chk(zaehle(1) <= 1, "Teiler umschalten feuert mehrere Anschlaege");
+        int n32 = zaehle(94);
+        chk(n32 >= 15 && n32 <= 17, "1/32 laeuft nicht doppelt so dicht wie 1/16");
+
+        // Wechsellaenge 8: ein angewaehltes Pattern kommt nach 8 Sechzehnteln
+        e.prepare(48000.0f);
+        projectInit(e.P);
+        for (int p = 0; p < 2; p++) { e.P.pat[p].used = 1; e.P.pat[p].t[0].s[0].on = 1; }
+        e.P.pat[0].chg = 8;
+        e.pat = 0; e.start();
+        e.queuePattern(1);
+        chk(e.switchAt == 48000, "Wechsellaenge 8 wechselt nicht nach 8 Sechzehnteln");
+
+        // Tonart: C-Dur, die Spur spielt C# - es klingt C. Ohne SKALA bleibt es C#.
+        const int N = 24000;
+        static float a[24000 * 2];
+        for (int k = 0; k < 2; k++) {
+            e.prepare(48000.0f); setupBeat(e, 61);            // C#4
+            e.P.pat[0].scale = 1; e.P.pat[0].root = 0;        // C-Dur
+            Track& t = e.P.pat[0].t[0];
+            t.p[SL("trk.flt.freq")] = 127; t.p[SL("trk.amp.sus")] = 100;
+            t.p[SL("trk.amp.dec")] = 127; t.p[SL("trk.len")] = 127;
+            t.p[SL("trk.quant")] = (int16_t)(k == 0 ? 1 : 0);
+            e.start(); e.render(a, N);
+            float c = bin(a, N, 261.63f, 48000.0f), cis = bin(a, N, 277.18f, 48000.0f);
+            if (k == 0) chk(c > cis * 4.0f, "in C-Dur rastet C# nicht auf C ein");
+            else        chk(cis > c * 4.0f, "ohne SKALA wird trotzdem eingerastet");
+        }
+
+        // Im Dokument
+        e.P.pat[3].used = 1; e.P.pat[3].mult = 2; e.P.pat[3].chg = 12;
+        e.P.pat[3].root = 9; e.P.pat[3].scale = 9;
+        static Doc d; d.clear(); projectToDoc(e.P, d);
+        static Project Q; projectFromDoc(d, Q);
+        chk(Q.pat[3].mult == 2 && Q.pat[3].chg == 12 && Q.pat[3].root == 9 && Q.pat[3].scale == 9,
+            "die Skala ueberlebt das Dokument nicht");
+        e.pat = 0;
+    }
+
     grp("Referenz-Aufnahme");
     {
         const int N = 96000;                         // zwei Sekunden

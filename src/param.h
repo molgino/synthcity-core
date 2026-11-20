@@ -48,6 +48,7 @@ static const ParamDef PARAMS[] = {
     {"trk.cond",     "COND",   PS_TRACK,  PK_COND,    0, 255,   0, "",    PF_LOCK},
     {"trk.micro",    "MTIM",   PS_TRACK,  PK_BIP,     0,  48,  24, "",    PF_LOCK},
     {"trk.ratchet",  "RTRG",   PS_TRACK,  PK_NUM,     1,   8,   1, "",    PF_LOCK},
+    {"trk.quant",    "SKALA",  PS_TRACK,  PK_ONOFF,   0,   1,   1, "",    PF_LOCK},
     // --- Spur: Quelle ---
     {"trk.machine",  "ENGINE", PS_TRACK,  PK_ENUM,    0,  15,   0, "",    0},
     {"trk.smp",      "SAMPLE", PS_TRACK,  PK_ENUM,    0,  63,   0, "",    PF_LOCK},

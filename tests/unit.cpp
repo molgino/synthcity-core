@@ -264,6 +264,27 @@ static void testSampleDoc() {
     CHECK(pool.s[2].n == 32 && !pool.wanted(2), "ein vorhandenes Sample wird weggeworfen");
 }
 
+// Tonart: einrasten und stufenweise gehen.
+static void testScale() {
+    curCase = "Tonart";
+    const int DUR = 1, PMOLL = 9;
+    CHECK(scaleQuant(60, 0, DUR) == 60, "C liegt nicht in C-Dur");
+    CHECK(scaleQuant(61, 0, DUR) == 60, "C# rastet nicht auf C ein (Gleichstand: der tiefere)");
+    CHECK(scaleQuant(66, 0, DUR) == 65, "F# rastet nicht auf F ein");
+    CHECK(scaleQuant(61, 0, 0) == 61, "chromatisch rastet etwas ein");
+    CHECK(scaleStep(64, 0, DUR, +1) == 65, "von E eine Stufe hoch ist nicht F");
+    CHECK(scaleStep(60, 0, DUR, -1) == 59, "von C eine Stufe runter ist nicht H");
+    CHECK(scaleStep(57, 9, PMOLL, +1) == 60, "A-Moll-Pentatonik: von A hoch ist nicht C");
+    CHECK(scaleStep(60, 0, 0, +1) == 61, "chromatisch ist eine Stufe kein Halbton");
+    // Jede Tonleiter: einrasten liefert immer einen Ton der Leiter, auch in anderen Tonarten
+    bool alle = true;
+    for (int sc = 0; sc < NSCALES; sc++)
+        for (int root = 0; root < 12; root++)
+            for (int n = 20; n < 110; n++)
+                if (!scaleHas(scaleQuant(n, root, sc), root, sc)) alle = false;
+    CHECK(alle, "einrasten liefert einen Ton ausserhalb der Leiter");
+}
+
 static void testQueue() {
     curCase = "Befehls-Warteschlange";
     Queue<8> q;
@@ -283,6 +304,7 @@ int main() {
     testRatchet();
     testScenes();
     testSampleDoc();
+    testScale();
     testQueue();
     printf("%s: %d Pruefungen ok, %d Fehler\n", fail ? "FEHLGESCHLAGEN" : "OK", pass, fail);
     return fail ? 1 : 0;

@@ -5,7 +5,7 @@ Konzept: `../r36-groovebox/docs/konzept-neu.md`.
 
 Kein Framework, keine Abhängigkeiten, keine STL-Container im Kern — C++17 und fertig.
 
-## Stand: Meilenstein 11 — Samples trimmen und loopen
+## Stand: Meilenstein 12 — Skala und Tonart pro Pattern
 
 | Baustein | Datei | Zustand |
 | --- | --- | --- |
@@ -20,6 +20,7 @@ Kein Framework, keine Abhängigkeiten, keine STL-Container im Kern — C++17 und
 | 16 Patterns, Wechsel im Takt, kopieren und leeren | `src/engine.h`, `src/model.h` | steht |
 | Song: Kette aus Patterns mit Wiederholungen | `src/engine.h`, `src/model.h` | steht |
 | Sample-Ausschnitt und Schleife, samplegenau; Editor mit Wellenform | `src/sample.h`, `web/` | steht |
+| Skala je Pattern (Geschwindigkeit, Wechsellänge), Tonart, Spurlänge bis 128 | `src/scale.h` | steht |
 | Dokument mit Namen (nicht nur Zahlen) | `src/doc.h` | steht |
 | Sende-Effekte: Delay im Takt, Hall (FDN) | `src/fx.h` | steht |
 | Stimmen, Filter, Hüllkurve, Panorama, Summe | `src/engine.h` | steht |
@@ -73,6 +74,25 @@ alle schon vergangenen k plötzlich woanders, und der Sequencer holt sie nach. `
 verschiebt deshalb den Ursprung so, dass die *aktuelle* Position im Takt gleich bleibt, und
 rechnet alles schon Geplante mit um. Jeder Tempowechsel — Knopf, Pattern, Host — läuft jetzt
 darüber; ein Mutationstest ohne das Umrechnen wird rot.
+
+## Skala und Tonart
+
+Zwei Dinge, die beide „Skala" heißen. Die **Skala im Elektron-Sinn** gehört dem Pattern:
+eine **Geschwindigkeit** (1/8× bis 2×) und eine **Wechsellänge** — nach wie vielen Steps ein
+angewähltes Pattern übernimmt. Je Spur kommen **Länge** (bis 128 Steps, in Seiten zu 16) und
+**Teiler** (1/4 bis 1/32, auch triolisch) dazu.
+
+Für den Sequencer ist eine andere Geschwindigkeit dasselbe wie ein anderes Tempo — darum läuft
+sie durch dasselbe `setTempo` und springt nicht. Ein Teiler, der im Lauf wechselt, setzt dort
+fort, wo die Spur auf dem neuen Raster gerade steht, statt Steps nachzuholen. Das Echo bleibt
+am *musikalischen* Tempo, nicht am beschleunigten.
+
+Die **Tonart** gehört auch dem Pattern: Grundton und Tonleiter (Dur, Moll, Kirchentonarten,
+Pentatonik, Blues). Spuren mit **SKALA an** rasten ihre Noten beim Anschlag auf den nächsten Ton
+der Leiter ein — bei Gleichstand auf den tieferen. Im Feinwert-Fenster heißt „eine Note höher"
+dann **+STUFE**: die nächste Stufe der Leiter, nicht der nächste Halbton. Liegt eine Note nicht
+in der Leiter, zeigt die Zeile, wohin sie einrastet (`C#4 → C4`). Ein Test prüft für jede
+Leiter in allen zwölf Tonarten, dass Einrasten nie einen Ton außerhalb liefert.
 
 ## Genaue Werte per Touch
 

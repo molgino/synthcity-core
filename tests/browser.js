@@ -280,6 +280,48 @@ const stummMuster = async p => {
     await p.locator('#sceneDone').tap();
   }
 
+  grp('Skala: Geschwindigkeit, Laenge, Seiten, Tonart');
+  {
+    if ((await p.locator('#play').textContent()).trim() === 'STOP') await p.locator('#play').click();
+    await p.locator('.pt').nth(0).tap(); await p.waitForTimeout(150);
+    await p.locator('.trk').nth(0).locator('.nm').tap(); await p.waitForTimeout(150);
+    await p.locator('#padTitle').tap(); await p.waitForTimeout(250);
+    chk(await p.locator('#skala').isVisible(), 'ein Tipp auf den Titel oeffnet die Skala nicht');
+    const chip = (titel, text) => p.locator('#skBody h4', {hasText: titel}).locator('xpath=following-sibling::div[1]').locator('button', {hasText: text}).first();
+    await chip('GESCHWINDIGKEIT', '2x').tap(); await p.waitForTimeout(150);
+    chk(await chip('GESCHWINDIGKEIT', '2x').evaluate(e => e.classList.contains('cur')), '2x ist nicht gewaehlt');
+    await chip('GESCHWINDIGKEIT', '1x').tap();
+    await chip('TONLEITER', 'DUR').tap(); await p.waitForTimeout(150);
+    // Spur 1 auf 32 Steps: +16
+    const lang = p.locator('#skBody h4', {hasText: 'LAENGE'}).locator('xpath=following-sibling::div[1]').locator('button', {hasText: '+16'});
+    await lang.tap(); await p.waitForTimeout(150);
+    await chip('TEILER', '1/8').tap(); await p.waitForTimeout(150);
+    chk(await chip('TEILER', '1/8').evaluate(e => e.classList.contains('cur')), 'der Teiler ist nicht gewaehlt');
+    await p.locator('#skClose').tap(); await p.waitForTimeout(250);
+    chk((await p.locator('#padTitle').textContent()).includes('32 Steps'), 'die Spur ist nicht 32 Steps lang');
+    chk((await p.locator('#padTitle').textContent()).toLowerCase().includes('c dur'), 'der Titel nennt die Tonart nicht');
+    chk(await p.locator('#pages').isVisible() && await p.locator('#pages button').count() === 2, 'keine zwei Seiten');
+    await p.locator('#pages button').nth(1).tap(); await p.waitForTimeout(150);
+    chk((await p.locator('.pad').first().textContent()).trim().startsWith('17'), 'Seite 2 zeigt nicht Step 17');
+    await p.locator('#pages button').nth(0).tap();
+    // NOTE in Tonleiterstufen: von C4 eine Stufe hoch ist D4
+    const note = p.locator('.row', {hasText: 'trk.note'});
+    await note.scrollIntoViewIfNeeded(); await note.tap(); await p.waitForTimeout(200);
+    await p.locator('#fineReset').tap(); await p.waitForTimeout(100);              // C4
+    chk((await p.locator('#fineBtns button').nth(2).textContent()).trim() === '+STUFE', 'in einer Tonart heisst die Taste nicht +STUFE');
+    await p.locator('#fineBtns button').nth(2).tap(); await p.waitForTimeout(150);
+    chk((await p.locator('#fineVal').textContent()).trim() === 'D4', 'eine Stufe ueber C4 ist nicht D4');
+    await p.locator('#fineBtns button').nth(2).tap(); await p.waitForTimeout(150);
+    chk((await p.locator('#fineVal').textContent()).trim() === 'E4', 'zwei Stufen ueber C4 ist nicht E4');
+    await p.locator('#fineClose').tap(); await p.waitForTimeout(150);
+    // Zuruecksetzen fuer die folgenden Gruppen
+    await p.locator('#padTitle').tap(); await p.waitForTimeout(200);
+    await chip('TONLEITER', 'CHROMATISCH').tap();
+    await p.locator('#skBody h4', {hasText: 'LAENGE'}).locator('xpath=following-sibling::div[1]').locator('button', {hasText: '\u221216'}).tap();
+    await chip('TEILER', '1/16').tap();
+    await p.locator('#skClose').tap(); await p.waitForTimeout(200);
+  }
+
   grp('Tempo je Pattern');
   {
     const bpm = async () => +(await p.locator('#bpm').textContent()).trim();
