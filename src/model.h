@@ -70,7 +70,18 @@ struct Pattern {
     uint8_t chg = 16;           // nach so vielen Steps wechselt ein angewaehltes Pattern
     uint8_t root = 0;           // Grundton 0..11 (C..B)
     uint8_t scale = 0;          // Tonleiter (Index in SCALES), 0 = chromatisch
+    // FX-Spur: eigener Sequencer fuer die Projekt-Effekte. Ihre Steps sind trigless und locken
+    // globale Werte (Delay, Reverb, Master) - Lock-Slots sind hier GLOBALE Slots.
+    Track fx;
 };
+// Darf die FX-Spur diesen Projektwert locken? Effekte und Master ja, Tempo und Swing nicht.
+inline bool fxLockable(int i) {
+    return PARAMS[i].scope == PS_GLOBAL && (!strncmp(PARAMS[i].id, "fx.", 3) || !strncmp(PARAMS[i].id, "master.", 7));
+}
+inline void fxTrackClear(Track& f) {
+    f.len = 16; f.speed = 4;
+    for (int s = 0; s < NSTEPS; s++) { f.s[s].on = 0; f.s[s].nLock = 0; }
+}
 
 // Ein Song ist eine Kette: Pattern, wie oft, dann das naechste. Am Ende geht es vorn weiter.
 enum { NSONG = 64 };
@@ -106,6 +117,7 @@ inline void projectInit(Project& P) {
         }
         for (int k = 0; k < NSCENES; k++)
             for (int t = 0; t < NTRACKS; t++) P.pat[pi].sc[k][t].n = 0;
+        fxTrackClear(P.pat[pi].fx);
     }
 }
 
@@ -122,6 +134,7 @@ inline void patternClear(Project& P, int i) {
         for (int s = 0; s < NSTEPS; s++) { tr.s[s].on = 0; tr.s[s].nLock = 0; }
         for (int k = 0; k < NSCENES; k++) pt.sc[k][t].n = 0;
     }
+    fxTrackClear(pt.fx);
 }
 // Hat das Pattern irgendeinen Trig oder Lock? Dann gehoert es ins Dokument, auch wenn
 // niemand es als benutzt markiert hat.
@@ -129,6 +142,7 @@ inline bool patternHasSteps(const Pattern& pt) {
     for (int t = 0; t < NTRACKS; t++)
         for (int s = 0; s < NSTEPS; s++)
             if (pt.t[t].s[s].on || pt.t[t].s[s].nLock) return true;
+    for (int s = 0; s < NSTEPS; s++) if (pt.fx.s[s].nLock) return true;
     return false;
 }
 
@@ -224,6 +238,21 @@ inline void projectToDoc(const Project& P, Doc& d) {
                 }
             }
         }
+        // FX-Spur: pat.N.fx.len, pat.N.fx.st.S = 2, pat.N.fx.st.S.fx.a.fb = 80
+        const Track& f = pt.fx;
+        if (f.len != 16)  { snprintf(k, sizeof k, "pat.%d.fx.len", pi);   d.set(k, f.len); }
+        if (f.speed != 4) { snprintf(k, sizeof k, "pat.%d.fx.speed", pi); d.set(k, f.speed); }
+        for (int s = 0; s < NSTEPS; s++) {
+            const Step& st = f.s[s];
+            if (!st.nLock) continue;
+            snprintf(k, sizeof k, "pat.%d.fx.st.%d", pi, s); d.set(k, 2);
+            for (int li = 0; li < st.nLock; li++) {
+                int pIdx = paramOfSlot(PS_GLOBAL, st.lock[li].slot);
+                if (pIdx < 0) continue;
+                snprintf(k, sizeof k, "pat.%d.fx.st.%d.%s", pi, s, PARAMS[pIdx].id);
+                d.set(k, st.lock[li].val);
+            }
+        }
     }
 }
 
@@ -297,6 +326,22 @@ inline void projectFromDoc(const Doc& d, Project& P) {
                     char k2[DOC_KEY]; docKeyStep(k2, sizeof k2, pi, t, s, sub2);
                     st.setLock(paramSlot(i), (int16_t)v, (uint8_t)d.get(k2, 0));
                 }
+            }
+        }
+        {   // FX-Spur
+            Track& f = pt.fx;
+            fxTrackClear(f);
+            snprintf(k, sizeof k, "pat.%d.fx.len", pi);   f.len = (uint8_t)d.get(k, 16);
+            snprintf(k, sizeof k, "pat.%d.fx.speed", pi); f.speed = (uint8_t)d.get(k, 4);
+            for (int s = 0; s < NSTEPS; s++) {
+                snprintf(k, sizeof k, "pat.%d.fx.st.%d", pi, s);
+                if (!d.get(k, 0)) continue;
+                for (int i = 0; i < NPARAMS; i++) {
+                    if (!fxLockable(i)) continue;
+                    snprintf(k, sizeof k, "pat.%d.fx.st.%d.%s", pi, s, PARAMS[i].id);
+                    if (d.has(k)) f.s[s].setLock(paramSlot(i), (int16_t)d.get(k, 0), 0);
+                }
+                if (f.s[s].nLock) f.s[s].on = 2;
             }
         }
     }

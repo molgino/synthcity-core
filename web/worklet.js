@@ -94,7 +94,7 @@ class SynthCityNode extends AudioWorkletProcessor {
     if (currentTime - this.lastPost > 0.04) {     // Zeigerstand hoechstens 25-mal je Sekunde
       this.lastPost = currentTime;
       const steps = [];
-      for (let t = 0; t < 8; t++) steps.push(this.x.scPlayStep(t));
+      for (let t = 0; t <= 8; t++) steps.push(this.x.scPlayStep(t));   // 8 = FX-Spur
       this.port.postMessage({type: 'pos', steps, peak: this.peak,
                              pat: this.x.scPattern(), next: this.x.scPatNext(),
                              songOn: this.x.scSongOn(), songPos: this.x.scSongPos()});

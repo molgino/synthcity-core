@@ -56,6 +56,7 @@ static Pattern& WP(int p) { gEng.P.pat[p].used = 1; return gEng.P.pat[p]; }
 // --- Werte ------------------------------------------------------------------------------------
 int  scGet(int track, int slot) {
     if (track < 0) return gEng.P.g[slot];
+    if (track >= NTRACKS) return 0;                 // die FX-Spur hat keine eigenen Grundwerte
     return gEng.P.pat[gEng.pat].t[track].p[slot];
 }
 void scSet(int track, int slot, int v) {
@@ -63,44 +64,52 @@ void scSet(int track, int slot, int v) {
         gEng.P.g[slot] = (int16_t)v;
         // Das Projekttempo gilt nur, wo das Pattern kein eigenes hat.
         if (slot == paramSlot(paramFind("bpm"))) gEng.setTempo(gEng.effTempo(gEng.pat));
-    } else W().t[track].p[slot] = (int16_t)v;
+    } else if (track < NTRACKS) W().t[track].p[slot] = (int16_t)v;
 }
 
 // Machine wechseln: die beiden Quellregler fangen bei den Grundwerten DIESER Machine an.
 void scSetMachine(int t, int m) { machineSelect(W().t[t].p, m); }
 
 // --- Steps und Locks ---------------------------------------------------------------------------
-int  scStepGet(int t, int s) { return gEng.P.pat[gEng.pat].t[t].s[s].on; }
-void scStepSet(int t, int s, int on) { W().t[t].s[s].on = (uint8_t)on; }
-int  scNLocks(int t, int s) { return gEng.P.pat[gEng.pat].t[t].s[s].nLock; }
-int  scLockSlot(int t, int s, int i) { return gEng.P.pat[gEng.pat].t[t].s[s].lock[i].slot; }
-int  scLockVal(int t, int s, int i)  { return gEng.P.pat[gEng.pat].t[t].s[s].lock[i].val; }
-int  scLockSlide(int t, int s, int i){ return gEng.P.pat[gEng.pat].t[t].s[s].lock[i].slide; }
+// Spur NTRACKS (8) ist die FX-Spur des Patterns: dieselben Aufrufe, Lock-Slots sind dort global.
+static Track& TR(int t)  { Pattern& pt = gEng.P.pat[gEng.pat]; return t == NTRACKS ? pt.fx : pt.t[t]; }
+static Track& TRW(int t) { Pattern& pt = W(); return t == NTRACKS ? pt.fx : pt.t[t]; }
+int  scFxTrack() { return NTRACKS; }
+int  scStepGet(int t, int s) { return TR(t).s[s].on; }
+void scStepSet(int t, int s, int on) { TRW(t).s[s].on = (uint8_t)(t == NTRACKS && on ? 2 : on); }
+int  scNLocks(int t, int s) { return TR(t).s[s].nLock; }
+int  scLockSlot(int t, int s, int i) { return TR(t).s[s].lock[i].slot; }
+int  scLockVal(int t, int s, int i)  { return TR(t).s[s].lock[i].val; }
+int  scLockSlide(int t, int s, int i){ return TR(t).s[s].lock[i].slide; }
 // -32768 = dieser Step hat keinen eigenen Wert fuer diesen Regler
 int  scLockGet(int t, int s, int slot) {
-    const Lock* l = gEng.P.pat[gEng.pat].t[t].s[s].findLock(slot);
+    const Lock* l = TR(t).s[s].findLock(slot);
     return l ? l->val : -32768;
 }
 void scLockSet(int t, int s, int slot, int v, int slide) {
-    W().t[t].s[s].setLock(slot, (int16_t)v, (uint8_t)slide);
+    Step& st = TRW(t).s[s];
+    st.setLock(slot, (int16_t)v, (uint8_t)(t == NTRACKS ? 0 : slide));
+    if (t == NTRACKS) st.on = 2;
 }
 void scLockClear(int t, int s, int slot) {
-    Step& st = W().t[t].s[s];
+    Step& st = TRW(t).s[s];
     for (int i = 0; i < st.nLock; i++)
-        if (st.lock[i].slot == slot) { st.lock[i] = st.lock[--st.nLock]; return; }
+        if (st.lock[i].slot == slot) { st.lock[i] = st.lock[--st.nLock]; break; }
+    if (t == NTRACKS && !st.nLock) st.on = 0;
 }
 
 // --- Spur ----------------------------------------------------------------------------------------
-int  scTrackLen(int t)   { return gEng.P.pat[gEng.pat].t[t].len; }
-void scSetTrackLen(int t, int n) { W().t[t].len = (uint8_t)(n < 1 ? 1 : n > NSTEPS ? NSTEPS : n); }
-int  scSpeed(int t)      { return gEng.P.pat[gEng.pat].t[t].speed; }
-void scSetSpeed(int t, int n) { W(); gEng.setDiv(t, n); }
+int  scTrackLen(int t)   { return TR(t).len; }
+void scSetTrackLen(int t, int n) { TRW(t).len = (uint8_t)(n < 1 ? 1 : n > NSTEPS ? NSTEPS : n); }
+int  scSpeed(int t)      { return TR(t).speed; }
+void scSetSpeed(int t, int n) { if (t == NTRACKS) { TRW(t).speed = (uint8_t)n; return; } W(); gEng.setDiv(t, n); }
 int  scNTracks() { return NTRACKS; }
 int  scNSteps()  { return NSTEPS; }
 
 // Wo steht der Zeiger gerade? Aus der Sample-Position gerechnet, nicht mitgezaehlt.
 int scPlayStep(int t) {
     if (!gEng.seq.running) return -1;
+    if (t == NTRACKS) return gEng.fxStepNow();
     const Track& tr = gEng.P.pat[gEng.pat].t[t];
     double sp = gEng.seq.stepLen(tr);
     if (sp < 1.0) return -1;
@@ -132,7 +141,7 @@ void scSetPattern(int p) {
 // Quelle geschieht, aendert die Ablage nicht mehr.
 static Pattern gClipPat;  static int gHasPat = 0;
 static Track   gClipTrk;  static int gHasTrk = 0;
-static Step    gClipStep; static int gHasStep = 0;
+static Step    gClipStep; static int gHasStep = 0; static bool gClipStepFx = false;
 void scClipPat(int p)   { if (p < 0 || p >= NPATTERNS) return; gClipPat = gEng.P.pat[p]; gHasPat = 1; }
 int  scHasClipPat()     { return gHasPat; }
 void scPastePat(int p) {
@@ -151,18 +160,19 @@ void scPasteTrack(int t, int mode) {
     if (mode == 1) gEng.resetTrackValues();
 }
 void scClearTrigs(int t) {
-    if (t < 0 || t >= NTRACKS) return;
-    Track& tr = W().t[t];
+    if (t < 0 || t > NTRACKS) return;
+    Track& tr = TRW(t);
     for (int s = 0; s < NSTEPS; s++) { tr.s[s].on = 0; tr.s[s].nLock = 0; }
 }
 void scClipStep(int t, int s) {
-    if (t < 0 || t >= NTRACKS || s < 0 || s >= NSTEPS) return;
-    gClipStep = gEng.P.pat[gEng.pat].t[t].s[s]; gHasStep = 1;
+    if (t < 0 || t > NTRACKS || s < 0 || s >= NSTEPS) return;
+    gClipStep = TR(t).s[s]; gHasStep = 1; gClipStepFx = t == NTRACKS;
 }
 int  scHasClipStep()    { return gHasStep; }
 void scPasteStep(int t, int s) {
-    if (!gHasStep || t < 0 || t >= NTRACKS || s < 0 || s >= NSTEPS) return;
-    W().t[t].s[s] = gClipStep;
+    if (!gHasStep || t < 0 || t > NTRACKS || s < 0 || s >= NSTEPS) return;
+    if ((t == NTRACKS) != gClipStepFx) return;         // Spur-Locks passen nicht auf die FX-Spur
+    TRW(t).s[s] = gClipStep;
 }
 int  scPatUsed(int p)   { return (p >= 0 && p < NPATTERNS) ? gEng.P.pat[p].used : 0; }
 void scPatCopy(int a, int b) { patternCopy(gEng.P, a, b); }
@@ -260,8 +270,8 @@ int  scScaleHas(int note) {
 }
 
 // --- Performance-Ebene -----------------------------------------------------------------------
-void  scMute(int t, int on) { gEng.mute[t] = on != 0; }
-int   scIsMute(int t)       { return gEng.mute[t] ? 1 : 0; }
+void  scMute(int t, int on) { if (t >= 0 && t < NTRACKS) gEng.mute[t] = on != 0; }
+int   scIsMute(int t)       { return (t >= 0 && t < NTRACKS && gEng.mute[t]) ? 1 : 0; }
 void  scSetMorph(float v)   { gEng.morph = v; }
 float scGetMorph()          { return gEng.morph; }
 void  scFill(int on)        { gEng.seq.fill = on != 0; }

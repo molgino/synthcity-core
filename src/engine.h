@@ -182,6 +182,7 @@ struct Engine : Sink {
     float    sr = 48000.0f;
     int      pat = 0;
     uint64_t clock = 0;
+    int      fxStep = -1;       // zuletzt gespielter Step der FX-Spur (fuer die Anzeige)
 
     // --- Performance-Ebene: wirkt sofort, steht in keiner Datei ---------------------------
     bool  mute[NTRACKS] = {false};
@@ -608,13 +609,34 @@ struct Engine : Sink {
         }
     }
 
+    // Welcher Step der FX-Spur gilt gerade? -1: keiner (gestoppt) - dann gelten die Grundwerte.
+    int fxStepNow() const {
+        if (!seq.running) return -1;
+        const Track& f = P.pat[pat].fx;
+        double sp = seq.stepLen(f);
+        if (sp < 1.0 || seq.pos < seq.origin) return -1;
+        int64_t k = (int64_t)((double)(seq.pos - seq.origin) / sp);
+        int len = f.len < 1 ? 1 : f.len;
+        return (int)(k % len);
+    }
+    // Projektwert, wie er JETZT klingt: Lock der FX-Spur, sonst der Grundwert.
+    int16_t gNow(int slot, int fxStep) const {
+        if (fxStep >= 0) {
+            const Lock* l = P.pat[pat].fx.s[fxStep].findLock(slot);
+            if (l) return l->val;
+        }
+        return P.g[slot];
+    }
+
     void renderPart(float* out, int frames) {
         for (int i = 0; i < frames * 2; i++) out[i] = 0.0f;
         nq = 0;
+        const int fs = fxStepNow();                   // am Blockanfang - Effekte sind traege genug
+        fxStep = fs;
         seq.swing = swingOf(pat) / 100.0;
         seq.process(P, pat, frames, *this);
         updateLive();
-        float master = pLevel(P.g[paramSlot(paramFind("master.vol"))]);
+        float master = pLevel(gNow(paramSlot(paramFind("master.vol")), fs));
 
         // Effekte: Einstellungen einmal je Block, nicht je Sample.
         static const int sDiv  = paramSlot(paramFind("fx.a.div"));
@@ -625,13 +647,13 @@ struct Engine : Sink {
         static const int sDec  = paramSlot(paramFind("fx.b.dec"));
         static const int sDamp = paramSlot(paramFind("fx.b.damp"));
         static const int sBVol = paramSlot(paramFind("fx.b.vol"));
-        delay.setTime(P.g[sDiv], (float)tempoOf(pat), sr);   // Echo am musikalischen Tempo
-        reverb.setSize(pUni(P.g[sSize]), sr);
-        float fb   = pUni(P.g[sFb]) * 0.95f;
-        float tone = pUni(P.g[sTone]);
-        float dec  = 0.3f + pUni(P.g[sDec]) * 0.69f;
-        float damp = pUni(P.g[sDamp]);
-        float aVol = pLevel(P.g[sAVol]), bVol = pLevel(P.g[sBVol]);
+        delay.setTime(gNow(sDiv, fs), (float)tempoOf(pat), sr);   // Echo am musikalischen Tempo
+        reverb.setSize(pUni(gNow(sSize, fs)), sr);
+        float fb   = pUni(gNow(sFb, fs)) * 0.95f;
+        float tone = pUni(gNow(sTone, fs));
+        float dec  = 0.3f + pUni(gNow(sDec, fs)) * 0.69f;
+        float damp = pUni(gNow(sDamp, fs));
+        float aVol = pLevel(gNow(sAVol, fs)), bVol = pLevel(gNow(sBVol, fs));
 
         int done = 0, ei = 0;
         while (done < frames) {

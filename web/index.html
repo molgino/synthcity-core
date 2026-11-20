@@ -320,7 +320,7 @@ textarea {
   header { min-height: 40px; padding-block: 3px; }
   .brand { font-size: 10px; }
   .work { grid-template-rows: minmax(0, 1fr); grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-  .rail { display: grid; grid-template-rows: repeat(8, minmax(0, 1fr)); overflow: hidden; }
+  .rail { display: grid; grid-template-rows: repeat(9, minmax(0, 1fr)); overflow: hidden; }
   .trk { min-height: 0; padding: 2px 4px 2px 6px; gap: 4px; }
   .trk .dot, .trk .nm .w { display: none; }
   .trk .nm { color: var(--c); font-size: 14px; font-family: var(--mono); font-weight: 700; text-align: center; }
@@ -534,7 +534,9 @@ textarea {
 <script>
 (() => {
 'use strict';
-const HUE = ['#5ec8ff', '#ffb020', '#ff4d9d', '#4fd6a0', '#b68cff', '#ff7a5c', '#8ad94f', '#5cc9c9'];
+const HUE = ['#5ec8ff', '#ffb020', '#ff4d9d', '#4fd6a0', '#b68cff', '#ff7a5c', '#8ad94f', '#5cc9c9', '#c9d1d6'];
+const FXT = 8;                // die FX-Spur des Patterns (Spur 9 im Kern)
+const spurName = t => t === FXT ? 'FX' : 'Track ' + (t + 1);
 const GROUP = {note: 'Anschlag', vel: 'Anschlag', len: 'Anschlag', prob: 'Anschlag',
                cond: 'Anschlag', micro: 'Anschlag', ratchet: 'Anschlag', quant: 'Anschlag',
                nt2: 'Akkord', nt3: 'Akkord', nt4: 'Akkord', vmode: 'Akkord',
@@ -560,9 +562,9 @@ let meterPeak = 0;
 let songView = {on: false, pos: -1};    // was der Klang-Kern ueber den Song sagt
 const P = [];                 // Parametertabelle, aus dem Kern gelesen
 const el = id => document.getElementById(id);
-const machOf = t => X.scGet(t, P.find(p => p.id === 'trk.machine').slot);
+const machOf = t => t >= FXT ? 0 : X.scGet(t, P.find(p => p.id === 'trk.machine').slot);
 // Folgt die gewaehlte Spur einer Tonart? Dann zaehlen Akkordnoten in Stufen der Leiter.
-const tonartAn = () => X.scPatScale(X.scPattern()) > 0 && X.scGet(sel, P.find(q => q.id === 'trk.quant').slot) > 0;
+const tonartAn = () => sel < FXT && X.scPatScale(X.scPattern()) > 0 && X.scGet(sel, P.find(q => q.id === 'trk.quant').slot) > 0;
 const STUFE = ['root', '2nd', '3rd', '4th', '5th', '6th', '7th'];
 const ptext = (p, v) => {
   if (/^trk\.nt[234]$/.test(p.id) && tonartAn()) {
@@ -706,13 +708,15 @@ async function audioOn() {
 function buildRail() {
   const r = el('rail');
   r.innerHTML = '';
-  for (let t = 0; t < X.scNTracks(); t++) {
+  for (let t = 0; t <= X.scNTracks(); t++) {
     const d = document.createElement('div');
-    d.className = 'trk';
+    d.className = 'trk' + (t === FXT ? ' fxtrk' : '');
     d.style.setProperty('--c', HUE[t]);
-    d.innerHTML = `<span class="dot"></span><span class="nm"><span class="w">TRACK </span>${t + 1}</span>
+    d.innerHTML = t === FXT
+      ? `<span class="dot"></span><span class="nm">FX</span>`
+      : `<span class="dot"></span><span class="nm"><span class="w">TRACK </span>${t + 1}</span>
                    <button class="m" aria-label="Mute track ${t + 1}">M</button>`;
-    const m = d.querySelector('.m');
+    const m = d.querySelector('.m') || document.createElement('button');
     // Zwei Wege auf denselben Knopf: faellt der eine aus (schnelle Tipps hintereinander
     // verschluckt der Browser den Zeiger-Druck), greift der andere. Die Sperre verhindert,
     // dass beide zusammen zweimal schalten - unterm Strich: ein Druck, eine Wirkung.
@@ -790,6 +794,12 @@ function menuList(title) {
 }
 // Spur: lange auf die Spurnummer druecken.
 function trackMenu(t) {
+  if (t === FXT) {                           // die FX-Spur hat nur Locks
+    const add = menuList('FX TRACK \u00b7 PATTERN ' + (X.scPattern() + 1));
+    add('clear all FX locks', () => { if (lockStep >= 0) closeLock(); cmd('scClearTrigs', FXT); });
+    el('pick').showModal();
+    return;
+  }
   const add = menuList('TRACK ' + (t + 1) + ' \u00b7 PATTERN ' + (X.scPattern() + 1));
   add('copy', () => { cmd('scClipTrack', t); clip.trk = t; clip.trkPat = X.scPattern(); }, 'trigs + sound');
   if (clip.trk >= 0) {
@@ -854,7 +864,7 @@ function buildPads() {
       if (timer === null) return;                 // der lange Druck hat schon gewirkt
       clearTimeout(timer); timer = null;
       if (moved) return;
-      if (lockStep >= 0) { openLock(s); return; } // im Lock-Modus: Step wechseln
+      if (lockStep >= 0 || sel === FXT) { openLock(s); return; } // Lock-Modus; FX-Spur hat nur Locks
       // Ein trigless Step wird zum Trig - seine Locks bleiben. Nur ein Trig, der
       // ausgeschaltet wird, nimmt seine Locks mit.
       const war = X.scStepGet(sel, s);
@@ -865,7 +875,7 @@ function buildPads() {
     p.addEventListener('pointercancel', () => { clearTimeout(timer); timer = null; });
     g.appendChild(p);
   }
-  el('padTitle').textContent = `Track ${sel + 1} \u00b7 ${X.scTrackLen(sel)} Steps`;
+  el('padTitle').textContent = `${spurName(sel)} \u00b7 ${X.scTrackLen(sel)} Steps`;
   buildPages();
 }
 // Seiten nur, wenn die Spur laenger als 16 Steps ist.
@@ -882,7 +892,8 @@ function buildPages() {
   }
 }
 function clearLocks(s) {
-  for (const p of P) if (p.scope === 1) cmd('scLockClear', sel, s, p.slot);
+  for (const p of P)
+    if (sel === FXT ? (p.scope !== 1 && /^(fx\.|master\.)/.test(p.id)) : p.scope === 1) cmd('scLockClear', sel, s, p.slot);
 }
 function openLock(s) {
   if (sceneEdit >= 0) closeScene();
@@ -913,8 +924,10 @@ function buildParams() {
   box.appendChild(tabs);
   const gruppen = [];
   let group = '', modKopf = '';
+  const fxSpur = sel === FXT;                // FX-Spur: nur die Effekte, ohne Reiter
+  tabs.hidden = fxSpur;
   for (const p of P) {
-    if (p.scope !== 1) continue;
+    if (p.scope !== 1 || fxSpur) continue;
     const key = p.id.split('.')[1];
     const g = GROUP[key] || key.toUpperCase();
     if (g !== group) {
@@ -993,13 +1006,20 @@ function buildParams() {
 function zeigeGruppe() {
   const box = el('params');
   const mitSample = X.scMachUsesSmp(machOf(sel));
+  const welche = sel === FXT ? 'FX' : grpSel;
   for (const e of box.querySelectorAll('[data-g]'))
     if (!e.classList.contains('ptab'))
-      e.hidden = e.dataset.g !== grpSel || (e.dataset.id === 'trk.smp' && !mitSample);
+      e.hidden = e.dataset.g !== welche || (e.dataset.id === 'trk.smp' && !mitSample);
   for (const t of box.querySelectorAll('.ptab')) t.classList.toggle('cur', t.dataset.g === grpSel);
 }
 const valueOf = p => {
-  if (p.scope !== 1) return {v: X.scGet(-1, p.slot), locked: false};   // Projektwerte: kein Lock, keine Scene
+  if (p.scope !== 1) {                     // Projektwerte: gelockt nur auf der FX-Spur
+    if (sel === FXT && lockStep >= 0) {
+      const l = X.scLockGet(FXT, lockStep, p.slot);
+      if (l !== -32768) return {v: l, locked: true};
+    }
+    return {v: X.scGet(-1, p.slot), locked: false};
+  }
   if (sceneEdit >= 0) {
     const sv = X.scSceneGet(sceneEdit, sel, p.slot);
     if (sv !== -32768) return {v: sv, locked: false, scene: true};
@@ -1013,7 +1033,11 @@ const valueOf = p => {
 };
 function writeValue(p, v) {
   v = Math.max(p.lo, Math.min(p.hi, Math.round(v)));
-  if (p.scope !== 1) { cmd('scSet', -1, p.slot, v); return; }
+  if (p.scope !== 1) {
+    if (sel === FXT && lockStep >= 0) cmd('scLockSet', FXT, lockStep, p.slot, v, 0);
+    else cmd('scSet', -1, p.slot, v);
+    return;
+  }
   if (sceneEdit >= 0) { cmd('scSceneSet', sceneEdit, sel, p.slot, v); return; }
   if (lockStep >= 0) {
     if (!X.scStepGet(sel, lockStep)) cmd('scStepSet', sel, lockStep, 2);  // trigless: nur Werte
@@ -1167,7 +1191,7 @@ function openFineParam(p) {
   const qSlot = P.find(q => q.id === 'trk.quant').slot;
   const stufen = istNote && X.scPatScale(X.scPattern()) > 0 && X.scGet(sel, qSlot) > 0;
   const projekt = p.scope !== 1;
-  const lockMode = lockStep >= 0 && !projekt, sceneMode = sceneEdit >= 0 && !projekt;
+  const lockMode = lockStep >= 0 && (!projekt || sel === FXT), sceneMode = sceneEdit >= 0 && !projekt;
   openFine({
     title: rowName(p) + (sceneMode ? '  \u00b7  SCENE ' + 'AB'[sceneEdit]
                                    : lockMode ? '  \u00b7  LOCK STEP ' + (lockStep + 1) : '') + '   ' + p.id,
@@ -1297,7 +1321,7 @@ function paint() {
   }
   const tonart = X.scPatScale(X.scPattern()) ? ' \u00b7 ' + str(X.scNoteName(X.scPatRoot(X.scPattern()))) + ' '
                  + str(X.scScaleName(X.scPatScale(X.scPattern()))).toLowerCase() : '';
-  el('padTitle').textContent = `Track ${sel + 1} \u00b7 ${len} Steps${tonart}`;
+  el('padTitle').textContent = `${spurName(sel)} \u00b7 ${len} Steps${sel === FXT ? '' : tonart}`;
   {
     const nx = playing ? patNextView : X.scPatNext();
     const t = 'P' + (X.scPattern() + 1) + (nx >= 0 ? ' \u2192 ' + (nx + 1) : '') + (patsOffen ? ' \u25b4' : ' \u25be');
@@ -1368,7 +1392,7 @@ el('lockDone').onclick = closeLock;
 // hat (Laenge, Teiler, ob sie der Tonart folgt) - in einem Fenster, oben das Pattern.
 function skalaOpen(pi) {
   pi = pi === undefined ? X.scPattern() : pi;
-  el('skTitle').textContent = 'SCALE \u00b7 PATTERN ' + (pi + 1) + (pi === X.scPattern() ? ' \u00b7 TRACK ' + (sel + 1) : '');
+  el('skTitle').textContent = 'SCALE \u00b7 PATTERN ' + (pi + 1) + (pi === X.scPattern() ? ' \u00b7 ' + spurName(sel).toUpperCase() : '');
   const body = el('skBody');
   body.innerHTML = '';
   const kopf = t => { const h = document.createElement('h4'); h.textContent = t; body.appendChild(h); };
@@ -1414,16 +1438,18 @@ function skalaOpen(pi) {
   chips(liste(X.scNScales(), X.scScaleName), X.scPatScale(pi), i => cmd('scSetPatKey', pi, X.scPatRoot(pi), i));
 
   if (pi === X.scPattern()) {                           // die Spur gibt es nur im laufenden Pattern
-    kopf('TRACK ' + (sel + 1) + ' \u00b7 LENGTH');
+    kopf(spurName(sel).toUpperCase() + ' \u00b7 LENGTH');
     zahl(X.scTrackLen(sel), v => cmd('scSetTrackLen', sel, v), 1, 128, 'Steps');
-    kopf('TRACK ' + (sel + 1) + ' \u00b7 DIVISION');
+    kopf(spurName(sel).toUpperCase() + ' \u00b7 DIVISION');
     const divs = [];
     let curDiv = -1;
     for (let i = 0; i < X.scNDivs(); i++) { divs.push(str(X.scDivName(i))); if (X.scDivValue(i) === X.scSpeed(sel)) curDiv = i; }
     chips(divs, curDiv, i => cmd('scSetSpeed', sel, X.scDivValue(i)));
-    kopf('TRACK ' + (sel + 1) + ' \u00b7 FOLLOWS KEY');
-    const q = P.find(p => p.id === 'trk.quant');
-    chips(['OFF', 'ON'], X.scGet(sel, q.slot), i => cmd('scSet', sel, q.slot, i));
+    if (sel !== FXT) {
+      kopf('TRACK ' + (sel + 1) + ' \u00b7 FOLLOWS KEY');
+      const q = P.find(p => p.id === 'trk.quant');
+      chips(['OFF', 'ON'], X.scGet(sel, q.slot), i => cmd('scSet', sel, q.slot, i));
+    }
   }
   if (!el('skala').open) el('skala').showModal();
 }

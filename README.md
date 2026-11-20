@@ -166,6 +166,25 @@ Gerechnet wird je Stimme in der Steuerrate (`src/mod.h`) auf einer Kopie der Wer
 Locks, Scenes und Live-Folgen bleiben unberührt. Klang-Tests: Rechteck auf PITCH springt eine
 Oktave, FREE hängt am Takt, Mod-Hüllkurve auf VOLUME, LFO2 auf CUTOFF; zwei Mutationen werden rot.
 
+## FX-Spur: ein eigener Sequencer für die Effekte
+
+Jedes Pattern hat neben den 8 Spuren eine **FX-Spur** (in der Spurleiste unten: **FX**). Ihre
+Steps lösen nichts aus — jeder ist ein Lock-Step für die Projekt-Effekte: DELAY (Time, Feedback,
+Tone, Level), REVERB (Size, Decay, Damping, Level) und MASTER. Ein Tipp auf einen Pad öffnet den
+Lock; ohne Lock gilt der Grundwert aus dem FX-Reiter. Die FX-Spur hat eigene Länge und eigenen
+Teiler (Skala-Fenster), wird mit dem Pattern kopiert, geleert und gespeichert
+(`pat.N.fx.st.S.fx.a.fb = 80`). Im Kern ist sie Spur 8 der Brücke (`scStepGet(8, …)`); die
+Engine liest die Effektwerte je Block über `gNow()`. Ein Klang-Test lockt MASTER auf Steps 5–8
+und misst Stille dort und den Grundwert davor und danach.
+
+## Akkorde in der Tonart
+
+Folgt die Spur einer Tonart (Pattern-Tonleiter + KEY an), zählen NT2–NT4 in **Stufen der
+Leiter**: +2 ist die Terz, +4 die Quinte — auf D in C-Dur also F und A, auf B D und F. Die
+Akkordliste bietet dann TRIAD, SEVENTH, ADD9, SUS2/4, SIXTH, SHELL, FIFTH, OCTAVE …; der
+Feinwert hat ±STEP und ±OCT (Oktave = Zahl der Töne der Leiter), die Zeile zeigt Stufe und
+Zielton (`+2 3rd · G4`). Ohne Tonart bleiben es Halbtöne.
+
 ## Sprache
 
 Die Oberfläche und alle Werte-Texte sind englisch (Tabelle, Machines, Tonleitern, Akkorde,

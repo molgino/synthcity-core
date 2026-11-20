@@ -1168,6 +1168,35 @@ int main() {
         }
     }
 
+    grp("FX-Spur: Locks auf Projekt-Effekte je Step");
+    {
+        e.prepare(48000.0f); setupBeat(e, 60);
+        Track& t = e.P.pat[0].t[0];
+        for (int s = 0; s < 16; s++) t.s[s].on = 1;
+        t.p[SL("trk.amp.sus")] = 100; t.p[SL("trk.len")] = 12;
+        static const int gMaster = paramSlot(paramFind("master.vol"));
+        Track& f = e.P.pat[0].fx;
+        for (int s = 4; s < 8; s++) { f.s[s].on = 2; f.s[s].setLock(gMaster, 0); }
+        e.start();
+        static float a[96000 * 2];
+        int done = 0; while (done < 96000) { int n = 96000 - done < 512 ? 96000 - done : 512; e.render(a + done * 2, n); done += n; }
+        float vor = rms(a + 7000 * 2, 10000), still = rms(a + 31000 * 2, 10000), nach = rms(a + 55000 * 2, 10000);
+        chk(vor > 0.01f, "vor dem Lock klingt nichts");
+        chk(still < vor * 0.01f, "der Master-Lock der FX-Spur macht Steps 5-8 nicht still");
+        chk(nach > vor * 0.5f, "nach dem Lock kehrt der Grundwert nicht zurueck");
+        // Im Dokument, und Pattern kopieren nimmt die FX-Spur mit
+        e.P.pat[0].fx.len = 32;
+        static Doc d; d.clear(); projectToDoc(e.P, d);
+        static Project Q; projectFromDoc(d, Q);
+        chk(Q.pat[0].fx.len == 32 && Q.pat[0].fx.s[5].on == 2 && Q.pat[0].fx.s[5].findLock(gMaster)
+            && Q.pat[0].fx.s[5].findLock(gMaster)->val == 0, "die FX-Spur ueberlebt das Dokument nicht");
+        patternCopy(e.P, 0, 7);
+        chk(e.P.pat[7].fx.s[6].findLock(gMaster) != nullptr, "Pattern kopieren vergisst die FX-Spur");
+        patternClear(e.P, 7);
+        chk(e.P.pat[7].fx.s[6].nLock == 0 && e.P.pat[7].fx.len == 16, "Pattern leeren laesst die FX-Spur stehen");
+        e.P.pat[0].fx.len = 16;
+    }
+
     grp("Referenz-Aufnahme");
     {
         const int N = 96000;                         // zwei Sekunden

@@ -63,7 +63,7 @@ async function R(p, id) {
 
   grp('Die Oberflaeche baut sich aus dem Kern');
   chk(await p.locator('.pad').count() === 16, 'nicht 16 Steps');
-  chk(await p.locator('.trk').count() === 8, 'nicht 8 Spuren');
+  chk(await p.locator('.trk').count() === 9 && await p.locator('.trk.fxtrk').count() === 1, 'nicht 8 Spuren und die FX-Spur');
   chk(await p.locator('.pt').count() === 16, 'nicht 16 Patterns');
   chk(await p.locator('.row').count() > 15, 'zu wenige Regler');
   // Pattern-Auswahl: zugeklappt, der Knopf sagt, was laeuft; aufgeklappt 16 Patterns
@@ -599,6 +599,38 @@ async function R(p, id) {
     await p.locator('.pt').nth(0).tap(); await p.waitForTimeout(250);
   }
 
+  grp('FX-Spur: Effekte je Step locken');
+  {
+    if ((await p.locator('#play').textContent()).trim() === 'STOP') await p.locator('#play').click();
+    await p.locator('.pt').nth(0).tap(); await p.waitForTimeout(200);
+    await p.locator('.trk.fxtrk').tap(); await p.waitForTimeout(200);
+    chk((await p.locator('#padTitle').textContent()).startsWith('FX'), 'der Titel nennt die FX-Spur nicht');
+    chk(await p.locator('#ptabs').isHidden(), 'auf der FX-Spur stehen noch die Spur-Reiter');
+    const ids = await p.evaluate(() => [...document.querySelectorAll('.row')].filter(r => !r.hidden).map(r => r.dataset.id));
+    chk(ids.length === 9 && ids.every(i => /^(fx\.|master\.)/.test(i)), 'die FX-Spur zeigt nicht nur die Effekte: ' + ids.join(','));
+    // Ein Tipp auf einen Pad ist auf der FX-Spur ein Lock
+    await p.locator('.pad').nth(4).tap(); await p.waitForTimeout(200);
+    chk(await p.locator('#lockbar').isVisible(), 'ein Tipp auf der FX-Spur oeffnet keinen Lock');
+    const fb = p.locator('.row[data-id="fx.a.fb"]');
+    await fb.tap(); await p.waitForTimeout(200);
+    await p.locator('#fineBtns button').nth(3).tap(); await p.waitForTimeout(100);       // +10
+    await p.locator('#fineClose').tap(); await p.waitForTimeout(150);
+    chk(await fb.evaluate(e => e.classList.contains('locked')), 'der FX-Wert ist nicht gelockt');
+    await p.locator('#lockDone').tap(); await p.waitForTimeout(150);
+    chk(!(await fb.evaluate(e => e.classList.contains('locked'))), 'ausserhalb des Lock-Modus steht der Lock statt des Grundwerts');
+    chk(await p.locator('.pad').nth(4).evaluate(e => e.classList.contains('trigless')), 'der FX-Step zeigt seinen Lock nicht');
+    await p.locator('#docBtn').tap(); await p.waitForTimeout(150);
+    chk(/^pat\.0\.fx\.st\.4\.fx\.a\.fb = \d+$/m.test(await p.locator('#docText').inputValue()), 'der FX-Lock steht nicht im Dokument');
+    await p.locator('#docClose').tap();
+    // Leeren ueber langes Druecken auf FX
+    await p.locator('.trk.fxtrk').dispatchEvent('pointerdown'); await p.waitForTimeout(600);
+    await p.locator('.trk.fxtrk').dispatchEvent('pointerup'); await p.waitForTimeout(200);
+    await p.locator('#pickList button', {hasText: 'clear all FX locks'}).tap(); await p.waitForTimeout(200);
+    chk(!(await p.locator('.pad').nth(4).evaluate(e => e.classList.contains('trigless'))), 'FX-Locks lassen sich nicht leeren');
+    await p.locator('.trk').nth(0).locator('.nm').tap(); await p.waitForTimeout(200);
+    chk(!(await p.locator('#ptabs').isHidden()), 'zurueck auf Spur 1 fehlen die Reiter');
+  }
+
   grp('Das Projekt ueberlebt ein Neuladen (Update der Seite)');
   {
     if ((await p.locator('#play').textContent()).trim() === 'STOP') await p.locator('#play').click();
@@ -674,6 +706,7 @@ async function R(p, id) {
     chk(dlg.length === 0, name + ': ' + dlg.slice(0, 4).join(' | '));
     if (!name.includes('landscape')) { await ctx.close(); continue; }
     chk(await q.locator('.trk').nth(7).locator('.m').isVisible(), name + ': Spur 8 ist nicht zu sehen');
+    chk(await q.locator('.trk.fxtrk').isVisible(), name + ': die FX-Spur ist nicht zu sehen');
     await ctx.close();
   }
 
