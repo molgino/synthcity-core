@@ -86,6 +86,8 @@ inline int enumCount(const ParamDef& d) {
 // Ueberschrift ueber einer Gruppe gleichartiger Werte - eine Liste aus 62 Zeilen am Stueck
 // liest niemand. Auch das weiss der Kern, nicht die Oberflaeche.
 inline const char* enumGroup(const ParamDef& d, int i) {
+    if (!strncmp(d.id, "trk.", 4) && !strcmp(modField(d.id), "dest") && i > 0 && i < MOD_NDEST)
+        return MOD_DESTS[i].trig ? "At trig (sampled once per note)" : "While the note plays";
     if (d.kind != PK_COND) return "";
     if (i < 9)  return "Fixed";
     if (i < 28) return "Probability";

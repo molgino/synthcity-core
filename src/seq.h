@@ -16,7 +16,13 @@ struct Ev {
     int32_t len;        // Tonlaenge in Samples
 };
 
-struct Sink { virtual void ev(const Ev& e, int offset) = 0; virtual ~Sink() {} };
+struct Sink {
+    virtual void ev(const Ev& e, int offset) = 0;
+    // Modulation eines Anschlag-Werts (VEL, LEN, PROB, MICRO, RETRIG) an dieser Stelle, in
+    // Werte-Einheiten. Wer keine Modulation hat, antwortet 0.
+    virtual float trigMod(int track, int step, int slot, int64_t at) { (void)track; (void)step; (void)slot; (void)at; return 0.0f; }
+    virtual ~Sink() {}
+};
 
 // --- Trig-Bedingungen ------------------------------------------------------------------------
 // 0 = keine. 1-8 die festen. 9-108 = Wahrscheinlichkeit 1-100 % - sie ist eine CONDITION, kein
@@ -44,6 +50,7 @@ struct Seq {
     bool lastCond[NTRACKS];     // Ergebnis der zuletzt AUSGEWERTETEN Condition dieser Spur
     uint32_t rng[NTRACKS];
     Ev pend[256];
+    Sink* mods = nullptr;       // waehrend process(): wer Anschlag-Werte moduliert
     int nPend = 0;
 
     Seq() { reset(); }
@@ -121,7 +128,13 @@ struct Seq {
         // Quelle, damit auch ein Step-Loop swingt. Die Laenge bleibt, nur der Anschlag rueckt.
         double nominal = (double)origin + (double)k * sp;
         if (k & 1) nominal += (2.0 * swing - 1.0) * sp;
-        double micro = (effective(tr, s, slotMicro) - 24) / 24.0;   // -1 .. +1 Step
+        // Anschlag-Werte, moduliert und in ihren Grenzen
+        auto mw = [&](int slot, int lo, int hi, int64_t wo) {
+            float v = (float)effective(tr, s, slot) + (mods ? mods->trigMod(t, s, slot, wo) : 0.0f);
+            int r = (int)(v + (v < 0 ? -0.5f : 0.5f));
+            return r < lo ? lo : (r > hi ? hi : r);
+        };
+        double micro = (mw(slotMicro, 0, 48, (int64_t)nominal) - 24) / 24.0;   // -1 .. +1 Step
         int64_t at = (int64_t)llround(nominal + micro * sp);
 
         if (st.on == 2) {   // trigless: Werte gelten ab hier, ohne Anschlag
@@ -129,13 +142,12 @@ struct Seq {
             return;
         }
         if (!condOk(t, effective(tr, s, slotCond), pass)) return;
-        int prob = effective(tr, s, slotProb);
+        int prob = mw(slotProb, 0, 100, at);
         if (prob < 100 && uni(t) * 100.0f >= (float)prob) return;
 
-        int rt = effective(tr, s, slotRtrg);
-        if (rt < 1) rt = 1;
-        int16_t note = effective(tr, s, slotNote), vel = effective(tr, s, slotVel);
-        double lst = lenSteps(effective(tr, s, slotLen));
+        int rt = mw(slotRtrg, 1, 8, at);
+        int16_t note = effective(tr, s, slotNote), vel = (int16_t)mw(slotVel, 0, 127, at);
+        double lst = lenSteps(mw(slotLen, 1, 127, at));
         double durD = lst < 0 ? 2147483647.0 : sp * lst;              // INF: bis zum naechsten Anschlag
         int32_t dur = durD > 2147483647.0 ? 2147483647 : (int32_t)durD;
         for (int r = 0; r < rt; r++)
@@ -146,6 +158,7 @@ struct Seq {
     // Ein Block: erst bewerten (einen Step im Voraus), dann alles ausgeben, was in diesen Block faellt.
     void process(const Project& P, int patIdx, int frames, Sink& sink) {
         if (!running) { pos += frames; return; }
+        mods = &sink;
         const Pattern& pt = P.pat[patIdx];
         for (int t = 0; t < NTRACKS; t++) {
             const Track& tr = pt.t[t];

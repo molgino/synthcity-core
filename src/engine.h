@@ -122,13 +122,14 @@ struct Voice {
             i++;
         }
         for (int i = 0; i < 64; i++) pm[i] = pf[i];
-        mod.apply(pf, pm, CTL, sr);
         const Slots& s = S();
+        if (mod.apply(pf, pm, CTL, sr))          // Amp-Huellkurve moduliert: Zeiten neu rechnen
+            env.setup(pTime(pm[s.atk]), pTime(pm[s.dec]), pLevel(pm[s.sus]), pTime(pm[s.rel]), sr);
         hz = noteHz(pm[s.note]);
         base = pFreq(pm[s.fFreq]);
         q = 0.7f + pUni(pm[s.fReso]) * 11.0f;
         envAmt = pBip(pm[s.fEnv]);
-        ft = (FltType)(((int)pf[s.fType]) % FLT_N);
+        ft = (FltType)(((int)(pm[s.fType] + 0.5f)) % FLT_N);
         gain = pLevel(pm[s.vol]) * vel;
         float a = 0.7853982f * (pBip(pm[s.pan]) + 1.0f);     // gleiche Leistung links wie rechts
         panL = cosf(a); panR = sinf(a);
@@ -437,11 +438,32 @@ struct Engine : Sink {
         }
     }
 
+    // Anschlag-Ziele der Modulation: der LFO-Wert im Moment des Trigs (siehe ModState::trigOffset).
+    float trigMod(int track, int step, int slot, int64_t at) override {
+        int d = modDestOfSlot(slot);
+        if (d < 0 || !MOD_DESTS[d].trig) return 0.0f;
+        float snap[64];
+        snapshot(track, step, snap);
+        double spb = sr * 60.0 / (tempoOf(pat) > 1 ? tempoOf(pat) : 120.0);
+        return ModState::trigOffset(snap, d, at, spb, 0x51u + (uint32_t)track * 977u);
+    }
+
     void fire(const Ev& e) {
         const Track& tr = P.pat[pat].t[e.track];
         float snap[64];
         snapshot(e.track, e.step, snap);
         int32_t glide = (int32_t)seq.stepLen(tr);
+        if (e.kind == EV_TRIG) {
+            static const char* const beimAnschlag[] = {"trk.smp", "trk.quant", "trk.nt2", "trk.nt3", "trk.nt4"};
+            double spb = sr * 60.0 / (tempoOf(pat) > 1 ? tempoOf(pat) : 120.0);
+            for (const char* id : beimAnschlag) {
+                int pi = paramFind(id), sl = paramSlot(pi);
+                float o = ModState::trigOffset(snap, modDestOfSlot(sl), e.at, spb, 0x51u + (uint32_t)e.track * 977u);
+                if (o == 0.0f) continue;
+                float v = (float)(int)(snap[sl] + o + (snap[sl] + o < 0 ? -0.5f : 0.5f));
+                snap[sl] = v < PARAMS[pi].lo ? PARAMS[pi].lo : (v > PARAMS[pi].hi ? PARAMS[pi].hi : v);
+            }
+        }
 
         if (e.kind == EV_LOCKS) {            // trigless: nur Werte, kein Anschlag
             for (int i = 0; i < NVOICES; i++) {

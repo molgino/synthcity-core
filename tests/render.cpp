@@ -1105,6 +1105,54 @@ int main() {
         paramText(PARAMS[paramFind("trk.lfo1.rate")], 7, tx, sizeof tx); chk(!strcmp(tx, "1/4"), "Rate 7 ist nicht 1/4");
         paramText(PARAMS[paramFind("trk.lfo1.dest")], 4, tx, sizeof tx); chk(!strcmp(tx, "CUTOFF"), "Ziel 4 ist nicht CUTOFF");
         chk(enumCount(PARAMS[paramFind("trk.lfo1.dest")]) == MOD_NDEST, "die Zielliste hat nicht alle Ziele");
+
+        // Alle lockbaren Werte sind Ziele - auch die, die nur beim Anschlag zaehlen
+        {
+            int fehlt = 0;
+            for (int i = 0; i < NPARAMS; i++) {
+                const ParamDef& d = PARAMS[i];
+                if (d.scope != PS_TRACK || !(d.flags & PF_LOCK) || !strcmp(d.id, "trk.cond")) continue;
+                if (!strncmp(d.id, "trk.lfo", 7) || !strncmp(d.id, "trk.menv", 8)) continue;
+                if (modDestOfSlot(paramSlot(i)) < 0) { fehlt++; printf("    kein Ziel: %s\n", d.id); }
+            }
+            chk(fehlt == 0, "nicht jeder lockbare Wert ist ein Mod-Ziel");
+            chk(PARAMS[paramFind("trk.lfo1.dest")].hi == MOD_NDEST - 1, "die DEST-Tabelle passt nicht zur Zielliste");
+        }
+        auto ziel = [](const char* name) { for (int d = 0; d < MOD_NDEST; d++) if (!strcmp(MOD_DESTS[d].name, name)) return d; return -1; };
+        // VELOCITY beim Anschlag: Rechteck TRIG steht bei +1, -100 % -> Velocity 0 -> still
+        t = lang(60);
+        t->p[SL("trk.lfo1.wave")] = LFO_SQR; t->p[SL("trk.lfo1.mode")] = LFO_TRIG;
+        t->p[SL("trk.lfo1.depth")] = 1; t->p[SL("trk.lfo1.dest")] = (int16_t)ziel("VELOCITY");
+        e.start(); e.render(a, 12000);
+        chk(rms(a, 12000) < 0.0005f, "LFO auf VELOCITY macht den Anschlag nicht leise");
+        // PROB, FREE am Takt: Rechteck 1/2, -100 %: Viertel 1 faellt aus, Viertel 2 spielt
+        t = lang(60);
+        t->p[SL("trk.lfo1.wave")] = LFO_SQR; t->p[SL("trk.lfo1.mode")] = LFO_FREE; t->p[SL("trk.lfo1.rate")] = 5;
+        t->p[SL("trk.lfo1.depth")] = 1; t->p[SL("trk.lfo1.dest")] = (int16_t)ziel("PROB");
+        t->p[SL("trk.amp.dec")] = 30; t->p[SL("trk.amp.sus")] = 0;
+        e.start(); e.render(a, 24000);
+        float erste = rms(a, 20000);
+        e.render(a, 20000);
+        chk(erste < 0.0005f && rms(a, 20000) > 0.01f, "LFO auf PROB: FREE am Takt laesst nicht genau jeden zweiten Trig aus");
+        // NT2 beim Anschlag: aus einem Ton wird eine Quinte
+        t = lang(60);
+        t->p[SL("trk.lfo1.wave")] = LFO_SQR; t->p[SL("trk.lfo1.mode")] = LFO_TRIG;
+        t->p[SL("trk.lfo1.depth")] = 105; t->p[SL("trk.lfo1.dest")] = (int16_t)ziel("NT2");
+        e.start(); e.render(a, 4000);
+        { int n = 0; for (int i = 0; i < NVOICES; i++) if (e.v[i].used) n++;
+          chk(n == 2, "LFO auf NT2 macht keinen Zweiklang"); }
+        chk(bin(a + 1000 * 2, 3000, 392.0f, 48000.0f) > 0.01f, "die Quinte aus dem LFO klingt nicht");
+        // AMP SUS waehrend der Note: ohne Modulation verklingt sie, mit +100 % haelt sie
+        float ohne = 0;
+        for (int k = 0; k < 2; k++) {
+            t = lang(60);
+            t->p[SL("trk.amp.dec")] = 30; t->p[SL("trk.amp.sus")] = 0;
+            if (k) { t->p[SL("trk.lfo1.wave")] = LFO_SQR; t->p[SL("trk.lfo1.mode")] = LFO_TRIG;
+                     t->p[SL("trk.lfo1.depth")] = 127; t->p[SL("trk.lfo1.dest")] = (int16_t)ziel("AMP SUS"); }
+            e.start(); e.render(a, 10000);
+            float r = rms(a + 8000 * 2, 2000);
+            if (!k) ohne = r; else chk(r > ohne * 10.0f + 0.01f, "LFO auf AMP SUS haelt die Note nicht");
+        }
     }
 
     grp("Referenz-Aufnahme");

@@ -78,17 +78,17 @@ static const ParamDef PARAMS[] = {
     {"trk.lfo1.wave",  "LFO1 WAVE",  PS_TRACK, PK_ENUM,    0,   4,   0, "",    PF_LOCK},
     {"trk.lfo1.rate",  "LFO1 RATE",  PS_TRACK, PK_ENUM,    0,  14,   7, "",    PF_LOCK | PF_MOD},
     {"trk.lfo1.depth", "LFO1 DEPTH", PS_TRACK, PK_BIP,     0, 127,  64, "",    PF_LOCK | PF_MOD},
-    {"trk.lfo1.dest",  "LFO1 DEST",  PS_TRACK, PK_ENUM,    0,  10,   0, "",    PF_LOCK},
+    {"trk.lfo1.dest",  "LFO1 DEST",  PS_TRACK, PK_ENUM,    0,  25,   0, "",    PF_LOCK},
     {"trk.lfo1.mode",  "LFO1 MODE",  PS_TRACK, PK_ENUM,    0,   2,   0, "",    0},
     {"trk.lfo2.wave",  "LFO2 WAVE",  PS_TRACK, PK_ENUM,    0,   4,   1, "",    PF_LOCK},
     {"trk.lfo2.rate",  "LFO2 RATE",  PS_TRACK, PK_ENUM,    0,  14,   4, "",    PF_LOCK | PF_MOD},
     {"trk.lfo2.depth", "LFO2 DEPTH", PS_TRACK, PK_BIP,     0, 127,  64, "",    PF_LOCK | PF_MOD},
-    {"trk.lfo2.dest",  "LFO2 DEST",  PS_TRACK, PK_ENUM,    0,  10,   0, "",    PF_LOCK},
+    {"trk.lfo2.dest",  "LFO2 DEST",  PS_TRACK, PK_ENUM,    0,  25,   0, "",    PF_LOCK},
     {"trk.lfo2.mode",  "LFO2 MODE",  PS_TRACK, PK_ENUM,    0,   2,   0, "",    0},
     {"trk.menv.atk",   "MENV ATK",   PS_TRACK, PK_TIME,    0, 127,   0, "s",   PF_LOCK},
     {"trk.menv.dec",   "MENV DEC",   PS_TRACK, PK_TIME,    0, 127,  60, "s",   PF_LOCK},
     {"trk.menv.depth", "MENV DEPTH", PS_TRACK, PK_BIP,     0, 127,  64, "",    PF_LOCK | PF_MOD},
-    {"trk.menv.dest",  "MENV DEST",  PS_TRACK, PK_ENUM,    0,  10,   0, "",    PF_LOCK},
+    {"trk.menv.dest",  "MENV DEST",  PS_TRACK, PK_ENUM,    0,  25,   0, "",    PF_LOCK},
 };
 enum { NPARAMS = (int)(sizeof PARAMS / sizeof *PARAMS) };
 

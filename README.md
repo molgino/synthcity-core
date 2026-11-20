@@ -155,8 +155,12 @@ und prüft, dass der nächste Trig sie beendet.
 Reiter **MOD**: **LFO 1** und **LFO 2** (WAVE: sine, triangle, saw, square, S&H · RATE als
 Notenwert von 16 Takten bis 1/32, auch punktiert/triolisch · DEPTH bipolar · DEST · MODE: FREE
 läuft am Takt, TRIG startet mit jeder Note, ONE SHOT einmal) und eine **Mod-Hüllkurve**
-(ATK, DEC, DEPTH, DEST). Ziele: PITCH (ein DEPTH-Schritt = ein halber Halbton), SRC A/B,
-CUTOFF, RESO, FLT ENV, VOLUME, PAN, SEND A/B. Alles lockbar je Step.
+(ATK, DEC, DEPTH, DEST). **Ziel ist jeder lockbare Spurwert** (ausser COND), in zwei Gruppen:
+*während die Note klingt* — PITCH (ein DEPTH-Schritt = ein halber Halbton), SRC A/B, CUTOFF,
+RESO, FLT ENV, FLT TYPE, AMP ATK/DEC/SUS/REL, VOLUME, PAN, SEND A/B — und *beim Anschlag*
+(einmal je Note abgetastet) — VELOCITY, LENGTH, PROB, MICRO, RETRIG, KEY, NT2–NT4, SAMPLE.
+Für die Anschlag-Ziele fragt der Sequencer die Engine (`Sink::trigMod`); ein FREE-LFO wird
+dafür an der Transport-Position des Trigs ausgewertet. Alles lockbar je Step.
 
 Gerechnet wird je Stimme in der Steuerrate (`src/mod.h`) auf einer Kopie der Werte (`pm`) —
 Locks, Scenes und Live-Folgen bleiben unberührt. Klang-Tests: Rechteck auf PITCH springt eine

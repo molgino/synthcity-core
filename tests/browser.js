@@ -84,7 +84,8 @@ async function R(p, id) {
   chk(modIds.length === 14 && modIds[0] === 'trk.lfo1.wave', 'der MOD-Reiter zeigt nicht die 14 Regler: ' + modIds.join(','));
   chk((await p.locator('.row[data-id="trk.lfo1.dest"] .nm').textContent()).startsWith('DEST'), 'die Zeile heisst nicht DEST');
   await p.locator('.row[data-id="trk.lfo1.dest"]').click(); await p.waitForTimeout(200);
-  chk(await p.locator('#pickList button').count() === 11, 'die Zielliste hat nicht 11 Eintraege');
+  chk(await p.locator('#pickList button').count() === 26, 'die Zielliste hat nicht 26 Eintraege');
+  chk((await p.locator('#pickList').textContent()).includes('At trig'), 'die Zielliste ist nicht gruppiert');
   await p.locator('#pickList button', {hasText: 'CUTOFF'}).click(); await p.waitForTimeout(150);
   chk((await p.locator('.row[data-id="trk.lfo1.dest"] .v').textContent()).trim() === 'CUTOFF', 'das LFO-Ziel laesst sich nicht waehlen');
   await p.locator('.row[data-id="trk.lfo1.rate"]').click(); await p.waitForTimeout(200);

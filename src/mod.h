@@ -26,18 +26,36 @@ static const LfoRate LFO_RATES[] = {
     {"1/16", 0.25f}, {"1/16T", 1.0f / 6}, {"1/32", 0.125f}};
 enum { LFO_NRATES = (int)(sizeof LFO_RATES / sizeof *LFO_RATES) };
 
-// Ziele: was sich waehrend eines Tons sinnvoll bewegen laesst.
-struct ModDest { const char* name; const char* id; float range; };
+// Ziele: jeder lockbare Spurwert. Die ersten elf bleiben in dieser Reihenfolge - so steht der
+// Index im Dokument. "trig" heisst: wird beim Anschlag einmal abgetastet (VEL, LEN, PROB ...),
+// alle anderen bewegen sich waehrend die Note klingt.
+struct ModDest { const char* name; const char* id; float range; bool trig; };
 static const ModDest MOD_DESTS[] = {
-    {"NONE", nullptr, 0}, {"PITCH", "trk.note", 31.5f}, {"SRC A", "trk.src.a", 127},
-    {"SRC B", "trk.src.b", 127}, {"CUTOFF", "trk.flt.freq", 127}, {"RESO", "trk.flt.reso", 127},
-    {"FLT ENV", "trk.flt.env", 127}, {"VOLUME", "trk.vol", 127}, {"PAN", "trk.pan", 127},
-    {"SEND A", "trk.send.a", 127}, {"SEND B", "trk.send.b", 127}};
+    {"NONE", nullptr, 0, false}, {"PITCH", "trk.note", 31.5f, false}, {"SRC A", "trk.src.a", 127, false},
+    {"SRC B", "trk.src.b", 127, false}, {"CUTOFF", "trk.flt.freq", 127, false}, {"RESO", "trk.flt.reso", 127, false},
+    {"FLT ENV", "trk.flt.env", 127, false}, {"VOLUME", "trk.vol", 127, false}, {"PAN", "trk.pan", 127, false},
+    {"SEND A", "trk.send.a", 127, false}, {"SEND B", "trk.send.b", 127, false},
+    {"FLT TYPE", "trk.flt.type", 10, false}, {"AMP ATK", "trk.amp.atk", 127, false},
+    {"AMP DEC", "trk.amp.dec", 127, false}, {"AMP SUS", "trk.amp.sus", 127, false},
+    {"AMP REL", "trk.amp.rel", 127, false},
+    {"VELOCITY", "trk.vel", 127, true}, {"LENGTH", "trk.len", 126, true}, {"PROB", "trk.prob", 100, true},
+    {"MICRO", "trk.micro", 48, true}, {"RETRIG", "trk.ratchet", 7, true}, {"KEY", "trk.quant", 1, true},
+    {"NT2", "trk.nt2", 49, true}, {"NT3", "trk.nt3", 49, true}, {"NT4", "trk.nt4", 49, true},
+    {"SAMPLE", "trk.smp", 63, true}};
 enum { MOD_NDEST = (int)(sizeof MOD_DESTS / sizeof *MOD_DESTS) };
 inline int modDestSlot(int d) {
     static int s[MOD_NDEST] = {-2};
     if (s[0] == -2) for (int i = 0; i < MOD_NDEST; i++) s[i] = MOD_DESTS[i].id ? paramSlot(paramFind(MOD_DESTS[i].id)) : -1;
     return (d <= 0 || d >= MOD_NDEST) ? -1 : s[d];
+}
+// Welches Ziel gehoert zu einem Spur-Slot? (-1: keins)
+inline int modDestOfSlot(int slot) {
+    for (int d = 1; d < MOD_NDEST; d++) if (modDestSlot(d) == slot) return d;
+    return -1;
+}
+inline void modDestRange(int d, float& lo, float& hi) {
+    const ParamDef& pd = PARAMS[paramFind(MOD_DESTS[d].id)];
+    lo = pd.lo; hi = pd.hi;
 }
 
 struct ModSlots { int wave[2], rate[2], depth[2], dest[2], mode[2], eAtk, eDec, eDepth, eDest; };
@@ -92,7 +110,7 @@ struct ModState {
         }
     }
     // Einen Steuertakt weiter (n Samples) und die Modulation auf pm anwenden.
-    void apply(const float* pf, float* pm, int n, float sr) {
+    bool apply(const float* pf, float* pm, int n, float sr) {
         const ModSlots& m = modSlots();
         float off[MOD_NDEST] = {0};
         for (int k = 0; k < 2; k++) {
@@ -117,12 +135,41 @@ struct ModState {
             }
             t += (uint32_t)n;
         }
+        bool amp = false;
         for (int d = 1; d < MOD_NDEST; d++) {
-            if (off[d] == 0.0f) continue;
+            if (off[d] == 0.0f || MOD_DESTS[d].trig) continue;      // Anschlag-Ziele: siehe trigOffset
             int sl = modDestSlot(d);
             float v = pf[sl] + off[d] * MOD_DESTS[d].range;
-            float lo = 0.0f, hi = 127.0f;
+            float lo, hi; modDestRange(d, lo, hi);
             pm[sl] = v < lo ? lo : (v > hi ? hi : v);
+            if (d >= 12 && d <= 15) amp = true;
         }
+        return amp;
+    }
+
+    // Wert von LFO k an einer Transport-Position, ohne Stimme: fuer Ziele, die nur beim Anschlag
+    // zaehlen. FREE folgt dem Takt; TRIG und ONE SHOT stehen beim Anschlag am Anfang.
+    static float lfoAt(const float* pf, int k, int64_t pos, double spb, uint32_t seed) {
+        const ModSlots& m = modSlots();
+        int mode = (int)(pf[m.mode[k]] + 0.5f);
+        double per = spb * LFO_RATES[clampRate(pf[m.rate[k]])].beats;
+        double c = (mode == LFO_FREE && pos >= 0 && per > 1) ? (double)pos / per : 0.0;
+        int64_t zyklus = (int64_t)c;
+        float ph = (float)(c - (double)zyklus);
+        uint32_t h = seed * 2654435761u ^ (uint32_t)zyklus * 40503u;
+        h ^= h >> 15; h *= 2246822519u; h ^= h >> 13;
+        float sh = (h >> 8) * (2.0f / 16777216.0f) - 1.0f;
+        return wave((int)(pf[m.wave[k]] + 0.5f), ph, sh);
+    }
+    // Versatz (in Werte-Einheiten) fuer ein Anschlag-Ziel - Summe aus beiden LFOs und der
+    // Mod-Huellkurve (die beim Anschlag bei 0 steht, ausser ihr Attack ist 0).
+    static float trigOffset(const float* pf, int d, int64_t pos, double spb, uint32_t seed) {
+        if (d <= 0 || d >= MOD_NDEST) return 0.0f;
+        const ModSlots& m = modSlots();
+        float o = 0.0f;
+        for (int k = 0; k < 2; k++)
+            if ((int)(pf[m.dest[k]] + 0.5f) == d) o += pBip(pf[m.depth[k]]) * lfoAt(pf, k, pos, spb, seed + k);
+        if ((int)(pf[m.eDest] + 0.5f) == d && pf[m.eAtk] < 0.5f) o += pBip(pf[m.eDepth]);
+        return o * MOD_DESTS[d].range;
     }
 };
