@@ -121,6 +121,19 @@ auf seinem Step, das Überlappen in POLY, genau eine Stimme in MONO und in LEGAT
 Tonhöhe ohne neuen Anschlag; zwei Mutationen (MONO schneidet nicht ab, LEGATO schlägt neu an)
 werden rot.
 
+## Das Projekt speichert sich selbst
+
+Die Web-App lädt nicht mehr bei jedem Öffnen die Demo. Alle 1,5 Sekunden — und wenn die Seite
+in den Hintergrund geht — schreibt sie das Projekt-Dokument weg, sobald es sich geändert hat:
+in den **Browser-Speicher** (IndexedDB, dazu localStorage als Rückfall) und, wo die Seite es
+darf, ins **eigene Konto** (privat, nur für den angemeldeten Nutzer; höchstens alle 5 s). Beim
+Start gewinnt der neuere Stand. Ein Update der Seite lässt das Projekt also stehen; der Kern
+liest ältere Dokumente weiter, fehlende Werte bekommen ihren Grundwert.
+
+Die Klänge der Samples liegen wie bisher im Browser-Speicher, das Dokument merkt sich nur ihre
+Namen. **NEU (DEMO)** im DOK-Fenster (zwei Tipps) fängt von vorn an. Ein Browser-Test ändert das
+Tempo, lädt neu und vergleicht das ganze Dokument.
+
 ## Genaue Werte per Touch
 
 Ziehen ist für grobe Wege — eine Note höher trifft man damit nur durch Glück. **Antippen**

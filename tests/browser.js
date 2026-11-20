@@ -434,6 +434,31 @@ const stummMuster = async p => {
         'ein Tipp auf ein Pattern laesst den Song weiterlaufen');
   }
 
+  grp('Das Projekt ueberlebt ein Neuladen (Update der Seite)');
+  {
+    if ((await p.locator('#play').textContent()).trim() === 'STOP') await p.locator('#play').click();
+    const bpm = async () => +(await p.locator('#bpm').textContent()).trim();
+    await p.locator('.pt').nth(0).tap(); await p.waitForTimeout(200);
+    const vorher = await bpm();
+    for (let i = 0; i < 7; i++) await p.locator('#bpmUp').tap();
+    await p.waitForTimeout(2200);                                      // Autosave alle 1,5 s
+    const doc = await p.evaluate(() => document.getElementById('docBtn').click() || document.getElementById('docText').value);
+    await p.locator('#docClose').tap();
+    await p.reload(); await p.waitForTimeout(1800);
+    chk(await bpm() === vorher + 7, 'nach dem Neuladen ist das Tempo wieder ' + await bpm() + ' statt ' + (vorher + 7));
+    await p.locator('#docBtn').tap(); await p.waitForTimeout(200);
+    const sortiert = t => t.split('\n').sort().join('\n');
+    chk(sortiert(await p.locator('#docText').inputValue()) === sortiert(doc), 'nach dem Neuladen ist das Projekt nicht dasselbe');
+    chk((await p.locator('#saveState').textContent()).includes('geladen'), 'die Anzeige sagt nicht, woher das Projekt kommt');
+    // NEU braucht zwei Tipps und bringt die Demo zurueck - auch nach dem naechsten Neuladen
+    await p.locator('#docNew').tap(); await p.waitForTimeout(150);
+    chk(await bpm() === vorher + 7, 'ein einziger Tipp auf NEU setzt schon zurueck');
+    await p.locator('#docNew').tap(); await p.waitForTimeout(2200);
+    chk(await bpm() === vorher, 'NEU bringt die Demo nicht zurueck');
+    await p.reload(); await p.waitForTimeout(1800);
+    chk(await bpm() === vorher, 'nach NEU und Neuladen ist das alte Projekt wieder da');
+  }
+
   grp('Auf echten Handygroessen ist alles zu treffen');
   // Gemeldet am iPhone: M-Knoepfe verdeckt, Seite breiter als der Schirm. Geprueft wird,
   // ob in der Mitte jedes Bedienelements auch wirklich DIESES Element liegt.

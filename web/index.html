@@ -495,10 +495,12 @@ textarea {
     <div class="lbl">Projekt als Dokument</div>
     <p class="hint">Dieselben Zeilen stehen in der Projektdatei und im Plugin-Zustand: eine
       stabile ID je Wert. Text ersetzen und <b>Laden</b> druecken, um ein Projekt zu uebernehmen.</p>
+    <p class="hint" id="saveState">Wird automatisch gespeichert.</p>
     <textarea id="docText" spellcheck="false"></textarea>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       <button id="docLoad">LADEN</button>
       <button id="docCopy">KOPIEREN</button>
+      <button id="docNew">NEU (DEMO)</button>
       <div class="spacer"></div>
       <button id="docClose">SCHLIESSEN</button>
     </div>
@@ -572,6 +574,7 @@ async function boot() {
               lo: X.scParamLo(i), hi: X.scParamHi(i), flags: X.scParamFlags(i)});
     }
     buildRail(); buildPats(); buildPads(); buildParams(); tick();
+    prjRestore();
   } catch (e) {
     document.getElementById('app').innerHTML =
       '<div class="err">Der Kern liess sich nicht laden: ' + e.message + '</div>';
@@ -1641,17 +1644,132 @@ el('songPlay').onclick = () => {
 el('pickClose').onclick = () => el('pick').close();
 el('docBtn').onclick = () => { el('docText').value = str(X.scSave()); el('doc').showModal(); };
 el('docClose').onclick = () => el('doc').close();
-el('docLoad').onclick = () => {
-  const t = el('docText').value;
+function loadDoc(t) {
   const b = new TextEncoder().encode(t + '\0');
   const p = X.scScratch(b.length);
   new Uint8Array(X.memory.buffer, p, b.length).set(b);
   X.scLoad(p);
   if (node) node.port.postMessage({fn: 'scLoad', doc: new TextEncoder().encode(t)});
-  el('doc').close();
-  buildPats(); buildPads(); buildParams();
+  buildRail(); buildPats(); buildPads(); buildParams();
   smpRestoreWanted();
+}
+el('docLoad').onclick = () => { loadDoc(el('docText').value); el('doc').close(); };
+// Neu braucht zwei Tipps - das ueberschreibt das gespeicherte Projekt.
+let neuArmed = 0;
+el('docNew').onclick = () => {
+  if (Date.now() - neuArmed > 3000) {
+    neuArmed = Date.now(); el('docNew').textContent = 'WIRKLICH?';
+    setTimeout(() => el('docNew').textContent = 'NEU (DEMO)', 3000);
+    return;
+  }
+  neuArmed = 0; el('docNew').textContent = 'NEU (DEMO)';
+  if (playing) el('play').click();
+  X.scDemo();
+  loadDoc(str(X.scSave()));
+  el('doc').close();
 };
+
+// --- Projekt speichert sich selbst ----------------------------------------------------------
+// Ein neuer Stand der Seite (ein Update) soll das Projekt nicht auf die Demo zuruecksetzen.
+// Zwei Ablagen: der Browser-Speicher (schnell, auch offline) und - wo die Seite es darf - das
+// eigene Konto (ueberlebt geloeschte Website-Daten und Safaris Aufraeumen). Beim Start gewinnt
+// der neuere Stand. Gespeichert wird nur, was sich geaendert hat.
+const PRJKEY = 'synthcity-projekt';
+let savedText = null, bootText = null, restoring = true, cloud = null, cloudAt = 0, cloudText = null;
+function prjDb() {
+  return new Promise((ok, no) => {
+    try {
+      const r = indexedDB.open('synthcity-projekt', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('p');
+      r.onsuccess = () => ok(r.result);
+      r.onerror = () => no(r.error);
+    } catch (e) { no(e); }
+  });
+}
+async function prjLocalGet() {
+  let best = null;
+  try {
+    const db = await prjDb();
+    best = await new Promise(ok => {
+      const r = db.transaction('p').objectStore('p').get('aktuell');
+      r.onsuccess = () => ok(r.result || null); r.onerror = () => ok(null);
+    });
+  } catch (e) {}
+  try {
+    const l = JSON.parse(localStorage.getItem(PRJKEY) || 'null');
+    if (l && (!best || l.t > best.t)) best = l;
+  } catch (e) {}
+  return best;
+}
+async function prjLocalPut(rec) {
+  try { localStorage.setItem(PRJKEY, JSON.stringify(rec)); } catch (e) {}
+  try {
+    const db = await prjDb();
+    db.transaction('p', 'readwrite').objectStore('p').put(rec, 'aktuell');
+  } catch (e) {}
+}
+function saveInfo(txt) { const e = el('saveState'); if (e) e.textContent = txt; }
+function prjSave(force) {
+  if (restoring || !X) return;
+  const text = str(X.scSave());
+  if (text === savedText && !force) return;
+  const rec = {doc: text, t: Date.now(), v: 1};
+  savedText = text;
+  prjLocalPut(rec);
+  const zeit = new Date(rec.t).toLocaleTimeString('de-DE', {hour: '2-digit', minute: '2-digit'});
+  saveInfo('Gespeichert ' + zeit + ' im Browser' + (cloud ? ' und im Konto.' : '.'));
+  cloudPush();
+}
+// Ins Konto hoechstens alle 5 Sekunden - der Browser-Speicher haelt die Zwischenstaende.
+let cloudTimer = null;
+function cloudPush() {
+  if (!cloud || cloudTimer) return;
+  const warte = Math.max(0, 5000 - (Date.now() - cloudAt));
+  cloudTimer = setTimeout(async () => {
+    cloudTimer = null;
+    if (!savedText || savedText === cloudText || savedText.length > 250000) return;
+    const text = savedText;
+    cloudAt = Date.now();
+    try { await cloud.set({doc: text, t: Date.now(), v: 1}); cloudText = text; }
+    catch (e) { saveInfo('Im Browser gespeichert - das Konto antwortet gerade nicht.'); }
+    if (savedText !== cloudText) cloudPush();
+  }, warte);
+}
+async function prjRestore() {
+  bootText = str(X.scSave());
+  const lokal = await prjLocalGet();
+  if (lokal && lokal.doc) { loadDoc(lokal.doc); saveInfo('Projekt aus dem Browser-Speicher geladen.'); }
+  bootText = str(X.scSave());
+  savedText = lokal && lokal.doc ? bootText : null;     // nach dem Laden so, wie der Kern es schreibt
+  const lokalT = lokal ? lokal.t : 0;
+  restoring = false;
+  // Konto: kommt spaeter oder gar nicht. Ist es dort neuer und wurde hier noch nichts
+  // veraendert, gilt der Stand aus dem Konto.
+  try {
+    for (let i = 0; i < 30 && !(window.claude && window.claude.use); i++) await new Promise(r => setTimeout(r, 100));
+    if (!window.claude || !window.claude.use) return;
+    const [db, user] = await Promise.all([window.claude.use('db'), window.claude.use('user')]);
+    if (!db || !user) return;
+    const id = await user.id();
+    if (!id) return;
+    const ref = db.collection('data/users/' + id).doc('projekt');
+    const snap = await Promise.race([ref.get(), new Promise((_, no) => setTimeout(() => no(new Error('zeit')), 10000))]);
+    cloud = ref;
+    const d = snap.exists ? snap.data() : null;
+    if (d && typeof d.doc === 'string') cloudText = d.doc;
+    const unberuehrt = str(X.scSave()) === bootText;
+    if (d && typeof d.doc === 'string' && d.t > lokalT && unberuehrt) {
+      loadDoc(d.doc); savedText = str(X.scSave()); prjLocalPut({doc: d.doc, t: d.t, v: 1});
+      saveInfo('Projekt aus dem Konto geladen.');
+    } else {
+      saveInfo(savedText ? 'Wird automatisch gespeichert: im Browser und im Konto.' : 'Wird automatisch gespeichert.');
+      prjSave(); cloudPush();
+    }
+  } catch (e) { /* ohne Konto bleibt der Browser-Speicher */ }
+}
+setInterval(() => prjSave(false), 1500);
+document.addEventListener('visibilitychange', () => { if (document.hidden) prjSave(false); });
+window.addEventListener('pagehide', () => prjSave(false));
 el('docCopy').onclick = async () => {
   try { await navigator.clipboard.writeText(el('docText').value); el('docCopy').textContent = 'KOPIERT'; }
   catch (e) { el('docText').select(); }
