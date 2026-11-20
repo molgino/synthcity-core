@@ -79,7 +79,7 @@ struct Plug {
         switch (p.kind) {
         case PX_GLOBAL:
             eng.P.g[p.slot] = (int16_t)(v + 0.5);
-            if (!strcmp(PARAMS[p.pidx].id, "bpm")) eng.seq.bpm = v;
+            if (!strcmp(PARAMS[p.pidx].id, "bpm")) eng.setTempo(eng.tempoOf(eng.pat));
             break;
         case PX_TRACK:
             if (!strcmp(PARAMS[p.pidx].id, "trk.machine")) {
@@ -201,7 +201,7 @@ static bool stLoad(const clap_plugin_t* pl, const clap_istream_t* is) {
     }
     projectFromDoc(d, P->eng.P);
     P->focus = d.get("ui.track", 0);
-    P->eng.seq.bpm = P->eng.P.g[paramSlot(paramFind("bpm"))];
+    P->eng.seq.bpm = P->eng.tempoOf(P->eng.pat);
     P->eng.resetTrackValues();
     if (P->host) {
         const clap_host_params_t* hp = (const clap_host_params_t*)P->host->get_extension(P->host, CLAP_EXT_PARAMS);
@@ -290,7 +290,8 @@ static clap_process_status plProcess(const clap_plugin_t* pl, const clap_process
 
     // Transport: der Host gibt Tempo und Lauf vor, solange er einen hat.
     if (pr->transport) {
-        if (pr->transport->flags & CLAP_TRANSPORT_HAS_TEMPO) P->eng.seq.bpm = pr->transport->tempo;
+        // Im Host gibt der Host das Tempo vor - eigene Pattern-Tempi gelten hier nicht.
+        if (pr->transport->flags & CLAP_TRANSPORT_HAS_TEMPO) P->eng.setTempo(pr->transport->tempo);
         bool playing = (pr->transport->flags & CLAP_TRANSPORT_IS_PLAYING) != 0;
         if (playing && !P->wasPlaying) P->eng.seq.start();
         if (!playing && P->wasPlaying) P->eng.stop();

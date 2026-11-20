@@ -227,8 +227,8 @@ struct Engine : Sink {
         resetTrackValues();
     }
     void start() {
-        seq.bpm = P.g[paramSlot(paramFind("bpm"))];
         if (songOn) { seq.stop(); songStart(); }         // der Song faengt vorn an
+        seq.bpm = tempoOf(pat);
         seq.start();
     }
 
@@ -244,6 +244,33 @@ struct Engine : Sink {
     void recStop() { recOn = false; recSlot = -1; }
     int  recFrames() const { return (recSlot >= 0) ? pool.s[recSlot].n : 0; }
     void stop()  { seq.stop(); for (int i = 0; i < NVOICES; i++) v[i].release(); }
+
+    // --- Tempo -------------------------------------------------------------------------------
+    // Ein Tempowechsel im Lauf darf die Position nicht verschieben. Die Zeit eines Steps ist
+    // Ursprung + k * Steplaenge; aendert sich die Steplaenge, liegen alle schon vergangenen k
+    // ploetzlich woanders, und der Sequencer holt sie auf einen Schlag nach (ein Druck auf
+    // BPM + feuerte sieben Anschlaege in einem Block). Darum wird der Ursprung so verschoben,
+    // dass die AKTUELLE Position im Takt gleich bleibt - und alles schon Geplante mit.
+    void setTempo(double bpm) {
+        if (bpm < 20.0) bpm = 20.0;
+        if (bpm > 400.0) bpm = 400.0;
+        double alt = seq.bpm;
+        if (bpm == alt) return;
+        if (seq.running && alt > 0.0) {
+            double f = alt / bpm;                              // neue Laenge je alter Laenge
+            int64_t pos = seq.pos;
+            seq.origin = pos - (int64_t)llround((double)(pos - seq.origin) * f);
+            for (int i = 0; i < seq.nPend; i++)
+                seq.pend[i].at = pos + (int64_t)llround((double)(seq.pend[i].at - pos) * f);
+            if (switchAt > pos) switchAt = pos + (int64_t)llround((double)(switchAt - pos) * f);
+        }
+        seq.bpm = bpm;
+    }
+    // Das Tempo, das gerade gilt: das eigene des Patterns, sonst das des Projekts.
+    double tempoOf(int p) const {
+        int pb = (p >= 0 && p < NPATTERNS) ? P.pat[p].bpm : 0;
+        return pb > 0 ? (double)pb : (double)P.g[paramSlot(paramFind("bpm"))];
+    }
 
     double cycleLen() const {
         double sp16 = seq.sr * 60.0 / ((seq.bpm < 20.0 ? 20.0 : seq.bpm) * 4.0);
@@ -268,6 +295,7 @@ struct Engine : Sink {
         patNext = -1; switchAt = -1;
         pat = P.song.e[0].pat;
         seq.toPattern(seq.pos);
+        seq.bpm = tempoOf(pat);
         resetTrackValues();
     }
     void songStop() { songOn = false; if (songArmed) { patNext = -1; switchAt = -1; songArmed = false; } }
@@ -292,6 +320,7 @@ struct Engine : Sink {
         if (!seq.running) {
             pat = p; patNext = -1; switchAt = -1;
             seq.toPattern(seq.pos);
+            seq.bpm = tempoOf(p);
             resetTrackValues();
             return;
         }
@@ -399,6 +428,7 @@ struct Engine : Sink {
             if (patNext >= 0 && seq.pos >= switchAt) {
                 pat = patNext; patNext = -1; switchAt = -1;
                 seq.toPattern(seq.pos);
+                seq.bpm = tempoOf(pat);              // Ursprung ist frisch - kein Umrechnen noetig
                 resetTrackValues();
                 if (songArmed) {
                     songArmed = false;

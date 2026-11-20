@@ -55,7 +55,8 @@ int  scGet(int track, int slot) {
 void scSet(int track, int slot, int v) {
     if (track < 0) {
         gEng.P.g[slot] = (int16_t)v;
-        if (slot == paramSlot(paramFind("bpm"))) gEng.seq.bpm = v;
+        // Das Projekttempo gilt nur, wo das Pattern kein eigenes hat.
+        if (slot == paramSlot(paramFind("bpm"))) gEng.setTempo(gEng.tempoOf(gEng.pat));
     } else gEng.P.pat[gEng.pat].t[track].p[slot] = (int16_t)v;
 }
 
@@ -116,6 +117,7 @@ void scSetPattern(int p) {
     if (p < 0 || p >= NPATTERNS) return;
     gEng.pat = p; gEng.patNext = -1; gEng.switchAt = -1;
     gEng.seq.toPattern(gEng.seq.pos);
+    gEng.seq.bpm = gEng.tempoOf(p);
     gEng.resetTrackValues();
 }
 int  scPatUsed(int p)   { return (p >= 0 && p < NPATTERNS) ? gEng.P.pat[p].used : 0; }
@@ -150,6 +152,15 @@ void scSongStart()      { gEng.songStart(); }
 void scSongStop()       { gEng.songStop(); }
 int  scSongOn()         { return gEng.songOn ? 1 : 0; }
 int  scSongPos()        { return gEng.songPos; }
+
+// --- Tempo je Pattern: 0 = das Projekttempo gilt ------------------------------------------
+int  scPatBpm(int p)    { return (p >= 0 && p < NPATTERNS) ? gEng.P.pat[p].bpm : 0; }
+void scSetPatBpm(int p, int v) {
+    if (p < 0 || p >= NPATTERNS) return;
+    gEng.P.pat[p].bpm = (int16_t)(v <= 0 ? 0 : (v < 30 ? 30 : (v > 300 ? 300 : v)));
+    if (p == gEng.pat) gEng.setTempo(gEng.tempoOf(p));
+}
+int  scTempoNow()       { return (int)(gEng.tempoOf(gEng.pat) + 0.5); }
 
 int  scChg()            { return gEng.chgSteps; }
 void scSetChg(int n)    { gEng.chgSteps = n < 1 ? 1 : (n > NSTEPS ? NSTEPS : n); }
@@ -249,7 +260,7 @@ void scLoad(const char* text) {
     gEng.pat = (p0 >= 0 && p0 < NPATTERNS) ? p0 : 0;
     gEng.patNext = -1; gEng.switchAt = -1;
     gEng.seq.toPattern(gEng.seq.pos);
-    gEng.seq.bpm = gEng.P.g[paramSlot(paramFind("bpm"))];
+    gEng.seq.bpm = gEng.tempoOf(gEng.pat);
     gEng.resetTrackValues();
 }
 

@@ -716,6 +716,51 @@ int main() {
         e.pat = 0;
     }
 
+    grp("Tempo aendern, waehrend es laeuft");
+    {
+        // Jede Sechzehntel ein Anschlag. Ein Druck auf BPM + darf nicht nachholen, was
+        // bei neuem Tempo "schon haette sein muessen" - vorher kamen sieben auf einmal.
+        auto zaehle = [&](int bloecke) { uint64_t c0 = e.clock; static float bb[512 * 2];
+                                         for (int k = 0; k < bloecke; k++) e.render(bb, 512);
+                                         return (int)(e.clock - c0); };
+        e.prepare(48000.0f);
+        projectInit(e.P); e.P.pat[0].used = 1; e.pat = 0;
+        for (int s = 0; s < 16; s++) e.P.pat[0].t[0].s[s].on = 1;
+        e.start();
+        zaehle(200);
+        e.setTempo(180.0);
+        chk(zaehle(1) <= 1, "ein Tempowechsel feuert mehrere Anschlaege auf einmal");
+        // Danach im neuen Tempo: 180 bpm sind 12 Sechzehntel je Sekunde.
+        int n = zaehle(94);                                   // ~1 s
+        chk(n >= 11 && n <= 13, "nach dem Wechsel laeuft es nicht im neuen Tempo");
+        e.setTempo(90.0);
+        chk(zaehle(1) <= 1, "langsamer werden feuert mehrere Anschlaege auf einmal");
+        n = zaehle(94);
+        chk(n >= 5 && n <= 7, "nach dem Bremsen laeuft es nicht im neuen Tempo");
+
+        // Ein Pattern mit eigenem Tempo: es gilt ab dem Wechsel, danach wieder das Projekt.
+        e.prepare(48000.0f);
+        projectInit(e.P);
+        for (int p = 0; p < 2; p++) { e.P.pat[p].used = 1; e.P.pat[p].t[0].s[0].on = 1; }
+        e.P.pat[1].bpm = 150;
+        e.pat = 0;
+        e.start();
+        chk(e.seq.bpm == 120.0, "Pattern 0 laeuft nicht im Projekttempo");
+        e.queuePattern(1);
+        static float bb[1000 * 2];
+        for (int k = 0; k < 100; k++) e.render(bb, 1000);    // ueber den Wechsel bei 96000
+        chk(e.pat == 1 && e.seq.bpm == 150.0, "das eigene Tempo von Pattern 1 gilt nicht");
+        e.queuePattern(0);
+        for (int k = 0; k < 100; k++) e.render(bb, 1000);
+        chk(e.pat == 0 && e.seq.bpm == 120.0, "zurueck bei Pattern 0 gilt nicht wieder das Projekttempo");
+
+        static Doc d; d.clear();
+        projectToDoc(e.P, d);
+        static Project Q; projectFromDoc(d, Q);
+        chk(Q.pat[1].bpm == 150 && Q.pat[0].bpm == 0, "das Pattern-Tempo ueberlebt das Dokument nicht");
+        e.pat = 0;
+    }
+
     grp("Referenz-Aufnahme");
     {
         const int N = 96000;                         // zwei Sekunden

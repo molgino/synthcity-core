@@ -155,6 +155,66 @@ const stummMuster = async p => {
         'der Sample-Platz zeigt den Namen nicht');
   }
 
+  grp('Genaue Werte: antippen statt ziehen');
+  {
+    // Spur 1 waehlen, NOTE antippen: das Feinwert-Fenster oeffnet sich
+    await p.locator('.trk').nth(0).locator('.nm').tap(); await p.waitForTimeout(200);
+    const note = p.locator('.row', {hasText: 'trk.note'});
+    await note.scrollIntoViewIfNeeded();
+    await note.tap(); await p.waitForTimeout(250);
+    chk(await p.locator('#fine').isVisible(), 'antippen oeffnet kein Feinwert-Fenster');
+    const knoepfe = (await p.locator('#fineBtns button').allTextContents()).map(t => t.trim());
+    chk(knoepfe.join(' ') === '\u2212OKT \u22121 +1 +OKT', 'NOTE hat keine Halbton- und Oktavschritte: ' + knoepfe.join(' '));
+    const vorher = (await p.locator('#fineVal').textContent()).trim();
+    await p.locator('#fineBtns button').nth(2).tap(); await p.waitForTimeout(150);      // +1
+    const halbton = (await p.locator('#fineVal').textContent()).trim();
+    await p.locator('#fineBtns button').nth(0).tap(); await p.waitForTimeout(150);      // -OKT
+    const okt = (await p.locator('#fineVal').textContent()).trim();
+    const name = n => { const m = n.match(/^([A-G]#?)(-?\d+)$/); return m ? [m[1], +m[2]] : null; };
+    const reihe = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+    const num = n => { const x = name(n); return x ? (x[1] + 1) * 12 + reihe.indexOf(x[0]) : NaN; };
+    chk(num(halbton) - num(vorher) === 1, '+1 ist kein Halbton (' + vorher + ' -> ' + halbton + ')');
+    chk(num(halbton) - num(okt) === 12, '-OKT ist keine Oktave (' + halbton + ' -> ' + okt + ')');
+    await p.locator('#fineReset').tap(); await p.waitForTimeout(150);
+    chk((await p.locator('#fineVal').textContent()).trim() === 'C4', 'GRUNDWERT setzt nicht auf C4 zurueck');
+    await p.locator('#fineClose').tap(); await p.waitForTimeout(150);
+    chk((await note.locator('.v').textContent()).trim() === 'C4', 'die Zeile zeigt den neuen Wert nicht');
+    // Ziehen bleibt fuer grobe Wege: ein Tipp darf nichts verstellen
+    const vol = p.locator('.row', {hasText: 'trk.vol'});
+    await vol.scrollIntoViewIfNeeded();
+    const v0 = (await vol.locator('.v').textContent()).trim();
+    await vol.tap(); await p.waitForTimeout(200);
+    chk((await p.locator('#fineVal').textContent()).trim() === v0, 'das Oeffnen verstellt den Wert');
+    await p.locator('#fineClose').tap();
+  }
+
+  grp('Tempo je Pattern');
+  {
+    const bpm = async () => +(await p.locator('#bpm').textContent()).trim();
+    if ((await p.locator('#play').textContent()).trim() === 'STOP') await p.locator('#play').click();
+    await p.waitForTimeout(200);
+    await p.locator('.pt').nth(0).tap(); await p.waitForTimeout(200);
+    const projekt = await bpm();
+    chk(!(await p.locator('#bpmPat').evaluate(e => e.classList.contains('on'))), 'Pattern 1 hat schon ein eigenes Tempo');
+    await p.locator('.pt').nth(1).tap(); await p.waitForTimeout(200);
+    await p.locator('#bpmPat').tap(); await p.waitForTimeout(150);        // Pattern 2 bekommt eigenes Tempo
+    chk(await p.locator('#bpmPat').evaluate(e => e.classList.contains('on')), 'P schaltet das eigene Tempo nicht ein');
+    for (let i = 0; i < 10; i++) await p.locator('#bpmUp').tap();
+    await p.waitForTimeout(200);
+    chk(await bpm() === projekt + 10, 'das Pattern-Tempo laesst sich nicht verstellen');
+    await p.locator('.pt').nth(0).tap(); await p.waitForTimeout(200);
+    chk(await bpm() === projekt, 'Pattern 1 hat das Tempo von Pattern 2 uebernommen');
+    await p.locator('.pt').nth(1).tap(); await p.waitForTimeout(200);
+    chk(await bpm() === projekt + 10, 'Pattern 2 hat sein Tempo vergessen');
+    // Feinwert auch fuer das Tempo
+    await p.locator('#bpm').tap(); await p.waitForTimeout(200);
+    chk((await p.locator('#fineTitle').textContent()).includes('PATTERN 2'), 'das Fenster sagt nicht, wessen Tempo es ist');
+    await p.locator('#fineReset').tap(); await p.waitForTimeout(150);      // zurueck zum Projekttempo
+    await p.locator('#fineClose').tap(); await p.waitForTimeout(150);
+    chk(await bpm() === projekt && !(await p.locator('#bpmPat').evaluate(e => e.classList.contains('on'))),
+        'PROJEKTTEMPO nimmt das eigene Tempo nicht zurueck');
+  }
+
   grp('Song: Patterns nacheinander');
   {
     // Anhalten, damit die Wahl sofort gilt; dann die Kette bauen: P1 einmal, P2 einmal.

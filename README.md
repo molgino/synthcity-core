@@ -60,6 +60,25 @@ Drei Entscheidungen, die den Rest tragen:
   Das war zuerst falsch: der Schnappschuss fror alles ein, und ein gedrehter Filterregler
   blieb am klingenden Ton wirkungslos.
 
+## Tempo
+
+Das Tempo gehört entweder dem **Projekt** oder einem **Pattern**. Ein Pattern mit eigenem Tempo
+bringt es beim Wechsel mit — am Taktende, wie der Wechsel selbst. In der Oberfläche schaltet
+**P** neben der Tempoanzeige um; ein Tipp auf die Zahl öffnet das Feinwert-Fenster.
+
+Dabei kam ein alter Fehler ans Licht: **ein Tempowechsel im Lauf feuerte sieben Anschläge auf
+einmal.** Die Zeit eines Steps ist Ursprung + k · Steplänge; ändert sich die Steplänge, liegen
+alle schon vergangenen k plötzlich woanders, und der Sequencer holt sie nach. `setTempo`
+verschiebt deshalb den Ursprung so, dass die *aktuelle* Position im Takt gleich bleibt, und
+rechnet alles schon Geplante mit um. Jeder Tempowechsel — Knopf, Pattern, Host — läuft jetzt
+darüber; ein Mutationstest ohne das Umrechnen wird rot.
+
+## Genaue Werte per Touch
+
+Ziehen ist für grobe Wege — eine Note höher trifft man damit nur durch Glück. **Antippen**
+öffnet ein Feinwert-Fenster mit Schritten: bei NOTE Halbton und Oktave, sonst ±1 und ±10; die
+Tasten wiederholen beim Halten, und *Grundwert* (im Lock-Modus: *Lock entfernen*) setzt zurück.
+
 ## Song
 
 Ein Song ist eine Kette: Pattern, wie oft, dann das nächste; am Ende geht es vorn weiter. Er

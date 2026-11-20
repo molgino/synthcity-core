@@ -59,6 +59,7 @@ struct Pattern {
     Track t[NTRACKS];
     SceneTrack sc[NSCENES][NTRACKS];
     uint8_t used = 0;
+    int16_t bpm = 0;            // eigenes Tempo; 0 = das des Projekts
 };
 
 // Ein Song ist eine Kette: Pattern, wie oft, dann das naechste. Am Ende geht es vorn weiter.
@@ -84,7 +85,7 @@ inline void projectInit(Project& P) {
         if (d.scope == PS_GLOBAL) P.g[slot] = d.def;
     }
     for (int pi = 0; pi < NPATTERNS; pi++) {
-        P.pat[pi].used = 0;
+        P.pat[pi].used = 0; P.pat[pi].bpm = 0;
         for (int t = 0; t < NTRACKS; t++) {
             Track& tr = P.pat[pi].t[t];
             tr.len = 16; tr.speed = 4;
@@ -101,7 +102,7 @@ inline void projectInit(Project& P) {
 inline void patternClear(Project& P, int i) {
     if (i < 0 || i >= NPATTERNS) return;
     Pattern& pt = P.pat[i];
-    pt.used = 0;
+    pt.used = 0; pt.bpm = 0;
     for (int t = 0; t < NTRACKS; t++) {
         Track& tr = pt.t[t];
         tr.len = 16; tr.speed = 4;
@@ -159,6 +160,7 @@ inline void projectToDoc(const Project& P, Doc& d) {
         const Pattern& pt = P.pat[pi];
         if (!pt.used) continue;
         snprintf(k, sizeof k, "pat.%d.used", pi); d.set(k, 1);
+        if (pt.bpm) { snprintf(k, sizeof k, "pat.%d.bpm", pi); d.set(k, pt.bpm); }
         for (int t = 0; t < NTRACKS; t++) {
             const Track& tr = pt.t[t];
             if (tr.len != 16)  { snprintf(k, sizeof k, "pat.%d.trk.%d.len", pi, t);   d.set(k, tr.len); }
@@ -223,6 +225,9 @@ inline void projectFromDoc(const Doc& d, Project& P) {
         if (!d.get(k, 0)) continue;
         Pattern& pt = P.pat[pi];
         pt.used = 1;
+        snprintf(k, sizeof k, "pat.%d.bpm", pi);
+        int pb = d.get(k, 0);
+        pt.bpm = (int16_t)(pb < 0 ? 0 : (pb > 300 ? 300 : pb));
         for (int t = 0; t < NTRACKS; t++) {
             Track& tr = pt.t[t];
             snprintf(k, sizeof k, "pat.%d.trk.%d.len", pi, t);   tr.len = (uint8_t)d.get(k, 16);
