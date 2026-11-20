@@ -11,16 +11,16 @@
 
 struct ScaleDef { const char* name; uint16_t mask; };   // Bit i = Halbton i ueber dem Grundton
 static const ScaleDef SCALES[] = {
-    {"CHROMATISCH",  0xFFF},
-    {"DUR",          0xAB5},   // 0 2 4 5 7 9 11
-    {"MOLL",         0x5AD},   // 0 2 3 5 7 8 10
-    {"HARM. MOLL",   0x9AD},   // 0 2 3 5 7 8 11
-    {"DORISCH",      0x6AD},   // 0 2 3 5 7 9 10
-    {"PHRYGISCH",    0x5AB},   // 0 1 3 5 7 8 10
-    {"LYDISCH",      0xAD5},   // 0 2 4 6 7 9 11
-    {"MIXOLYDISCH",  0x6B5},   // 0 2 4 5 7 9 10
-    {"PENT. DUR",    0x295},   // 0 2 4 7 9
-    {"PENT. MOLL",   0x4A9},   // 0 3 5 7 10
+    {"CHROMATIC",  0xFFF},
+    {"MAJOR",        0xAB5},   // 0 2 4 5 7 9 11
+    {"MINOR",        0x5AD},   // 0 2 3 5 7 8 10
+    {"HARM. MINOR",   0x9AD},   // 0 2 3 5 7 8 11
+    {"DORIAN",      0x6AD},   // 0 2 3 5 7 9 10
+    {"PHRYGIAN",    0x5AB},   // 0 1 3 5 7 8 10
+    {"LYDIAN",      0xAD5},   // 0 2 4 6 7 9 11
+    {"MIXOLYDIAN",  0x6B5},   // 0 2 4 5 7 9 10
+    {"PENT. MAJOR",    0x295},   // 0 2 4 7 9
+    {"PENT. MINOR",   0x4A9},   // 0 3 5 7 10
     {"BLUES",        0x4E9},   // 0 3 5 6 7 10
 };
 enum { NSCALES = (int)(sizeof SCALES / sizeof *SCALES) };

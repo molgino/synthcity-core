@@ -1050,6 +1050,63 @@ int main() {
         chk(alt == 1 && neu == 1, "der naechste Anschlag beendet die INF-Note nicht");
     }
 
+    grp("Modulation: LFOs und Mod-Huellkurve");
+    {
+        static float a[48000 * 2];
+        auto lang = [&](int note) {
+            e.prepare(48000.0f); setupBeat(e, note);
+            Track& t = e.P.pat[0].t[0];
+            t.p[SL("trk.flt.freq")] = 127; t.p[SL("trk.amp.sus")] = 100;
+            t.p[SL("trk.amp.dec")] = 127; t.p[SL("trk.len")] = 98;
+            return &t;
+        };
+        // LFO1: Rechteck auf PITCH, +50 % = +12 Halbtoene (bei PITCH ist ein Schritt ein halber Halbton), eine Viertel lang, TRIG
+        Track* t = lang(60);
+        t->p[SL("trk.lfo1.wave")] = LFO_SQR; t->p[SL("trk.lfo1.rate")] = 7;      // 1/4
+        t->p[SL("trk.lfo1.depth")] = 64 + 24; t->p[SL("trk.lfo1.dest")] = 1;     // PITCH: ein Schritt = halber Halbton
+        t->p[SL("trk.lfo1.mode")] = LFO_TRIG;
+        e.start(); e.render(a, 24000);
+        float hoch1 = bin(a + 2000 * 2, 8000, 523.25f, 48000.0f), tief1 = bin(a + 2000 * 2, 8000, 130.81f, 48000.0f);
+        float hoch2 = bin(a + 14000 * 2, 8000, 523.25f, 48000.0f), tief2 = bin(a + 14000 * 2, 8000, 130.81f, 48000.0f);
+        chk(hoch1 > tief1 * 4.0f, "LFO-Rechteck: die erste Haelfte liegt nicht eine Oktave hoeher");
+        chk(tief2 > tief1 * 4.0f, "LFO-Rechteck: die zweite Haelfte liegt nicht eine Oktave tiefer");   // 523 Hz ist dort nur Oberton
+        (void)hoch2;
+        // Ohne Ziel bewegt sich nichts
+        t = lang(60);
+        t->p[SL("trk.lfo1.wave")] = LFO_SQR; t->p[SL("trk.lfo1.depth")] = 127;
+        e.start(); e.render(a, 24000);
+        chk(bin(a + 14000 * 2, 8000, 261.63f, 48000.0f) > bin(a + 14000 * 2, 8000, 130.81f, 48000.0f) * 4.0f,
+            "ein LFO ohne Ziel veraendert den Klang");
+        // FREE: die Phase haengt am Takt. Rate 1/2 = zwei Viertel; der Anschlag auf Viertel 2
+        // beginnt mitten im Zyklus - also in der tiefen Haelfte.
+        t = lang(60);
+        t->p[SL("trk.lfo1.wave")] = LFO_SQR; t->p[SL("trk.lfo1.rate")] = 5;      // 1/2
+        t->p[SL("trk.lfo1.depth")] = 64 + 24; t->p[SL("trk.lfo1.dest")] = 1;
+        t->p[SL("trk.lfo1.mode")] = LFO_FREE;
+        e.start(); e.render(a, 24000); e.render(a, 12000);
+        chk(bin(a + 2000 * 2, 8000, 130.81f, 48000.0f) > bin(a + 2000 * 2, 8000, 523.25f, 48000.0f) * 4.0f,
+            "FREE-LFO: die Phase laeuft nicht am Takt");
+        // Mod-Huellkurve auf VOLUME, -100 %: am Anfang still, mit dem Abklingen lauter
+        t = lang(60);
+        t->p[SL("trk.menv.dest")] = 7; t->p[SL("trk.menv.depth")] = 1;           // VOLUME, -100 %
+        t->p[SL("trk.menv.atk")] = 0; t->p[SL("trk.menv.dec")] = 70;
+        e.start(); e.render(a, 24000);
+        chk(rms(a + 200 * 2, 1500) * 4.0f < rms(a + 18000 * 2, 4000), "die Mod-Huellkurve wirkt nicht auf VOLUME");
+        // LFO2 auf CUTOFF
+        t = lang(48);
+        t->p[SL("trk.flt.freq")] = 60;
+        t->p[SL("trk.lfo2.wave")] = LFO_SQR; t->p[SL("trk.lfo2.rate")] = 7;
+        t->p[SL("trk.lfo2.depth")] = 127; t->p[SL("trk.lfo2.dest")] = 4; t->p[SL("trk.lfo2.mode")] = LFO_TRIG;
+        e.start(); e.render(a, 24000);
+        chk(bin(a + 2000 * 2, 8000, 3000.0f, 48000.0f) > bin(a + 14000 * 2, 8000, 3000.0f, 48000.0f) * 4.0f,
+            "LFO2 auf CUTOFF oeffnet das Filter nicht");
+        // Text
+        char tx[32];
+        paramText(PARAMS[paramFind("trk.lfo1.rate")], 7, tx, sizeof tx); chk(!strcmp(tx, "1/4"), "Rate 7 ist nicht 1/4");
+        paramText(PARAMS[paramFind("trk.lfo1.dest")], 4, tx, sizeof tx); chk(!strcmp(tx, "CUTOFF"), "Ziel 4 ist nicht CUTOFF");
+        chk(enumCount(PARAMS[paramFind("trk.lfo1.dest")]) == MOD_NDEST, "die Zielliste hat nicht alle Ziele");
+    }
+
     grp("Referenz-Aufnahme");
     {
         const int N = 96000;                         // zwei Sekunden

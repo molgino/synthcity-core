@@ -48,7 +48,7 @@ struct MachPoly : Machine {
     const char* labelA() const override { return "DTUN"; }
     const char* labelB() const override { return "SHAPE"; }
     void text(int which, float v, char* out, int n) const override {
-        if (which == 0) snprintf(out, n, "%+.2f Halbt.", (double)(pBip(v) * 0.25f));
+        if (which == 0) snprintf(out, n, "%+.2f semi", (double)(pBip(v) * 0.25f));
         else            snprintf(out, n, "%.0f %%", (double)(v * 100.0f / 127.0f));
     }
 
@@ -143,9 +143,9 @@ struct MachDrum : Machine {
     int defB() const override { return 0; }
     const char* name()   const override { return "DRUM"; }
     const char* labelA() const override { return "SWEEP"; }
-    const char* labelB() const override { return "RAUSCH"; }
+    const char* labelB() const override { return "NOISE"; }
     void text(int which, float v, char* out, int n) const override {
-        if (which == 0) snprintf(out, n, "%.0f Halbt.", (double)(pUni(v) * 48.0f));
+        if (which == 0) snprintf(out, n, "%.0f semi", (double)(pUni(v) * 48.0f));
         else            snprintf(out, n, "%.0f %%", (double)(v * 100.0f / 127.0f));
     }
     static int slotA() { static const int s = paramSlot(paramFind("trk.src.a")); return s; }
@@ -188,7 +188,7 @@ struct MachSmpl : Machine {
     const char* name()   const override { return "SMPL"; }
     bool usesSample() const override { return true; }
     const char* labelA() const override { return "START"; }
-    const char* labelB() const override { return "FEIN"; }
+    const char* labelB() const override { return "FINE"; }
     void text(int which, float v, char* out, int n) const override {
         if (which == 0) snprintf(out, n, "%.0f %%", (double)(v * 100.0f / 127.0f));
         else            snprintf(out, n, "%+.0f ct", (double)(pBip(v) * 100.0f));

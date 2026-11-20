@@ -51,7 +51,7 @@ const grp = n => console.log('- ' + n);
 
   grp('Auswahlwerte heissen wie ihre Bedeutung, nicht wie ihr Index');
   chk(str(x.scParamText(idxOf('trk.machine'), 0, -1)) === 'POLY', 'ENGINE zeigt keinen Namen');
-  chk(str(x.scParamText(idxOf('trk.flt.type'), 0, -1)) === 'TIEFPASS', 'Filtertyp zeigt keinen Namen');
+  chk(str(x.scParamText(idxOf('trk.flt.type'), 0, -1)) === 'LOWPASS', 'Filtertyp zeigt keinen Namen');
   chk(str(x.scParamText(idxOf('trk.cond'), 0, -1)) === '--', 'COND 0 ist nicht leer');
   chk(x.scEnumCount(idxOf('trk.cond')) > 50, 'zu wenige Bedingungen zur Auswahl');
   chk(x.scEnumCount(idxOf('trk.machine')) === 4, 'Machine-Liste falsch lang');
@@ -60,9 +60,9 @@ const grp = n => console.log('- ' + n);
   chk(str(x.scParamText(idxOf('trk.machine'), 2, -1)) === 'DRUM', 'Machine 2 heisst nicht DRUM');
   // Dieselbe Zahl heisst je Machine etwas anderes - das ist der Sinn des Machine-Prinzips.
   chk(str(x.scParamText(idxOf('trk.src.a'), 24, 1)) === '2.00 : 1', 'FM zeigt kein Verhaeltnis');
-  chk(str(x.scParamText(idxOf('trk.src.a'), 64, 0)) === '+0.00 Halbt.', 'POLY zeigt kein Detune');
+  chk(str(x.scParamText(idxOf('trk.src.a'), 64, 0)) === '+0.00 semi', 'POLY zeigt kein Detune');
   chk(str(x.scParamText(idxOf('trk.src.a'), 64, -1)) === '+0', 'ohne Machine fehlt die nackte Zahl');
-  chk(str(x.scParamText(idxOf('trk.src.a'), 64, 2)).includes('Halbt.'), 'DRUM zeigt keinen Sweep');
+  chk(str(x.scParamText(idxOf('trk.src.a'), 64, 2)).includes('semi'), 'DRUM zeigt keinen Sweep');
   chk(str(x.scMachLabel(0, 0)) === 'DTUN' && str(x.scMachLabel(1, 0)) === 'RATIO'
       && str(x.scMachLabel(2, 0)) === 'SWEEP', 'Reglernamen je Machine falsch');
   chk(str(x.scParamText(idxOf('fx.a.div'), 4, -1)) === '1/8', 'Echo-Zeit zeigt keinen Notenwert');

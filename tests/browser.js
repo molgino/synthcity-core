@@ -73,11 +73,28 @@ async function R(p, id) {
   chk(await p.locator('#pats').isVisible(), 'die Pattern-Auswahl klappt nicht auf');
   // SAMPLE nur bei einer Engine, die Samples spielt
   const smpSichtbar = async () => p.evaluate(() => !document.querySelector('.row[data-id="trk.smp"]').hidden);
-  await p.locator('.ptab', {hasText: 'QUELLE'}).click(); await p.waitForTimeout(100);
+  await p.locator('.ptab', {hasText: 'SRC'}).click(); await p.waitForTimeout(100);
   const mach = (await p.locator('.row[data-id="trk.machine"] .v').textContent()).trim();
   chk((await smpSichtbar()) === (mach === 'SMPL'), 'SAMPLE ist bei ' + mach + ' falsch ein- oder ausgeblendet');
   // Reiter: es ist immer nur eine Gruppe zu sehen
-  chk(await p.locator('.ptab').count() === 7, 'nicht sieben Reiter: ' + await p.locator('.ptab').count());
+  chk(await p.locator('.ptab').count() === 8, 'nicht acht Reiter: ' + await p.locator('.ptab').count());
+  // MOD: zwei LFOs und eine Mod-Huellkurve, Ziel aus einer Liste
+  await p.locator('.ptab', {hasText: 'MOD'}).click(); await p.waitForTimeout(100);
+  const modIds = await p.evaluate(() => [...document.querySelectorAll('.row')].filter(r => !r.hidden).map(r => r.dataset.id));
+  chk(modIds.length === 14 && modIds[0] === 'trk.lfo1.wave', 'der MOD-Reiter zeigt nicht die 14 Regler: ' + modIds.join(','));
+  chk((await p.locator('.row[data-id="trk.lfo1.dest"] .nm').textContent()).startsWith('DEST'), 'die Zeile heisst nicht DEST');
+  await p.locator('.row[data-id="trk.lfo1.dest"]').click(); await p.waitForTimeout(200);
+  chk(await p.locator('#pickList button').count() === 11, 'die Zielliste hat nicht 11 Eintraege');
+  await p.locator('#pickList button', {hasText: 'CUTOFF'}).click(); await p.waitForTimeout(150);
+  chk((await p.locator('.row[data-id="trk.lfo1.dest"] .v').textContent()).trim() === 'CUTOFF', 'das LFO-Ziel laesst sich nicht waehlen');
+  await p.locator('.row[data-id="trk.lfo1.rate"]').click(); await p.waitForTimeout(200);
+  await p.locator('#pickList button', {hasText: '1/16T'}).click(); await p.waitForTimeout(150);
+  await p.locator('#docBtn').click(); await p.waitForTimeout(150);
+  const md = await p.locator('#docText').inputValue();
+  chk(/\.trk\.0\.lfo1\.dest = 4$/m.test(md) && /\.trk\.0\.lfo1\.rate = 13$/m.test(md), 'LFO-Ziel und -Rate stehen nicht im Dokument');
+  await p.locator('#docClose').click();
+  await p.locator('.row[data-id="trk.lfo1.dest"]').click(); await p.waitForTimeout(200);
+  await p.locator('#pickList button', {hasText: 'NONE'}).click(); await p.waitForTimeout(150);
   // FX: Echo, Hall und Summe sind Projektwerte und lassen sich verstellen
   await p.locator('.ptab', {hasText: 'FX'}).click(); await p.waitForTimeout(100);
   const fxIds = await p.evaluate(() => [...document.querySelectorAll('.row')].filter(r => !r.hidden).map(r => r.dataset.id));
@@ -94,10 +111,10 @@ async function R(p, id) {
   await p.locator('.row[data-id="fx.a.div"]').click(); await p.waitForTimeout(200);
   chk(await p.locator('#pick').isVisible() && await p.locator('#pickList button').count() === 9, 'ECHO hat keine Auswahlliste der Notenwerte');
   await p.locator('#pickClose').click(); await p.waitForTimeout(100);
-  await p.locator('.ptab', {hasText: 'FILTER'}).click(); await p.waitForTimeout(100);
+  await p.locator('.ptab', {hasText: 'FLTR'}).click(); await p.waitForTimeout(100);
   const sichtbar = await p.evaluate(() => [...document.querySelectorAll('.row')].filter(r => !r.hidden).map(r => r.querySelector('small').textContent));
   chk(sichtbar.length > 0 && sichtbar.every(id => id.startsWith('trk.flt.')), 'der Reiter FILTER zeigt nicht nur Filter: ' + sichtbar.join(','));
-  chk(await p.locator('.ptab', {hasText: 'FILTER'}).evaluate(e => e.classList.contains('cur')), 'der gewaehlte Reiter ist nicht markiert');
+  chk(await p.locator('.ptab', {hasText: 'FLTR'}).evaluate(e => e.classList.contains('cur')), 'der gewaehlte Reiter ist nicht markiert');
   chk((await p.evaluate(() => [...document.querySelectorAll('.row')].filter(r => !r.hidden && r.dataset.g === 'Quelle').length)) === 0, 'QUELLE ist trotzdem zu sehen');
   // SAMPLE steht bei QUELLE, nicht als eigene Gruppe
   chk((await p.evaluate(() => document.querySelector('.row[data-g]') && [...document.querySelectorAll('.row')].find(r => r.querySelector('small').textContent === 'trk.smp').dataset.g)) === 'Quelle', 'SAMPLE steht nicht bei QUELLE');
@@ -224,16 +241,16 @@ async function R(p, id) {
     });
     chk(gezeichnet > 0.05, 'keine Wellenform zu sehen');
     const info0 = (await p.locator('#seInfo').textContent()).trim();
-    chk(info0.includes('Start 0.000 s') && info0.includes('Ende 0.500 s'), 'der Ausschnitt steht nicht in der Anzeige: ' + info0);
+    chk(info0.includes('Start 0.000 s') && info0.includes('End 0.500 s'), 'der Ausschnitt steht nicht in der Anzeige: ' + info0);
     for (let i = 0; i < 1; i++) await p.locator('#smpEdit .finebtns button[data-d="100"]').tap();
     await p.waitForTimeout(150);
     chk((await p.locator('#seInfo').textContent()).includes('Start 0.100 s'), 'START laesst sich nicht verschieben');
     await p.locator('.semark button[data-m=b]').tap();
     await p.locator('#smpEdit .finebtns button[data-d="-100"]').tap();
     await p.waitForTimeout(150);
-    chk((await p.locator('#seInfo').textContent()).includes('Ende 0.400 s'), 'ENDE laesst sich nicht verschieben');
+    chk((await p.locator('#seInfo').textContent()).includes('End 0.400 s'), 'ENDE laesst sich nicht verschieben');
     await p.locator('#seLoop').tap(); await p.waitForTimeout(150);
-    chk((await p.locator('#seInfo').textContent()).includes('Loop ab'), 'LOOP laesst sich nicht einschalten');
+    chk((await p.locator('#seInfo').textContent()).includes('Loop from'), 'LOOP laesst sich nicht einschalten');
     // Ziehen im Bild setzt den gewaehlten Punkt (Nulldurchgang an: er rastet ein)
     await p.locator('.semark button[data-m=a]').tap();
     const box = await p.locator('#seWave').boundingBox();
@@ -264,7 +281,7 @@ async function R(p, id) {
     await note.tap(); await p.waitForTimeout(250);
     chk(await p.locator('#fine').isVisible(), 'antippen oeffnet kein Feinwert-Fenster');
     const knoepfe = (await p.locator('#fineBtns button').allTextContents()).map(t => t.trim());
-    chk(knoepfe.join(' ') === '\u2212OKT \u22121 +1 +OKT', 'NOTE hat keine Halbton- und Oktavschritte: ' + knoepfe.join(' '));
+    chk(knoepfe.join(' ') === '\u2212OCT \u22121 +1 +OCT', 'NOTE hat keine Halbton- und Oktavschritte: ' + knoepfe.join(' '));
     const vorher = (await p.locator('#fineVal').textContent()).trim();
     await p.locator('#fineBtns button').nth(2).tap(); await p.waitForTimeout(150);      // +1
     const halbton = (await p.locator('#fineVal').textContent()).trim();
@@ -341,26 +358,26 @@ async function R(p, id) {
     // Swing: eigener des Patterns, sonst der des Projekts
     await chip('SWING', '67%').tap(); await p.waitForTimeout(150);
     chk(await chip('SWING', '67%').evaluate(e => e.classList.contains('cur')), 'Swing 67 % ist nicht gewaehlt');
-    chk((await p.locator('#skBody h4', {hasText: 'SWING'}).textContent()).includes('EIGENER'), 'der Swing gilt nicht als eigener des Patterns');
+    chk((await p.locator('#skBody h4', {hasText: 'SWING'}).textContent()).includes('OWN'), 'der Swing gilt nicht als eigener des Patterns');
     await p.locator('#skBody h4', {hasText: 'SWING'}).locator('xpath=following-sibling::div[2]').locator('button', {hasText: '+1'}).tap();
     await p.waitForTimeout(150);
     chk((await p.locator('#skBody h4', {hasText: 'SWING'}).locator('xpath=following-sibling::div[2]').textContent()).includes('68 %'),
         'der Swing laesst sich nicht fein verstellen');
-    await chip('SWING', 'PROJEKT').tap(); await p.waitForTimeout(150);
-    chk((await p.locator('#skBody h4', {hasText: 'SWING'}).textContent()).includes('VOM PROJEKT'), 'PROJEKT nimmt den eigenen Swing nicht zurueck');
+    await chip('SWING', 'PROJECT').tap(); await p.waitForTimeout(150);
+    chk((await p.locator('#skBody h4', {hasText: 'SWING'}).textContent()).includes('FROM PROJECT'), 'PROJEKT nimmt den eigenen Swing nicht zurueck');
     await chip('SWING', '58%').tap(); await p.waitForTimeout(150);
-    await chip('GESCHWINDIGKEIT', '2x').tap(); await p.waitForTimeout(150);
-    chk(await chip('GESCHWINDIGKEIT', '2x').evaluate(e => e.classList.contains('cur')), '2x ist nicht gewaehlt');
-    await chip('GESCHWINDIGKEIT', '1x').tap();
-    await chip('TONLEITER', 'DUR').tap(); await p.waitForTimeout(150);
+    await chip('SPEED', '2x').tap(); await p.waitForTimeout(150);
+    chk(await chip('SPEED', '2x').evaluate(e => e.classList.contains('cur')), '2x ist nicht gewaehlt');
+    await chip('SPEED', '1x').tap();
+    await chip('SCALE', 'MAJOR').tap(); await p.waitForTimeout(150);
     // Spur 1 auf 32 Steps: +16
-    const lang = p.locator('#skBody h4', {hasText: 'LAENGE'}).locator('xpath=following-sibling::div[1]').locator('button', {hasText: '+16'});
+    const lang = p.locator('#skBody h4', {hasText: 'LENGTH'}).locator('xpath=following-sibling::div[1]').locator('button', {hasText: '+16'});
     await lang.tap(); await p.waitForTimeout(150);
-    await chip('TEILER', '1/8').tap(); await p.waitForTimeout(150);
-    chk(await chip('TEILER', '1/8').evaluate(e => e.classList.contains('cur')), 'der Teiler ist nicht gewaehlt');
+    await chip('DIVISION', '1/8').tap(); await p.waitForTimeout(150);
+    chk(await chip('DIVISION', '1/8').evaluate(e => e.classList.contains('cur')), 'der Teiler ist nicht gewaehlt');
     await p.locator('#skClose').tap(); await p.waitForTimeout(250);
     chk((await p.locator('#padTitle').textContent()).includes('32 Steps'), 'die Spur ist nicht 32 Steps lang');
-    chk((await p.locator('#padTitle').textContent()).toLowerCase().includes('c dur'), 'der Titel nennt die Tonart nicht');
+    chk((await p.locator('#padTitle').textContent()).toLowerCase().includes('c major'), 'der Titel nennt die Tonart nicht');
     chk(await p.locator('#pages').isVisible() && await p.locator('#pages button').count() === 2, 'keine zwei Seiten');
     await p.locator('#pages button').nth(1).tap(); await p.waitForTimeout(150);
     chk((await p.locator('.pad').first().textContent()).trim().startsWith('17'), 'Seite 2 zeigt nicht Step 17');
@@ -369,7 +386,7 @@ async function R(p, id) {
     const note = (await R(p, 'trk.note'));
     await note.scrollIntoViewIfNeeded(); await note.tap(); await p.waitForTimeout(200);
     await p.locator('#fineReset').tap(); await p.waitForTimeout(100);              // C4
-    chk((await p.locator('#fineBtns button').nth(2).textContent()).trim() === '+STUFE', 'in einer Tonart heisst die Taste nicht +STUFE');
+    chk((await p.locator('#fineBtns button').nth(2).textContent()).trim() === '+STEP', 'in einer Tonart heisst die Taste nicht +STUFE');
     await p.locator('#fineBtns button').nth(2).tap(); await p.waitForTimeout(150);
     chk((await p.locator('#fineVal').textContent()).trim() === 'D4', 'eine Stufe ueber C4 ist nicht D4');
     await p.locator('#fineBtns button').nth(2).tap(); await p.waitForTimeout(150);
@@ -377,15 +394,15 @@ async function R(p, id) {
     await p.locator('#fineClose').tap(); await p.waitForTimeout(150);
     // Zuruecksetzen fuer die folgenden Gruppen
     await p.locator('#padTitle').tap(); await p.waitForTimeout(200);
-    await chip('TONLEITER', 'CHROMATISCH').tap();
-    await p.locator('#skBody h4', {hasText: 'LAENGE'}).locator('xpath=following-sibling::div[1]').locator('button', {hasText: '\u221216'}).tap();
-    await chip('TEILER', '1/16').tap();
+    await chip('SCALE', 'CHROMATIC').tap();
+    await p.locator('#skBody h4', {hasText: 'LENGTH'}).locator('xpath=following-sibling::div[1]').locator('button', {hasText: '\u221216'}).tap();
+    await chip('DIVISION', '1/16').tap();
     await p.locator('#skClose').tap(); await p.waitForTimeout(200);
     await p.locator('#docBtn').tap(); await p.waitForTimeout(200);
     chk(/pat\.0\.swing = 58/.test(await p.locator('#docText').inputValue()), 'der Swing des Patterns steht nicht im Dokument');
     await p.locator('#docClose').tap();
     await p.locator('#padTitle').tap(); await p.waitForTimeout(200);
-    await chip('SWING', 'PROJEKT').tap();
+    await chip('SWING', 'PROJECT').tap();
     await p.locator('#skClose').tap(); await p.waitForTimeout(200);
   }
 
@@ -407,19 +424,19 @@ async function R(p, id) {
     await p.locator('.pad').first().dispatchEvent('pointerup'); await p.waitForTimeout(150);
     await p.locator('#chordBtn').tap(); await p.waitForTimeout(200);
     chk((await p.locator('#pickTitle').textContent()).includes('LOCK STEP 1'), 'die Akkordliste sagt nicht, dass sie lockt');
-    await p.locator('#pickList button', {hasText: 'MOLL'}).first().tap(); await p.waitForTimeout(200);
-    chk((await nt(2).textContent()).includes('+3') && (await nt(4).textContent()).includes('AUS'),
+    await p.locator('#pickList button', {hasText: 'MINOR'}).first().tap(); await p.waitForTimeout(200);
+    chk((await nt(2).textContent()).includes('+3') && (await nt(4).textContent()).includes('OFF'),
         'der Moll-Lock steht nicht im Step');
     await p.locator('#lockDone').tap(); await p.waitForTimeout(150);
     chk((await nt(2).textContent()).includes('+4'), 'der Lock hat den Grundakkord ueberschrieben');
     // Feinwert: eine ausgeschaltete Akkordnote beginnt beim Grundton
     await p.locator('#chordBtn').tap(); await p.waitForTimeout(200);
-    await p.locator('#pickList button', {hasText: 'AUS'}).tap(); await p.waitForTimeout(200);
+    await p.locator('#pickList button', {hasText: 'OFF'}).tap(); await p.waitForTimeout(200);
     await (await R(p, 'trk.nt2')).tap(); await p.waitForTimeout(200);
     await p.locator('#fineBtns button').nth(3).tap(); await p.waitForTimeout(150);          // +OKT
-    chk((await p.locator('#fineVal').textContent()).includes('+12 Oktave'), 'von AUS aus ist +OKT nicht +12');
+    chk((await p.locator('#fineVal').textContent()).includes('+12 octave'), 'von AUS aus ist +OKT nicht +12');
     await p.locator('#fineReset').tap(); await p.waitForTimeout(100);
-    chk((await p.locator('#fineVal').textContent()).trim() === 'AUS', 'AUS schaltet die Akkordnote nicht ab');
+    chk((await p.locator('#fineVal').textContent()).trim() === 'OFF', 'AUS schaltet die Akkordnote nicht ab');
     await p.locator('#fineClose').tap(); await p.waitForTimeout(150);
     // Stimmenmodus als Liste
     const vm = (await R(p, 'trk.vmode'));
@@ -468,7 +485,7 @@ async function R(p, id) {
     if ((await p.locator('#play').textContent()).trim() === 'STOP') await p.locator('#play').click();
     await p.waitForTimeout(300);
     await p.locator('#songBtn').tap(); await p.waitForTimeout(250);
-    chk((await p.locator('#songList').textContent()).includes('Noch leer'), 'der leere Song sagt nicht, was zu tun ist');
+    chk((await p.locator('#songList').textContent()).includes('Empty'), 'der leere Song sagt nicht, was zu tun ist');
     chk(await p.locator('#songPlay').isDisabled(), 'ein leerer Song laesst sich einschalten');
     await p.locator('#songClose').tap();
     await p.locator('.pt').nth(0).tap(); await p.waitForTimeout(200);
@@ -482,7 +499,7 @@ async function R(p, id) {
     chk(zeilen.join(' | ') === '1. P1 \u00d7 1 | 2. P2 \u00d7 1', 'die Kette stimmt nicht: ' + zeilen.join(' | '));
 
     await p.locator('#songPlay').tap(); await p.waitForTimeout(200);
-    chk((await p.locator('#songPlay').textContent()).trim() === 'SONG AUS', 'der Song laesst sich nicht einschalten');
+    chk((await p.locator('#songPlay').textContent()).trim() === 'SONG OFF', 'der Song laesst sich nicht einschalten');
     await p.locator('#songClose').tap();
     await p.locator('#play').click();                  // der Song beginnt vorn: P1
     await p.waitForTimeout(500);
@@ -537,10 +554,10 @@ async function R(p, id) {
     // Step kopieren und einfuegen (im Lock-Modus ueber ...)
     await halten(p.locator('.pad').nth(0));
     await p.locator('#lockMore').tap(); await p.waitForTimeout(200);
-    await p.locator('#pickList button', {hasText: 'kopieren'}).tap(); await p.waitForTimeout(150);
+    await p.locator('#pickList button', {hasText: 'copy'}).tap(); await p.waitForTimeout(150);
     await p.locator('.pad').nth(5).tap(); await p.waitForTimeout(150);                 // im Lock-Modus: Step 6 waehlen
     await p.locator('#lockMore').tap(); await p.waitForTimeout(200);
-    await p.locator('#pickList button', {hasText: 'einf'}).tap(); await p.waitForTimeout(150);
+    await p.locator('#pickList button', {hasText: 'paste'}).tap(); await p.waitForTimeout(150);
     await p.locator('#lockDone').tap(); await p.waitForTimeout(150);
     chk((await ons()).slice(0, 6) === '100001', 'der Step wurde nicht eingefuegt: ' + await ons());
 
@@ -548,17 +565,17 @@ async function R(p, id) {
     const muster = await ons();
     await halten(p.locator('.trk').nth(0).locator('.nm'));
     chk(await p.locator('#pick').isVisible(), 'langes Druecken auf die Spur oeffnet kein Menue');
-    await p.locator('#pickList button', {hasText: 'kopieren'}).tap(); await p.waitForTimeout(150);
+    await p.locator('#pickList button', {hasText: 'copy'}).tap(); await p.waitForTimeout(150);
     await halten(p.locator('.trk').nth(4).locator('.nm'));
-    await p.locator('#pickList button', {hasText: 'Trigs einf'}).tap(); await p.waitForTimeout(150);
+    await p.locator('#pickList button', {hasText: 'paste trigs'}).tap(); await p.waitForTimeout(150);
     await p.locator('.trk').nth(4).locator('.nm').tap(); await p.waitForTimeout(200);
     chk(await ons() === muster, 'die Trigs von Spur 1 sind nicht in Spur 5');
 
     // Pattern kopieren: 13 -> 14
     await halten(p.locator('.pt').nth(12));
-    await p.locator('#pickList button', {hasText: 'kopieren'}).tap(); await p.waitForTimeout(150);
+    await p.locator('#pickList button', {hasText: 'copy'}).tap(); await p.waitForTimeout(150);
     await halten(p.locator('.pt').nth(13));
-    await p.locator('#pickList button', {hasText: 'einf'}).tap(); await p.waitForTimeout(200);
+    await p.locator('#pickList button', {hasText: 'paste'}).tap(); await p.waitForTimeout(200);
     chk(await p.locator('.pt').nth(13).evaluate(e => e.classList.contains('used')), 'Pattern 14 ist nach dem Einfuegen nicht benutzt');
     await p.locator('.pt').nth(13).tap(); await p.waitForTimeout(250);
     await p.locator('.trk').nth(4).locator('.nm').tap(); await p.waitForTimeout(200);
@@ -582,7 +599,7 @@ async function R(p, id) {
     await p.locator('#docBtn').tap(); await p.waitForTimeout(200);
     const sortiert = t => t.split('\n').sort().join('\n');
     chk(sortiert(await p.locator('#docText').inputValue()) === sortiert(doc), 'nach dem Neuladen ist das Projekt nicht dasselbe');
-    chk((await p.locator('#saveState').textContent()).includes('geladen'), 'die Anzeige sagt nicht, woher das Projekt kommt');
+    chk((await p.locator('#saveState').textContent()).includes('loaded'), 'die Anzeige sagt nicht, woher das Projekt kommt');
     // NEU braucht zwei Tipps und bringt die Demo zurueck - auch nach dem naechsten Neuladen
     await p.locator('#docNew').tap(); await p.waitForTimeout(150);
     chk(await bpm() === vorher + 7, 'ein einziger Tipp auf NEU setzt schon zurueck');

@@ -6,6 +6,7 @@
 #pragma once
 #include "seq.h"
 #include "machine.h"
+#include "mod.h"
 #include "fx.h"
 
 enum { NVOICES = 32, CTL = 16, NRAMP = 8 };   // CTL: Steuerrate in Samples (Zweierpotenz)
@@ -22,6 +23,10 @@ struct Voice {
     float    hz = 0.0f, vel = 0.0f;
     int64_t  left = 0;          // Samples bis Note-Off
     float    pf[64];            // wirksame Werte DIESER Stimme (Lock -> Scene -> Grundwert)
+    float    pm[64];            // dieselben, nach LFOs und Mod-Huellkurve - daraus klingt es
+    ModState mod;
+    double   spb = 24000.0;     // vor start() gesetzt: Samples je Viertel
+    int64_t  t0 = -1;           // vor start() gesetzt: Transport-Position des Anschlags
     uint64_t locked = 0;        // welche Slots dieser Step festgelegt hat - sie folgen nicht mehr
     Ramp     rmp[NRAMP];
     int      nRamp = 0;
@@ -75,8 +80,9 @@ struct Voice {
         flt.reset(); fltR.reset();
         env.setup(pTime(pf[s.atk]), pTime(pf[s.dec]), pLevel(pf[s.sus]), pTime(pf[s.rel]), sr);
         env.kill(); env.gate();
+        mod.start(pf, spb, t0, (uint32_t)when);
         ctl(sr, live);
-        mach->start(ms, hz, vel, pf, sr, *pool);
+        mach->start(ms, hz, vel, pm, sr, *pool);
     }
     void release() { env.release(); left = -1; }
     // Abschneiden in ein paar Millisekunden - fuer MONO, damit nicht zwei Toene klingen,
@@ -115,14 +121,16 @@ struct Voice {
             pf[r.slot] += r.inc * CTL;
             i++;
         }
+        for (int i = 0; i < 64; i++) pm[i] = pf[i];
+        mod.apply(pf, pm, CTL, sr);
         const Slots& s = S();
-        hz = noteHz(pf[s.note]);
-        base = pFreq(pf[s.fFreq]);
-        q = 0.7f + pUni(pf[s.fReso]) * 11.0f;
-        envAmt = pBip(pf[s.fEnv]);
+        hz = noteHz(pm[s.note]);
+        base = pFreq(pm[s.fFreq]);
+        q = 0.7f + pUni(pm[s.fReso]) * 11.0f;
+        envAmt = pBip(pm[s.fEnv]);
         ft = (FltType)(((int)pf[s.fType]) % FLT_N);
-        gain = pLevel(pf[s.vol]) * vel;
-        float a = 0.7853982f * (pBip(pf[s.pan]) + 1.0f);     // gleiche Leistung links wie rechts
+        gain = pLevel(pm[s.vol]) * vel;
+        float a = 0.7853982f * (pBip(pm[s.pan]) + 1.0f);     // gleiche Leistung links wie rechts
         panL = cosf(a); panR = sinf(a);
     }
 
@@ -134,13 +142,13 @@ struct Voice {
         if (!used) return;
         static const int slotSA = paramSlot(paramFind("trk.send.a"));
         static const int slotSB = paramSlot(paramFind("trk.send.b"));
-        float sa = pLevel(pf[slotSA]), sb = pLevel(pf[slotSB]);
+        float sa = pLevel(pm[slotSA]), sb = pLevel(pm[slotSB]);
         float buf[MACH_CHUNK], bufR[MACH_CHUNK];
         const bool st = mach->stereo(pf, *pool);
         int done = 0;
         while (done < n) {
             int c = n - done; if (c > MACH_CHUNK) c = MACH_CHUNK;
-            mach->render(ms, pf, hz, buf, st ? bufR : nullptr, c, sr, *pool);
+            mach->render(ms, pm, hz, buf, st ? bufR : nullptr, c, sr, *pool);
             for (int i = 0; i < c; i++) {
                 if (left > 0) { if (--left == 0) release(); }
                 float e = env.tick();
@@ -509,6 +517,8 @@ struct Engine : Sink {
         for (int c = 0; c < nNoten; c++) {
             snap[sNote] = noten[c];
             int i = pick();
+            v[i].spb = sr * 60.0 / (tempoOf(pat) > 1 ? tempoOf(pat) : 120.0);
+            v[i].t0 = e.at;
             v[i].start(machineAt(mi), e.track, e.step, snap, e.vel / 127.0f, e.len, sr, clock++,
                        lockMask, live[e.track], pool);
             for (int li = 0; li < tr.s[e.step].nLock; li++) {    // Slides: von dort, wo die Spur steht

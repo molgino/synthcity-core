@@ -7,6 +7,7 @@
 #include "machine.h"
 #include "fx.h"
 #include "seq.h"
+#include "mod.h"
 #include <stdio.h>
 
 // --- Auswahlwerte: Namen statt Zahlen ---------------------------------------------------------
@@ -40,13 +41,13 @@ inline void condText(int v, char* out, int n) {
 }
 // Abstand einer Akkordnote: 0 = aus, sonst Halbtoene um 25 herum, mit dem Namen des Intervalls.
 inline void chordText(int v, char* out, int n) {
-    if (v <= 0) { snprintf(out, n, "AUS"); return; }
-    static const char* iv[12] = {"Prim", "kl. Sekunde", "gr. Sekunde", "kl. Terz", "gr. Terz",
-                                 "Quarte", "Tritonus", "Quinte", "kl. Sexte", "gr. Sexte",
-                                 "kl. Septime", "gr. Septime"};
+    if (v <= 0) { snprintf(out, n, "OFF"); return; }
+    static const char* iv[12] = {"unison", "min 2nd", "maj 2nd", "min 3rd", "maj 3rd",
+                                 "4th", "tritone", "5th", "min 6th", "maj 6th",
+                                 "min 7th", "maj 7th"};
     int d = v - 25;
     int a = d < 0 ? -d : d;
-    if (a == 12 || a == 24) snprintf(out, n, "%+d Oktave", d);
+    if (a == 12 || a == 24) snprintf(out, n, "%+d octave", d);
     else                    snprintf(out, n, "%+d %s", d, iv[a % 12]);
 }
 inline const char* vmodeName(int v) {
@@ -54,16 +55,29 @@ inline const char* vmodeName(int v) {
     return n[v < 0 ? 0 : (v > 2 ? 2 : v)];
 }
 inline const char* fltTypeName(int v) {
-    static const char* n[] = {"TIEFPASS", "BANDPASS", "HOCHPASS", "KERBE"};
+    static const char* n[] = {"LOWPASS", "BANDPASS", "HIGHPASS", "NOTCH"};
     return n[((v % FLT_N) + FLT_N) % FLT_N];
 }
 
 // Wie viele sinnvolle Werte hat dieser Regler zur Auswahl? 0 = er ist stufenlos.
 // Die Liste steht dort, wo auch die Bedeutung steht - die Oberflaeche kennt die Zahlen nicht.
+// Letzter Teil einer ID ("trk.lfo1.rate" -> "rate"); ohne strrchr, das es freistehend nicht gibt.
+inline const char* modField(const char* id) {
+    const char* f = id;
+    for (const char* c = id; *c; c++) if (*c == '.') f = c + 1;
+    return f;
+}
 inline int enumCount(const ParamDef& d) {
     if (!strcmp(d.id, "trk.machine"))  return machineCount();
     if (!strcmp(d.id, "fx.a.div"))     return DELAY_DIV_N;
     if (!strcmp(d.id, "trk.vmode"))    return 3;
+    if (!strncmp(d.id, "trk.lfo", 7) || !strncmp(d.id, "trk.menv.", 9)) {
+        const char* f = modField(d.id);
+        if (!strcmp(f, "wave")) return LFO_WAVES;
+        if (!strcmp(f, "rate")) return LFO_NRATES;
+        if (!strcmp(f, "dest")) return MOD_NDEST;
+        if (!strcmp(f, "mode")) return LFO_MODES;
+    }
     if (!strcmp(d.id, "trk.flt.type")) return FLT_N;
     if (d.kind == PK_COND)             return 9 + 19 + 34;
     if (d.kind == PK_ONOFF)            return 2;
@@ -73,10 +87,10 @@ inline int enumCount(const ParamDef& d) {
 // liest niemand. Auch das weiss der Kern, nicht die Oberflaeche.
 inline const char* enumGroup(const ParamDef& d, int i) {
     if (d.kind != PK_COND) return "";
-    if (i < 9)  return "Fest";
-    if (i < 28) return "Wahrscheinlichkeit";
-    if (i < 45) return "Jeder A-te von B";
-    return "Ausser jedem A-ten von B";
+    if (i < 9)  return "Fixed";
+    if (i < 28) return "Probability";
+    if (i < 45) return "Every A-th of B";
+    return "All but every A-th of B";
 }
 inline int enumValue(const ParamDef& d, int i) {
     if (d.kind != PK_COND) return i;
@@ -123,6 +137,15 @@ inline void paramText(const ParamDef& d, float v, char* out, int n, int mach = -
     if (!strcmp(d.id, "trk.flt.type")) { snprintf(out, n, "%s", fltTypeName((int)(v + 0.5f))); return; }
     if (!strncmp(d.id, "trk.nt", 6))    { chordText((int)(v + 0.5f), out, n); return; }
     if (!strcmp(d.id, "trk.vmode"))     { snprintf(out, n, "%s", vmodeName((int)(v + 0.5f))); return; }
+    if (!strncmp(d.id, "trk.lfo", 7) || !strncmp(d.id, "trk.menv.", 9)) {
+        const char* f = modField(d.id);
+        int i = (int)(v + 0.5f);
+        if (!strcmp(f, "wave")) { snprintf(out, n, "%s", lfoWaveName(i)); return; }
+        if (!strcmp(f, "rate")) { snprintf(out, n, "%s", LFO_RATES[ModState::clampRate(v)].name); return; }
+        if (!strcmp(f, "mode")) { snprintf(out, n, "%s", lfoModeName(i)); return; }
+        if (!strcmp(f, "dest")) { snprintf(out, n, "%s", MOD_DESTS[i < 0 ? 0 : (i >= MOD_NDEST ? 0 : i)].name); return; }
+        if (!strcmp(f, "depth")) { snprintf(out, n, "%+.0f %%", (double)pBip(v) * 100.0); return; }
+    }
     if (d.kind == PK_COND)             { condText((int)(v + 0.5f), out, n); return; }
     if (!strcmp(d.id, "trk.flt.freq")) {
         float hz = pFreq(v);
@@ -148,7 +171,7 @@ inline void paramText(const ParamDef& d, float v, char* out, int n, int mach = -
         return; }
     // Die Mitte eines bipolaren Reglers ist die Mitte SEINES Bereichs, nicht immer 64.
     case PK_BIP:   snprintf(out, n, "%+d", (int)(v + 0.5f) - (d.lo + d.hi + 1) / 2); return;
-    case PK_ONOFF: snprintf(out, n, v > 0.5f ? "AN" : "AUS");     return;
+    case PK_ONOFF: snprintf(out, n, v > 0.5f ? "ON" : "OFF");     return;
     default: break;
     }
     if (d.unit && d.unit[0]) snprintf(out, n, "%.0f %s", (double)v, d.unit);

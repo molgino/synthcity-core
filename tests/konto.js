@@ -45,7 +45,7 @@ function wav(datei) {
   chk([...store.keys()].some(k => /smp-[0-9a-f]+-0$/.test(k)), 'das Sample liegt nicht im Konto');
   await A.p.locator('#docBtn').click(); await A.p.waitForTimeout(200);
   const standA = await A.p.locator('#saveState').textContent();
-  chk(/Konto: gespeichert/.test(standA), 'die Anzeige sagt nicht, dass ins Konto gespeichert wurde: ' + standA);
+  chk(/Account: saved/.test(standA), 'die Anzeige sagt nicht, dass ins Konto gespeichert wurde: ' + standA);
   await A.ctx.close();
   // Geraet B: frischer Browser-Speicher
   const B = await seite();

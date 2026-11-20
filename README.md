@@ -150,6 +150,23 @@ bisher), 97–126 grob von 9 bis 256 Steps, 127 = **INF** — die Note klingt, b
 nächste Mal anschlägt (in jedem Stimmenmodus). Ein Klang-Test hält eine INF-Note über 11 Steps
 und prüft, dass der nächste Trig sie beendet.
 
+## Modulation: zwei LFOs und eine Mod-Hüllkurve je Spur
+
+Reiter **MOD**: **LFO 1** und **LFO 2** (WAVE: sine, triangle, saw, square, S&H · RATE als
+Notenwert von 16 Takten bis 1/32, auch punktiert/triolisch · DEPTH bipolar · DEST · MODE: FREE
+läuft am Takt, TRIG startet mit jeder Note, ONE SHOT einmal) und eine **Mod-Hüllkurve**
+(ATK, DEC, DEPTH, DEST). Ziele: PITCH (ein DEPTH-Schritt = ein halber Halbton), SRC A/B,
+CUTOFF, RESO, FLT ENV, VOLUME, PAN, SEND A/B. Alles lockbar je Step.
+
+Gerechnet wird je Stimme in der Steuerrate (`src/mod.h`) auf einer Kopie der Werte (`pm`) —
+Locks, Scenes und Live-Folgen bleiben unberührt. Klang-Tests: Rechteck auf PITCH springt eine
+Oktave, FREE hängt am Takt, Mod-Hüllkurve auf VOLUME, LFO2 auf CUTOFF; zwei Mutationen werden rot.
+
+## Sprache
+
+Die Oberfläche und alle Werte-Texte sind englisch (Tabelle, Machines, Tonleitern, Akkorde,
+Bedingungen, Dialoge). Code-Kommentare und diese Notizen bleiben deutsch.
+
 ## Kopieren und Einfügen
 
 - **Pattern:** lange auf die Pattern-Nummer drücken → *kopieren*, dann auf dem Ziel → *einfügen*.

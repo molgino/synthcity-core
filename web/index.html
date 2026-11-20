@@ -303,7 +303,7 @@ textarea {
   .trk .m { width: 32px; }
   /* Flachere Pads: im Hochformat bleibt sonst fuer die Regler kaum eine Zeile. */
   .pad { aspect-ratio: 16 / 9; }
-  .ptabs { grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 3px; padding: 6px 6px 5px; }
+  .ptabs { grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 3px; padding: 6px 6px 5px; }
   .ptab { font-size: 9.5px; letter-spacing: 0; min-height: 30px; padding: 0 1px; text-overflow: clip; }
   .brand { display: none; }          /* schmaler Schirm: die Knoepfe sind wichtiger */
   .padgrid { grid-template-columns: repeat(4, 1fr); }
@@ -352,16 +352,16 @@ textarea {
     <div class="brand">SYNTH <span>CITY</span></div>
     <div class="spacer"></div>
     <div class="tempo">
-      <button class="tiny" id="bpmDn" aria-label="Tempo runter">&minus;</button>
-      <button class="v val bpmv" id="bpm" aria-label="Tempo genau einstellen">124</button>
+      <button class="tiny" id="bpmDn" aria-label="Tempo down">&minus;</button>
+      <button class="v val bpmv" id="bpm" aria-label="Set tempo">124</button>
       <span class="lbl">bpm</span>
-      <button class="tiny" id="bpmUp" aria-label="Tempo hoch">+</button>
-      <button class="tiny" id="bpmPat" aria-label="Tempo gehoert zum Pattern">P</button>
+      <button class="tiny" id="bpmUp" aria-label="Tempo up">+</button>
+      <button class="tiny" id="bpmPat" aria-label="Tempo belongs to pattern">P</button>
     </div>
-    <span class="klang" id="klang" title="Klang-Kern"><i></i>KLANG</span>
-    <span class="meter" title="Ausgangspegel"><b id="meterFill"></b></span>
+    <span class="klang" id="klang" title="Audio engine"><i></i>AUDIO</span>
+    <span class="meter" title="Output level"><b id="meterFill"></b></span>
     <button class="tiny" id="smpBtn">SMP</button>
-    <button class="tiny" id="docBtn">DOK</button>
+    <button class="tiny" id="docBtn">DOC</button>
   </header>
 
   <div class="main">
@@ -372,23 +372,23 @@ textarea {
           <span id="lockTxt">LOCK &middot; STEP 1</span>
           <button class="tiny" id="lockPrev">&#9664;</button>
           <button class="tiny" id="lockNext">&#9654;</button>
-          <button class="tiny" id="lockMore" aria-label="Step kopieren">&middot;&middot;&middot;</button>
+          <button class="tiny" id="lockMore" aria-label="Copy step">&middot;&middot;&middot;</button>
           <div class="spacer"></div>
-          <button class="tiny" id="lockDone">FERTIG</button>
+          <button class="tiny" id="lockDone">DONE</button>
         </div>
         <div class="pats" id="pats"></div>
         <div class="scenebar" id="scenebar" hidden>
           <span id="sceneTxt">SCENE A</span>
           <div class="spacer"></div>
-          <button class="tiny" id="sceneClear">LEEREN</button>
-          <button class="tiny" id="sceneDone">FERTIG</button>
+          <button class="tiny" id="sceneClear">CLEAR</button>
+          <button class="tiny" id="sceneDone">DONE</button>
         </div>
         <div class="padhead">
-          <button class="tiny patbtn" id="patToggle" aria-label="Pattern-Auswahl auf- und zuklappen">P1 &#9662;</button>
-          <button class="lbl padtitle" id="padTitle" aria-label="Skala einstellen">Spur 1 &middot; 16 Steps</button>
+          <button class="tiny patbtn" id="patToggle" aria-label="Show or hide patterns">P1 &#9662;</button>
+          <button class="lbl padtitle" id="padTitle" aria-label="Scale settings">Track 1 &middot; 16 Steps</button>
           <div class="spacer"></div>
-          <button class="tiny" id="lenDn" aria-label="Spur kuerzer">&minus;</button>
-          <button class="tiny" id="lenUp" aria-label="Spur laenger">+</button>
+          <button class="tiny" id="lenDn" aria-label="Track shorter">&minus;</button>
+          <button class="tiny" id="lenUp" aria-label="Track longer">+</button>
         </div>
         <div class="pages" id="pages" hidden></div>
         <div class="padgrid" id="pads"></div>
@@ -402,39 +402,39 @@ textarea {
     <button id="fill">FILL</button>
     <button id="songBtn">SONG</button>
     <div class="morph">
-      <button class="scn" id="scnA" aria-label="Scene A bearbeiten">A</button>
-      <input type="range" id="morph" min="0" max="100" value="0" aria-label="Morph zwischen Scene A und B">
-      <button class="scn" id="scnB" aria-label="Scene B bearbeiten">B</button>
+      <button class="scn" id="scnA" aria-label="Edit scene A">A</button>
+      <input type="range" id="morph" min="0" max="100" value="0" aria-label="Morph between scene A and B">
+      <button class="scn" id="scnB" aria-label="Edit scene B">B</button>
     </div>
   </footer>
 </div>
 
 <dialog id="pick">
   <div class="dlg">
-    <div class="lbl" id="pickTitle">Auswahl</div>
+    <div class="lbl" id="pickTitle">Select</div>
     <div class="sheet" id="pickList"></div>
-    <button id="pickClose">ABBRECHEN</button>
+    <button id="pickClose">CANCEL</button>
   </div>
 </dialog>
 
 <dialog id="skala">
   <div class="dlg">
-    <div class="lbl" id="skTitle">Skala</div>
+    <div class="lbl" id="skTitle">Scale</div>
     <div class="sk" id="skBody"></div>
-    <div style="display:flex;gap:8px"><div class="spacer"></div><button id="skClose">FERTIG</button></div>
+    <div style="display:flex;gap:8px"><div class="spacer"></div><button id="skClose">DONE</button></div>
   </div>
 </dialog>
 
 <dialog id="fine">
   <div class="dlg">
-    <div class="lbl" id="fineTitle">Wert</div>
+    <div class="lbl" id="fineTitle">Value</div>
     <div class="finev val" id="fineVal">0</div>
     <div class="hint" id="fineHint"></div>
     <div class="finebtns" id="fineBtns"></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <button id="fineReset">GRUNDWERT</button>
+      <button id="fineReset">DEFAULT</button>
       <div class="spacer"></div>
-      <button id="fineClose">FERTIG</button>
+      <button id="fineClose">DONE</button>
     </div>
   </div>
 </dialog>
@@ -442,26 +442,26 @@ textarea {
 <dialog id="song">
   <div class="dlg">
     <div class="lbl">Song</div>
-    <p class="hint">Eine Kette aus Patterns: jedes so oft, wie es dasteht, dann das naechste.
-      Am Ende geht es vorn weiter. Einschalten waehrend es laeuft beginnt am naechsten Taktende.</p>
+    <p class="hint">A chain of patterns: each plays as often as listed, then the next one.
+      At the end it starts over. Switching on while playing starts at the end of the bar.</p>
     <div class="sheet" id="songList"></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       <button id="songAdd">+ PATTERN</button>
-      <button id="songPlay">SONG AN</button>
+      <button id="songPlay">SONG ON</button>
       <div class="spacer"></div>
-      <button id="songClose">SCHLIESSEN</button>
+      <button id="songClose">CLOSE</button>
     </div>
   </div>
 </dialog>
 
 <dialog id="smpEdit">
   <div class="dlg">
-    <div class="lbl" id="seTitle">Sample bearbeiten</div>
-    <canvas id="seWave" width="600" height="160" aria-label="Wellenform"></canvas>
+    <div class="lbl" id="seTitle">Edit sample</div>
+    <canvas id="seWave" width="600" height="160" aria-label="Waveform"></canvas>
     <div class="hint val" id="seInfo"></div>
     <div class="semark">
       <button data-m="a" class="on">START</button>
-      <button data-m="b">ENDE</button>
+      <button data-m="b">END</button>
       <button data-m="la">LOOP</button>
     </div>
     <div class="finebtns">
@@ -471,62 +471,62 @@ textarea {
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       <button id="seZoomOut">&minus; ZOOM</button>
       <button id="seZoomIn">+ ZOOM</button>
-      <button id="seLoop">LOOP AUS</button>
-      <button id="seZero" class="on">NULLDURCHGANG</button>
+      <button id="seLoop">LOOP OFF</button>
+      <button id="seZero" class="on">ZERO CROSS</button>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <button id="sePlay">&#9654; VORHOEREN</button>
+      <button id="sePlay">&#9654; PREVIEW</button>
       <div class="spacer"></div>
-      <button id="seClose">FERTIG</button>
+      <button id="seClose">DONE</button>
     </div>
   </div>
 </dialog>
 
 <dialog id="smp">
   <div class="dlg">
-    <div class="lbl">Sample-Vorrat</div>
-    <p class="hint">Dateien werden im Browser entpackt und in den Vorrat gelegt - eine Spur
-      spielt sie mit der Machine <b>SMPL</b>. Note 60 spielt in Aufnahmegeschwindigkeit.</p>
-    <label class="filebtn" for="smpFile">DATEIEN WAEHLEN</label>
+    <div class="lbl">Sample pool</div>
+    <p class="hint">Files are decoded in the browser and put into the pool - a track plays
+      them with the <b>SMPL</b> machine. Note 60 plays at the original speed.</p>
+    <label class="filebtn" for="smpFile">CHOOSE FILES</label>
     <input type="file" id="smpFile" multiple
            accept=".wav,.wave,.aif,.aiff,.mp3,.m4a,.aac,.ogg,.oga,.opus,.flac,.caf,audio/wav,audio/x-wav,audio/wave,audio/aiff,audio/mpeg,audio/mp4,audio/ogg,audio/flac,audio/*">
     <div class="sheet" id="smpList"></div>
-    <div class="lbl" style="margin-top:4px">Aufnehmen, was herauskommt</div>
+    <div class="lbl" style="margin-top:4px">Resample the output</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <button class="rec" data-takte="1">1 TAKT</button>
-      <button class="rec" data-takte="2">2 TAKTE</button>
-      <button class="rec" data-takte="4">4 TAKTE</button>
+      <button class="rec" data-takte="1">1 BAR</button>
+      <button class="rec" data-takte="2">2 BARS</button>
+      <button class="rec" data-takte="4">4 BARS</button>
       <span class="hint" id="recInfo" style="align-self:center"></span>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <button id="smpUse">AUF DIESE SPUR</button>
-      <button id="smpEditBtn">BEARBEITEN</button>
-      <button id="smpClear">VORRAT LEEREN</button>
+      <button id="smpUse">USE ON TRACK</button>
+      <button id="smpEditBtn">EDIT</button>
+      <button id="smpClear">CLEAR POOL</button>
       <div class="spacer"></div>
-      <button id="smpClose">SCHLIESSEN</button>
+      <button id="smpClose">CLOSE</button>
     </div>
   </div>
 </dialog>
 
 <dialog id="doc">
   <div class="dlg">
-    <div class="lbl">Projekt als Dokument</div>
-    <p class="hint">Dieselben Zeilen stehen in der Projektdatei und im Plugin-Zustand: eine
-      stabile ID je Wert. Text ersetzen und <b>Laden</b> druecken, um ein Projekt zu uebernehmen.</p>
-    <p class="hint" id="saveState">Wird automatisch gespeichert.</p>
+    <div class="lbl">Project document</div>
+    <p class="hint">The same lines as in the project file and the plugin state: one stable ID
+      per value. Replace the text and press <b>LOAD</b> to take over a project.</p>
+    <p class="hint" id="saveState">Saved automatically.</p>
     <textarea id="docText" spellcheck="false"></textarea>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <button id="docLoad">LADEN</button>
-      <button id="docCopy">KOPIEREN</button>
-      <button id="docNew">NEU (DEMO)</button>
+      <button id="docLoad">LOAD</button>
+      <button id="docCopy">COPY</button>
+      <button id="docNew">NEW (DEMO)</button>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <button id="docSave">JETZT SPEICHERN</button>
-      <button id="docFile">ALS DATEI</button>
-      <button id="docOpen">DATEI &Ouml;FFNEN</button>
+      <button id="docSave">SAVE NOW</button>
+      <button id="docFile">SAVE FILE</button>
+      <button id="docOpen">OPEN FILE</button>
       <input type="file" id="docOpenIn" hidden>
       <div class="spacer"></div>
-      <button id="docClose">SCHLIESSEN</button>
+      <button id="docClose">CLOSE</button>
     </div>
   </div>
 </dialog>
@@ -539,11 +539,12 @@ const GROUP = {note: 'Anschlag', vel: 'Anschlag', len: 'Anschlag', prob: 'Anschl
                cond: 'Anschlag', micro: 'Anschlag', ratchet: 'Anschlag', quant: 'Anschlag',
                nt2: 'Akkord', nt3: 'Akkord', nt4: 'Akkord', vmode: 'Akkord',
                machine: 'Quelle', smp: 'Quelle', src: 'Quelle', flt: 'Filter',
-               amp: 'Huellkurve', vol: 'Ausgang', pan: 'Ausgang', send: 'Ausgang'};
+               amp: 'Huellkurve', vol: 'Ausgang', pan: 'Ausgang', send: 'Ausgang',
+               lfo1: 'Mod', lfo2: 'Mod', menv: 'Mod'};
 
 // Reiter ueber den Reglern: immer nur eine Gruppe, statt einer langen Liste zum Scrollen.
-const TABNAME = {Anschlag: 'TRIG', Akkord: 'AKKORD', Quelle: 'QUELLE', Filter: 'FILTER',
-                 Huellkurve: 'H\u00dcLLE', Ausgang: 'MIX', FX: 'FX'};
+const TABNAME = {Anschlag: 'TRIG', Akkord: 'CHRD', Quelle: 'SRC', Filter: 'FLTR', Mod: 'MOD',
+                 Huellkurve: 'AMP', Ausgang: 'MIX', FX: 'FX'};
 let grpSel = 'Anschlag';
 try { grpSel = localStorage.getItem('synthcity-tab') || grpSel; } catch (e) {}
 let X = null;                 // der Kern im Hauptfaden: Modell, Texte, Speichern
@@ -561,7 +562,7 @@ const P = [];                 // Parametertabelle, aus dem Kern gelesen
 const el = id => document.getElementById(id);
 const machOf = t => X.scGet(t, P.find(p => p.id === 'trk.machine').slot);
 const ptext = (p, v) => {
-  if (p.id === 'trk.smp') return X.scSmpFrames(v) ? str(X.scSmpName(v)) : (v + 1) + '  leer';
+  if (p.id === 'trk.smp') return X.scSmpFrames(v) ? str(X.scSmpName(v)) : (v + 1) + '  empty';
   // Liegt die Note nicht in der Tonart, sagt die Anzeige, wohin sie einrastet.
   if (p.id === 'trk.note' && X.scPatScale(X.scPattern()) > 0) {
     const qs = P.find(q => q.id === 'trk.quant').slot;
@@ -573,11 +574,12 @@ const ptext = (p, v) => {
 // Wie die beiden Quellregler heissen, sagt die Machine - nicht die Tabelle.
 // Im FX-Reiter stehen die Regler unter ihrem Effekt - dort reichen klare Namen.
 // (Die Tabelle behaelt die kurzen, eindeutigen Namen fuer den Plugin-Host.)
-const FXNAME = {'fx.a.div': 'NOTENWERT', 'fx.a.fb': 'FEEDBACK', 'fx.a.tone': 'TON', 'fx.a.vol': 'PEGEL',
-                'fx.b.size': 'RAUM', 'fx.b.dec': 'NACHHALL', 'fx.b.damp': 'D\u00c4MPFUNG', 'fx.b.vol': 'PEGEL',
-                'master.vol': 'SUMME'};
+const FXNAME = {'fx.a.div': 'TIME', 'fx.a.fb': 'FEEDBACK', 'fx.a.tone': 'TONE', 'fx.a.vol': 'LEVEL',
+                'fx.b.size': 'SIZE', 'fx.b.dec': 'DECAY', 'fx.b.damp': 'DAMPING', 'fx.b.vol': 'LEVEL',
+                'master.vol': 'VOLUME'};
 const rowName = p => {
   if (FXNAME[p.id]) return FXNAME[p.id];
+  if (/^trk\.(lfo[12]|menv)\./.test(p.id)) return p.name.replace(/^(LFO[12]|MENV) /, '');
   if (p.id === 'trk.src.a') return str(X.scMachLabel(machOf(sel), 0));
   if (p.id === 'trk.src.b') return str(X.scMachLabel(machOf(sel), 1));
   return p.name;
@@ -628,7 +630,7 @@ async function boot() {
     prjRestore();
   } catch (e) {
     document.getElementById('app').innerHTML =
-      '<div class="err">Der Kern liess sich nicht laden: ' + e.message + '</div>';
+      '<div class="err">The engine failed to load: ' + e.message + '</div>';
   }
 }
 
@@ -665,7 +667,7 @@ async function audioOn() {
     if (e.data.type === 'smp') { if (e.data.n) smpAck.add(e.data.slot); smpPaint(); }
     if (e.data.type === 'recStart' && !e.data.frames) {
       recWartet = false;
-      el('recInfo').textContent = 'Kein Platz im Vorrat.';
+      el('recInfo').textContent = 'No room in the pool.';
     }
     if (e.data.type === 'rec') {                 // fertig: ins Modell und in den Speicher
       const name = 'aufnahme ' + (e.data.slot + 1);
@@ -674,9 +676,9 @@ async function audioOn() {
         smpAck.add(e.data.slot);
         smpStore(name, e.data.data, e.data.rate, e.data.ch);
         smpSel = e.data.slot;
-        el('recInfo').textContent = 'aufgenommen: ' +
+        el('recInfo').textContent = 'recorded: ' +
           (e.data.data.length / e.data.ch / e.data.rate).toFixed(2) + ' s';
-      } else el('recInfo').textContent = 'Kein Platz im Vorrat.';
+      } else el('recInfo').textContent = 'No room in the pool.';
       smpPaint(); buildParams();
     }
   };
@@ -698,8 +700,8 @@ function buildRail() {
     const d = document.createElement('div');
     d.className = 'trk';
     d.style.setProperty('--c', HUE[t]);
-    d.innerHTML = `<span class="dot"></span><span class="nm"><span class="w">SPUR </span>${t + 1}</span>
-                   <button class="m" aria-label="Spur ${t + 1} stumm">M</button>`;
+    d.innerHTML = `<span class="dot"></span><span class="nm"><span class="w">TRACK </span>${t + 1}</span>
+                   <button class="m" aria-label="Mute track ${t + 1}">M</button>`;
     const m = d.querySelector('.m');
     // Zwei Wege auf denselben Knopf: faellt der eine aus (schnelle Tipps hintereinander
     // verschluckt der Browser den Zeiger-Druck), greift der andere. Die Sperre verhindert,
@@ -778,22 +780,22 @@ function menuList(title) {
 }
 // Spur: lange auf die Spurnummer druecken.
 function trackMenu(t) {
-  const add = menuList('SPUR ' + (t + 1) + ' \u00b7 PATTERN ' + (X.scPattern() + 1));
-  add('kopieren', () => { cmd('scClipTrack', t); clip.trk = t; clip.trkPat = X.scPattern(); }, 'Trigs + Klang');
+  const add = menuList('TRACK ' + (t + 1) + ' \u00b7 PATTERN ' + (X.scPattern() + 1));
+  add('copy', () => { cmd('scClipTrack', t); clip.trk = t; clip.trkPat = X.scPattern(); }, 'trigs + sound');
   if (clip.trk >= 0) {
-    const von = 'von Spur ' + (clip.trk + 1) + ' / P' + (clip.trkPat + 1);
-    add('Trigs einf\u00fcgen', () => cmd('scPasteTrack', t, 0), von);
-    add('alles einf\u00fcgen', () => { cmd('scPasteTrack', t, 1); }, von + ', mit Klang');
+    const von = 'from track ' + (clip.trk + 1) + ' / P' + (clip.trkPat + 1);
+    add('paste trigs', () => cmd('scPasteTrack', t, 0), von);
+    add('paste all', () => { cmd('scPasteTrack', t, 1); }, von + ', with sound');
   }
-  add('Trigs leeren', () => { if (lockStep >= 0) closeLock(); cmd('scClearTrigs', t); });
+  add('clear trigs', () => { if (lockStep >= 0) closeLock(); cmd('scClearTrigs', t); });
   el('pick').showModal();
 }
 // Step: im Lock-Modus ueber den Knopf in der Leiste.
 function stepMenu(st) {
-  const add = menuList('STEP ' + (st + 1) + ' \u00b7 SPUR ' + (sel + 1));
-  add('kopieren', () => { cmd('scClipStep', sel, st); clip.step = st; }, 'Trig + Locks');
-  if (clip.step >= 0) add('einf\u00fcgen', () => cmd('scPasteStep', sel, st), 'Kopie von Step ' + (clip.step + 1));
-  add('Locks entfernen', () => clearLocks(st));
+  const add = menuList('STEP ' + (st + 1) + ' \u00b7 TRACK ' + (sel + 1));
+  add('copy', () => { cmd('scClipStep', sel, st); clip.step = st; }, 'trig + locks');
+  if (clip.step >= 0) add('paste', () => cmd('scPasteStep', sel, st), 'copy of step ' + (clip.step + 1));
+  add('clear locks', () => clearLocks(st));
   el('pick').showModal();
 }
 function patMenu(i) {
@@ -806,15 +808,15 @@ function patMenu(i) {
     b.onclick = () => { fn(); el('pick').close(); buildPats(); buildPads(); buildParams(); };
     list.appendChild(b);
   };
-  add('spielen', () => {
+  add('play', () => {
     if (node && playing) node.port.postMessage({fn: 'scPatQueue', args: [i]});
     else cmd('scPatQueue', i);
   });
-  add('kopieren', () => { cmd('scClipPat', i); clip.pat = i; });
+  add('copy', () => { cmd('scClipPat', i); clip.pat = i; });
   if (clip.pat >= 0)
-    add('einf\u00fcgen: Kopie von Pattern ' + (clip.pat + 1) + ' hierher', () => cmd('scPastePat', i));
-  add('leeren', () => cmd('scPatClear', i));
-  add('Skala und Tonart \u2026', () => setTimeout(() => skalaOpen(i), 0));
+    add('paste: copy of pattern ' + (clip.pat + 1), () => cmd('scPastePat', i));
+  add('clear', () => cmd('scPatClear', i));
+  add('scale and key \u2026', () => setTimeout(() => skalaOpen(i), 0));
   el('pick').showModal();
 }
 
@@ -853,7 +855,7 @@ function buildPads() {
     p.addEventListener('pointercancel', () => { clearTimeout(timer); timer = null; });
     g.appendChild(p);
   }
-  el('padTitle').textContent = `Spur ${sel + 1} \u00b7 ${X.scTrackLen(sel)} Steps`;
+  el('padTitle').textContent = `Track ${sel + 1} \u00b7 ${X.scTrackLen(sel)} Steps`;
   buildPages();
 }
 // Seiten nur, wenn die Spur laenger als 16 Steps ist.
@@ -900,7 +902,7 @@ function buildParams() {
   tabs.id = 'ptabs';
   box.appendChild(tabs);
   const gruppen = [];
-  let group = '';
+  let group = '', modKopf = '';
   for (const p of P) {
     if (p.scope !== 1) continue;
     const key = p.id.split('.')[1];
@@ -915,11 +917,18 @@ function buildParams() {
         const b = document.createElement('button');
         b.className = 'chordBtn';
         b.id = 'chordBtn';
-        b.textContent = 'AKKORD W\u00c4HLEN';
+        b.textContent = 'CHOOSE CHORD';
         b.onclick = openChords;
         h.appendChild(b);
         box.appendChild(h);
       }
+    }
+    if (g === 'Mod' && key !== modKopf) {    // LFO 1, LFO 2, MOD ENV untereinander
+      modKopf = key;
+      const h = document.createElement('div');
+      h.className = 'grp lbl'; h.dataset.g = g;
+      h.textContent = {lfo1: 'LFO 1', lfo2: 'LFO 2', menv: 'MOD ENVELOPE'}[key];
+      box.appendChild(h);
     }
     const row = document.createElement('div');
     row.className = 'row' + (X.scEnumCount(p.i) || p.id === 'trk.smp' ? ' pick' : '');
@@ -938,7 +947,7 @@ function buildParams() {
   const fxReihe = id => id.startsWith('fx.a') ? 0 : id.startsWith('fx.b') ? 1 : 2;
   for (const p of P.filter(q => q.scope !== 1 && /^(fx\.|master\.)/.test(q.id))
                    .sort((a, b) => fxReihe(a.id) - fxReihe(b.id) || a.i - b.i)) {
-    const k = p.id.startsWith('fx.a') ? 'ECHO (SEND A)' : p.id.startsWith('fx.b') ? 'HALL (SEND B)' : 'SUMME';
+    const k = p.id.startsWith('fx.a') ? 'DELAY (SEND A)' : p.id.startsWith('fx.b') ? 'REVERB (SEND B)' : 'MASTER';
     if (k !== fxKopf) {
       fxKopf = k;
       const h = document.createElement('div');
@@ -1041,15 +1050,15 @@ function openPick(p) {
 // Fertige Akkorde: schreiben NT2..NT4 auf einmal - im Lock-Modus nur fuer diesen Step.
 // Der Grundton bleibt NOTE; in einer Tonart rasten die Noten ein (leitereigene Akkorde).
 const CHORDS = [
-  ['AUS (eine Note)', []], ['DUR', [4, 7]], ['MOLL', [3, 7]], ['SUS2', [2, 7]], ['SUS4', [5, 7]],
-  ['VERMINDERT', [3, 6]], ['UEBERMAESSIG', [4, 8]], ['DUR 7', [4, 7, 10]], ['MAJ 7', [4, 7, 11]],
-  ['MOLL 7', [3, 7, 10]], ['DUR 9 (ohne Quinte)', [4, 10, 14]], ['QUINTE', [7]], ['OKTAVE', [12]],
-  ['QUINTE + OKTAVE', [7, 12]], ['OKTAVEN', [-12, 12]],
+  ['OFF (single note)', []], ['MAJOR', [4, 7]], ['MINOR', [3, 7]], ['SUS2', [2, 7]], ['SUS4', [5, 7]],
+  ['DIMINISHED', [3, 6]], ['AUGMENTED', [4, 8]], ['DOM 7', [4, 7, 10]], ['MAJ 7', [4, 7, 11]],
+  ['MIN 7', [3, 7, 10]], ['DOM 9 (no 5th)', [4, 10, 14]], ['FIFTH', [7]], ['OCTAVE', [12]],
+  ['FIFTH + OCTAVE', [7, 12]], ['OCTAVES', [-12, 12]],
 ];
 function openChords() {
   const ns = ['trk.nt2', 'trk.nt3', 'trk.nt4'].map(id => P.find(q => q.id === id));
   const cur = ns.map(p => valueOf(p).v).join(',');
-  el('pickTitle').textContent = 'AKKORD' + (sceneEdit >= 0 ? '  \u00b7  SCENE ' + 'AB'[sceneEdit]
+  el('pickTitle').textContent = 'CHORD' + (sceneEdit >= 0 ? '  \u00b7  SCENE ' + 'AB'[sceneEdit]
                                  : lockStep >= 0 ? '  \u00b7  LOCK STEP ' + (lockStep + 1) : '');
   const list = el('pickList');
   list.innerHTML = '';
@@ -1065,7 +1074,7 @@ function openChords() {
   if (X.scGet(sel, P.find(q => q.id === 'trk.vmode').slot) > 0) {
     const h = document.createElement('div');
     h.className = 'lbl'; h.style.padding = '10px 2px 2px';
-    h.textContent = 'Akkorde klingen nur im Stimmenmodus POLY.';
+    h.textContent = 'Chords only sound in voice mode POLY.';
     list.appendChild(h);
   }
   el('pick').showModal();
@@ -1120,7 +1129,7 @@ function openFine(o) {
     b.addEventListener('pointerleave', stopp);
     box.appendChild(b);
   }
-  el('fineReset').textContent = o.resetLabel || 'GRUNDWERT';
+  el('fineReset').textContent = o.resetLabel || 'DEFAULT';
   el('fineReset').hidden = !o.reset;
   fineShow();
   el('fine').showModal();
@@ -1143,18 +1152,18 @@ function openFineParam(p) {
     get: () => valueOf(p).v,
     set: v => writeValue(p, v),
     text: v => ptext(p, v),
-    steps: istNt ? [['\u2212OKT', -12], ['\u22121', -1], ['+1', 1], ['+OKT', 12]]
-         : istNote ? [['\u2212OKT', -12], [stufen ? '\u2212STUFE' : '\u22121', -1],
-                      [stufen ? '+STUFE' : '+1', 1], ['+OKT', 12]]
+    steps: istNt ? [['\u2212OCT', -12], ['\u22121', -1], ['+1', 1], ['+OCT', 12]]
+         : istNote ? [['\u2212OCT', -12], [stufen ? '\u2212STEP' : '\u22121', -1],
+                      [stufen ? '+STEP' : '+1', 1], ['+OCT', 12]]
                    : [['\u221210', -10], ['\u22121', -1], ['+1', 1], ['+10', 10]],
     // In einer Tonart heisst "eine hoeher" die naechste Stufe der Leiter, nicht der naechste Halbton.
     stufe: istNote && stufen,
     ausBei0: istNt,
-    hint: istNote ? (stufen ? 'Ein Schritt ist eine Stufe in ' + str(X.scNoteName(X.scPatRoot(X.scPattern()))) + ' '
+    hint: istNote ? (stufen ? 'One step is one scale degree in ' + str(X.scNoteName(X.scPatRoot(X.scPattern()))) + ' '
                               + str(X.scScaleName(X.scPatScale(X.scPattern()))).toLowerCase() + '.'
-                            : 'Ein Schritt ist ein Halbton.')
-        : istNt ? 'Abstand zur NOTE in Halbtoenen. Mit SKALA rastet auch die Akkordnote in die Tonart.' : '',
-    resetLabel: sceneMode ? 'SCENE-WERT ENTFERNEN' : lockMode ? 'LOCK ENTFERNEN' : istNt ? 'AUS' : 'GRUNDWERT',
+                            : 'One step is one semitone.')
+        : istNt ? 'Interval to NOTE in semitones. With KEY on, chord notes snap to the key as well.' : '',
+    resetLabel: sceneMode ? 'CLEAR SCENE VALUE' : lockMode ? 'CLEAR LOCK' : istNt ? 'OFF' : 'DEFAULT',
     reset: () => {
       if (sceneMode) cmd('scSceneClear', sceneEdit, sel, p.slot);
       else if (lockMode) cmd('scLockClear', sel, lockStep, p.slot);
@@ -1263,7 +1272,7 @@ function paint() {
   }
   const tonart = X.scPatScale(X.scPattern()) ? ' \u00b7 ' + str(X.scNoteName(X.scPatRoot(X.scPattern()))) + ' '
                  + str(X.scScaleName(X.scPatScale(X.scPattern()))).toLowerCase() : '';
-  el('padTitle').textContent = `Spur ${sel + 1} \u00b7 ${len} Steps${tonart}`;
+  el('padTitle').textContent = `Track ${sel + 1} \u00b7 ${len} Steps${tonart}`;
   {
     const nx = playing ? patNextView : X.scPatNext();
     const t = 'P' + (X.scPattern() + 1) + (nx >= 0 ? ' \u2192 ' + (nx + 1) : '') + (patsOffen ? ' \u25b4' : ' \u25be');
@@ -1318,12 +1327,12 @@ el('bpmPat').onclick = () => {
   else cmd('scSetPatBpm', X.scPattern(), tempoGet());            // Pattern bekommt sein eigenes
 };
 el('bpm').onclick = () => openFine({
-  title: tempoEigen() ? 'TEMPO VON PATTERN ' + (X.scPattern() + 1) : 'TEMPO DES PROJEKTS',
+  title: tempoEigen() ? 'TEMPO OF PATTERN ' + (X.scPattern() + 1) : 'PROJECT TEMPO',
   lo: 30, hi: 300, get: tempoGet, set: tempoSet, text: v => v + ' BPM',
   steps: [['\u221210', -10], ['\u22121', -1], ['+1', 1], ['+10', 10]],
-  hint: tempoEigen() ? 'Dieses Pattern hat sein eigenes Tempo - beim Wechsel gilt es ab dem Taktende.'
-                     : 'Gilt fuer alle Patterns ohne eigenes Tempo. Mit P bekommt das gewaehlte Pattern ein eigenes.',
-  resetLabel: 'PROJEKTTEMPO', reset: tempoEigen() ? () => cmd('scSetPatBpm', X.scPattern(), 0) : null,
+  hint: tempoEigen() ? 'This pattern has its own tempo - it applies from the end of the bar on a switch.'
+                     : 'Applies to all patterns without their own tempo. P gives the selected pattern its own.',
+  resetLabel: 'PROJECT TEMPO', reset: tempoEigen() ? () => cmd('scSetPatBpm', X.scPattern(), 0) : null,
 });
 el('lenUp').onclick = () => { cmd('scSetTrackLen', sel, Math.min(128, X.scTrackLen(sel) + 1)); buildPads(); };
 el('lenDn').onclick = () => { cmd('scSetTrackLen', sel, Math.max(1, X.scTrackLen(sel) - 1)); buildPads(); };
@@ -1334,7 +1343,7 @@ el('lockDone').onclick = closeLock;
 // hat (Laenge, Teiler, ob sie der Tonart folgt) - in einem Fenster, oben das Pattern.
 function skalaOpen(pi) {
   pi = pi === undefined ? X.scPattern() : pi;
-  el('skTitle').textContent = 'SKALA \u00b7 PATTERN ' + (pi + 1) + (pi === X.scPattern() ? ' \u00b7 SPUR ' + (sel + 1) : '');
+  el('skTitle').textContent = 'SCALE \u00b7 PATTERN ' + (pi + 1) + (pi === X.scPattern() ? ' \u00b7 TRACK ' + (sel + 1) : '');
   const body = el('skBody');
   body.innerHTML = '';
   const kopf = t => { const h = document.createElement('h4'); h.textContent = t; body.appendChild(h); };
@@ -1360,36 +1369,36 @@ function skalaOpen(pi) {
   };
   const liste = (n, name) => { const a = []; for (let i = 0; i < n; i++) a.push(str(name(i))); return a; };
 
-  kopf('GESCHWINDIGKEIT');
+  kopf('SPEED');
   chips(liste(X.scNSpeeds(), X.scSpeedName), X.scPatMult(pi), i => cmd('scSetPatMult', pi, i));
   // Swing: der eigene des Patterns oder der des Projekts. 50 % ist gerade, 67 % triolisch.
   const swSlot = P.find(p => p.id === 'swing').slot;
   const swProj = X.scGet(-1, swSlot), swPat = X.scPatSwing(pi);
   const SW = [50, 54, 58, 62, 67, 71, 75];
-  kopf('SWING' + (swPat ? ' \u00b7 EIGENER DES PATTERNS' : ' \u00b7 VOM PROJEKT'));
-  chips(['PROJEKT ' + swProj + '%'].concat(SW.map(v => v + '%')),
+  kopf('SWING' + (swPat ? ' \u00b7 OWN (PATTERN)' : ' \u00b7 FROM PROJECT'));
+  chips(['PROJECT ' + swProj + '%'].concat(SW.map(v => v + '%')),
         swPat ? (SW.indexOf(swPat) + 1 || -1) : 0,
         i => cmd('scSetPatSwing', pi, i ? SW[i - 1] : 0));
   zahl(swPat || swProj, v => swPat ? cmd('scSetPatSwing', pi, v) : cmd('scSet', -1, swSlot, v), 50, 80,
        '%', [['\u22121', -1], [null, 0], ['+1', 1]]);
-  kopf('WECHSEL NACH');
+  kopf('CHANGE AFTER');
   zahl(X.scPatChg(pi), v => cmd('scSetPatChg', pi, v), 1, 128, 'Steps');
-  kopf('GRUNDTON');
+  kopf('ROOT');
   chips(liste(12, X.scNoteName), X.scPatRoot(pi), i => cmd('scSetPatKey', pi, i, X.scPatScale(pi)));
-  kopf('TONLEITER');
+  kopf('SCALE');
   chips(liste(X.scNScales(), X.scScaleName), X.scPatScale(pi), i => cmd('scSetPatKey', pi, X.scPatRoot(pi), i));
 
   if (pi === X.scPattern()) {                           // die Spur gibt es nur im laufenden Pattern
-    kopf('SPUR ' + (sel + 1) + ' \u00b7 LAENGE');
+    kopf('TRACK ' + (sel + 1) + ' \u00b7 LENGTH');
     zahl(X.scTrackLen(sel), v => cmd('scSetTrackLen', sel, v), 1, 128, 'Steps');
-    kopf('SPUR ' + (sel + 1) + ' \u00b7 TEILER');
+    kopf('TRACK ' + (sel + 1) + ' \u00b7 DIVISION');
     const divs = [];
     let curDiv = -1;
     for (let i = 0; i < X.scNDivs(); i++) { divs.push(str(X.scDivName(i))); if (X.scDivValue(i) === X.scSpeed(sel)) curDiv = i; }
     chips(divs, curDiv, i => cmd('scSetSpeed', sel, X.scDivValue(i)));
-    kopf('SPUR ' + (sel + 1) + ' \u00b7 FOLGT DER TONART');
+    kopf('TRACK ' + (sel + 1) + ' \u00b7 FOLLOWS KEY');
     const q = P.find(p => p.id === 'trk.quant');
-    chips(['AUS', 'AN'], X.scGet(sel, q.slot), i => cmd('scSet', sel, q.slot, i));
+    chips(['OFF', 'ON'], X.scGet(sel, q.slot), i => cmd('scSet', sel, q.slot, i));
   }
   if (!el('skala').open) el('skala').showModal();
 }
@@ -1411,7 +1420,7 @@ function openScene(k) {
   if (lockStep >= 0) closeLock();
   sceneEdit = k;
   el('scenebar').hidden = false;
-  el('sceneTxt').textContent = 'SCENE ' + 'AB'[k] + ' \u00b7 REGLER SETZEN DIE SCENE';
+  el('sceneTxt').textContent = 'SCENE ' + 'AB'[k] + ' \u00b7 KNOBS SET THE SCENE';
   el('morph').value = k ? 100 : 0;
   cmd('scSetMorph', k ? 1 : 0);
   buildParams();
@@ -1425,13 +1434,13 @@ let leerenScharf = 0;
 el('sceneClear').onclick = () => {
   if (Date.now() - leerenScharf > 2500) {
     leerenScharf = Date.now();
-    el('sceneClear').textContent = 'WIRKLICH?';
-    setTimeout(() => { el('sceneClear').textContent = 'LEEREN'; }, 2500);
+    el('sceneClear').textContent = 'SURE?';
+    setTimeout(() => { el('sceneClear').textContent = 'CLEAR'; }, 2500);
     return;
   }
   leerenScharf = 0;
   cmd('scSceneClearAll', sceneEdit);
-  el('sceneClear').textContent = 'LEEREN';
+  el('sceneClear').textContent = 'CLEAR';
   buildParams();
 };
 el('lockPrev').onclick = () => jumpTrig(-1);
@@ -1535,7 +1544,7 @@ const machSlot = () => P.find(p => p.id === 'trk.machine').slot;
 
 function smpLabel(i) {
   const n = X.scSmpFrames(i);
-  if (!n) return (i + 1) + (X.scSmpWanted(i) ? '  ' + str(X.scSmpName(i)) + '  fehlt' : '  leer');
+  if (!n) return (i + 1) + (X.scSmpWanted(i) ? '  ' + str(X.scSmpName(i)) + '  missing' : '  empty');
   const ack = smpAck.has(i) ? ' \u25cf' : (node ? ' \u2026' : '');
   const st = X.scSmpCh(i) === 2 ? ' ST' : '';
   return (i + 1) + '  ' + str(X.scSmpName(i)) + '  ' + (n / X.scSmpRate(i)).toFixed(2) + ' s'
@@ -1594,13 +1603,13 @@ async function smpLoadFiles(files) {
       const name = f.name.replace(/\.[^.]+$/, '').slice(0, 20);
       // Eine Stelle legt Samples ab - sie rechnet die Kanaele richtig mit.
       if (!smpPut(slot, mono, rate, ch, name)) {
-        el('smpList').innerHTML = '<div class="err">Der Vorrat ist voll.</div>';
+        el('smpList').innerHTML = '<div class="err">The pool is full.</div>';
         return;
       }
       smpStore(name, mono, rate, ch);
       slot++;
     } catch (e) {
-      el('smpList').innerHTML = '<div class="err">' + f.name + ' liess sich nicht lesen: '
+      el('smpList').innerHTML = '<div class="err">' + f.name + ' could not be read: '
                                 + e.message + '</div>';
       return;
     }
@@ -1615,17 +1624,17 @@ async function smpLoadFiles(files) {
 let recWartet = false;
 for (const b of document.querySelectorAll('.rec')) {
   b.onclick = async () => {
-    if (!node) { el('recInfo').textContent = 'Erst PLAY druecken.'; return; }
+    if (!node) { el('recInfo').textContent = 'Press PLAY first.'; return; }
     if (recWartet) return;
     let slot = -1;
     for (let i = 0; i < X.scSmpSlots(); i++)
       if (!X.scSmpFrames(i) && !X.scSmpWanted(i)) { slot = i; break; }
-    if (slot < 0) { el('recInfo').textContent = 'Kein freier Platz.'; return; }
+    if (slot < 0) { el('recInfo').textContent = 'No free slot.'; return; }
     const takte = +b.dataset.takte;
     const sek = takte * 4 * 60 / X.scGet(-1, bpmSlot());
     const name = 'aufnahme ' + (slot + 1);
     recWartet = true;
-    el('recInfo').textContent = 'nimmt auf \u2026';
+    el('recInfo').textContent = 'recording \u2026';
     node.port.postMessage({fn: 'rec', slot, seconds: sek,
                            name: new TextEncoder().encode(name), ch: 2});
   };
@@ -1695,15 +1704,15 @@ function seDraw() {
   strich(se.b, css.getPropertyValue('--lock'));
   if (se.loop) strich(se.la, css.getPropertyValue('--amber'));
   const sek = f => (f / se.rate).toFixed(3);
-  el('seInfo').textContent = `Start ${sek(se.a)} s \u00b7 Ende ${sek(se.b)} s \u00b7 Laenge ${sek(se.b - se.a)} s`
-    + (se.loop ? ` \u00b7 Loop ab ${sek(se.la)} s` : '') + `  \u00b7  Zoom ${se.zoom}\u00d7`;
-  el('seLoop').textContent = se.loop ? 'LOOP AN' : 'LOOP AUS';
+  el('seInfo').textContent = `Start ${sek(se.a)} s \u00b7 End ${sek(se.b)} s \u00b7 Length ${sek(se.b - se.a)} s`
+    + (se.loop ? ` \u00b7 Loop from ${sek(se.la)} s` : '') + `  \u00b7  Zoom ${se.zoom}\u00d7`;
+  el('seLoop').textContent = se.loop ? 'LOOP ON' : 'LOOP OFF';
   el('seLoop').classList.toggle('on', !!se.loop);
   for (const b of document.querySelectorAll('.semark button')) b.classList.toggle('on', b.dataset.m === se.mark);
   document.querySelector('.semark button[data-m=la]').disabled = !se.loop;
 }
 el('smpEditBtn').onclick = () => {
-  if (!X.scSmpFrames(smpSel)) { el('recInfo').textContent = 'Erst ein Sample in diesen Platz laden.'; return; }
+  if (!X.scSmpFrames(smpSel)) { el('recInfo').textContent = 'Load a sample into this slot first.'; return; }
   seLoad(smpSel);
   el('seTitle').textContent = 'SAMPLE ' + (smpSel + 1) + '  ' + str(X.scSmpName(smpSel));
   el('smpEdit').showModal();
@@ -1812,7 +1821,7 @@ function songPaint() {
   list.innerHTML = '';
   const n = X.scSongN();
   if (!n) {
-    list.innerHTML = '<p class="hint">Noch leer. <b>+ PATTERN</b> haengt das gerade gewaehlte an.</p>';
+    list.innerHTML = '<p class="hint">Empty. <b>+ PATTERN</b> appends the selected pattern.</p>';
   }
   for (let i = 0; i < n; i++) {
     const row = document.createElement('div');
@@ -1821,7 +1830,7 @@ function songPaint() {
       <button data-a="pat" aria-label="anderes Pattern">P</button>
       <button data-a="minus" aria-label="weniger Wiederholungen">\u2212</button>
       <button data-a="plus" aria-label="mehr Wiederholungen">+</button>
-      <button data-a="weg" aria-label="Eintrag entfernen">\u00d7</button>`;
+      <button data-a="weg" aria-label="Remove entry">\u00d7</button>`;
     row.querySelector('[data-a=pat]').onclick = () => {
       cmd('scSongSet', i, (X.scSongPat(i) + 1) % X.scNPatterns(), X.scSongRep(i)); songPaint();
     };
@@ -1834,7 +1843,7 @@ function songPaint() {
     row.querySelector('[data-a=weg]').onclick = () => { cmd('scSongDel', i); songPaint(); };
     list.appendChild(row);
   }
-  el('songPlay').textContent = songAn() ? 'SONG AUS' : 'SONG AN';
+  el('songPlay').textContent = songAn() ? 'SONG OFF' : 'SONG ON';
   el('songPlay').disabled = !n;
 }
 el('songBtn').onclick = () => { songPaint(); el('song').showModal(); };
@@ -1864,11 +1873,11 @@ el('docLoad').onclick = () => { loadDoc(el('docText').value); el('doc').close();
 let neuArmed = 0;
 el('docNew').onclick = () => {
   if (Date.now() - neuArmed > 3000) {
-    neuArmed = Date.now(); el('docNew').textContent = 'WIRKLICH?';
-    setTimeout(() => el('docNew').textContent = 'NEU (DEMO)', 3000);
+    neuArmed = Date.now(); el('docNew').textContent = 'SURE?';
+    setTimeout(() => el('docNew').textContent = 'NEW (DEMO)', 3000);
     return;
   }
-  neuArmed = 0; el('docNew').textContent = 'NEU (DEMO)';
+  neuArmed = 0; el('docNew').textContent = 'NEW (DEMO)';
   if (playing) el('play').click();
   X.scDemo();
   loadDoc(str(X.scSave()));
@@ -1883,12 +1892,12 @@ el('docNew').onclick = () => {
 const PRJKEY = 'synthcity-projekt';
 let savedText = null, bootText = null, restoring = true, cloud = null, cloudAt = 0, cloudText = null;
 // Was gerade wohin geht - steht im DOK-Fenster, damit man sieht, ob Speichern wirkt.
-const stand = {browser: 'pruefe…', konto: 'verbinde…', zuletzt: '', geladen: ''};
+const stand = {browser: 'checking…', konto: 'connecting…', zuletzt: '', geladen: ''};
 function standZeigen() {
   const e = el('saveState'); if (!e) return;
   e.innerHTML = (stand.geladen ? stand.geladen + '<br>' : '') +
-    'Browser-Speicher: ' + stand.browser + '<br>Konto: ' + stand.konto +
-    (stand.zuletzt ? '<br>Zuletzt gespeichert: ' + stand.zuletzt : '');
+    'Browser storage: ' + stand.browser + '<br>Account: ' + stand.konto +
+    (stand.zuletzt ? '<br>Last saved: ' + stand.zuletzt : '');
 }
 const saveInfo = t => { stand.geladen = t; standZeigen(); };
 // Manche Browser (eingebettete Seiten, private Fenster) lassen den Speicher-Aufruf einfach
@@ -1919,7 +1928,7 @@ async function prjLocalGet() {
     if (l && (!best || l.t > best.t)) best = l;
     ok = true;
   } catch (e) {}
-  stand.browser = ok ? 'bereit' : 'nicht verfuegbar';
+  stand.browser = ok ? 'ready' : 'not available';
   return best;
 }
 async function prjLocalPut(rec) {
@@ -1930,7 +1939,7 @@ async function prjLocalPut(rec) {
     db.transaction('p', 'readwrite').objectStore('p').put(rec, 'aktuell');
     ok = true;
   } catch (e) {}
-  stand.browser = ok ? 'gespeichert' : 'nicht verfuegbar';
+  stand.browser = ok ? 'saved' : 'not available';
   standZeigen();
 }
 function prjSave(force) {
@@ -1940,7 +1949,7 @@ function prjSave(force) {
   const rec = {doc: text, t: Date.now(), v: 1};
   savedText = text;
   prjLocalPut(rec);
-  stand.zuletzt = new Date(rec.t).toLocaleTimeString('de-DE', {hour: '2-digit', minute: '2-digit', second: '2-digit'});
+  stand.zuletzt = new Date(rec.t).toLocaleTimeString('en-GB', {hour: '2-digit', minute: '2-digit', second: '2-digit'});
   standZeigen();
   cloudPush(force);
 }
@@ -1953,14 +1962,14 @@ function cloudPush(sofort) {
   cloudTimer = setTimeout(async () => {
     cloudTimer = null;
     if (!savedText || savedText === cloudText) return;
-    if (savedText.length > 250000) { stand.konto = 'Projekt zu gross fuer das Konto'; standZeigen(); return; }
+    if (savedText.length > 250000) { stand.konto = 'project too large for the account'; standZeigen(); return; }
     const text = savedText;
     cloudAt = Date.now();
     try {
       await frist(cloud.set({doc: text, t: Date.now(), v: 1}), 15000);
       cloudText = text;
-      stand.konto = 'gespeichert ' + new Date().toLocaleTimeString('de-DE', {hour: '2-digit', minute: '2-digit', second: '2-digit'});
-    } catch (e) { stand.konto = 'antwortet nicht (' + ((e && (e.code || e.message)) || 'Fehler') + ')'; }
+      stand.konto = 'saved ' + new Date().toLocaleTimeString('en-GB', {hour: '2-digit', minute: '2-digit', second: '2-digit'});
+    } catch (e) { stand.konto = 'not responding (' + ((e && (e.code || e.message)) || 'error') + ')'; }
     standZeigen();
     if (savedText !== cloudText) cloudPush();
   }, warte);
@@ -1972,13 +1981,13 @@ function konto() {
   if (kontoP) return kontoP;
   kontoP = (async () => {
     for (let i = 0; i < 30 && !(window.claude && window.claude.use); i++) await new Promise(r => setTimeout(r, 100));
-    if (!window.claude || !window.claude.use) { stand.konto = 'nicht da (Seite laeuft ausserhalb von Claude)'; return null; }
+    if (!window.claude || !window.claude.use) { stand.konto = 'not available (page runs outside Claude)'; return null; }
     const [db, user] = await frist(Promise.all([window.claude.use('db'), window.claude.use('user')]), 12000);
-    if (!db || !user) { stand.konto = 'nicht freigegeben oder nicht angemeldet'; return null; }
+    if (!db || !user) { stand.konto = 'not allowed or not signed in'; return null; }
     const id = await user.id();
-    if (!id) { stand.konto = 'nicht angemeldet'; return null; }
+    if (!id) { stand.konto = 'not signed in'; return null; }
     return {db, col: db.collection('data/users/' + id)};
-  })().catch(e => { stand.konto = 'Fehler: ' + ((e && (e.code || e.message)) || e); return null; })
+  })().catch(e => { stand.konto = 'error: ' + ((e && (e.code || e.message)) || e); return null; })
       .finally(standZeigen);
   return kontoP;
 }
@@ -2042,7 +2051,7 @@ async function cloudSmpSync() {
 async function prjRestore() {
   bootText = str(X.scSave());
   const lokal = await prjLocalGet();
-  if (lokal && lokal.doc) { loadDoc(lokal.doc); saveInfo('Projekt aus dem Browser-Speicher geladen.'); }
+  if (lokal && lokal.doc) { loadDoc(lokal.doc); saveInfo('Project loaded from browser storage.'); }
   else standZeigen();
   bootText = str(X.scSave());
   savedText = lokal && lokal.doc ? bootText : null;     // nach dem Laden so, wie der Kern es schreibt
@@ -2058,22 +2067,22 @@ async function prjRestore() {
     cloud = ref;
     const d = snap.exists ? snap.data() : null;
     if (d && typeof d.doc === 'string') cloudText = d.doc;
-    stand.konto = 'verbunden';
+    stand.konto = 'connected';
     const unberuehrt = str(X.scSave()) === bootText;
     if (d && typeof d.doc === 'string' && d.t > lokalT && unberuehrt) {
       loadDoc(d.doc); savedText = str(X.scSave()); prjLocalPut({doc: d.doc, t: d.t, v: 1});
-      saveInfo('Projekt aus dem Konto geladen.');
+      saveInfo('Project loaded from your account.');
     } else {
       standZeigen();
       prjSave(); cloudPush();
     }
     cloudSmpSync();
-  } catch (e) { stand.konto = 'Fehler beim Lesen: ' + ((e && (e.code || e.message)) || e); standZeigen(); }
+  } catch (e) { stand.konto = 'read error: ' + ((e && (e.code || e.message)) || e); standZeigen(); }
 }
 setInterval(() => prjSave(false), 1500);
 document.addEventListener('visibilitychange', () => { if (document.hidden) prjSave(false); });
 window.addEventListener('pagehide', () => prjSave(false));
-el('docSave').onclick = () => { prjSave(true); el('docSave').textContent = 'GESPEICHERT'; setTimeout(() => el('docSave').textContent = 'JETZT SPEICHERN', 1500); };
+el('docSave').onclick = () => { prjSave(true); el('docSave').textContent = 'SAVED'; setTimeout(() => el('docSave').textContent = 'SAVE NOW', 1500); };
 // Als Datei: der sicherste Weg, ein Projekt aufzuheben oder auf ein anderes Geraet zu bringen.
 el('docFile').onclick = async () => {
   const text = str(X.scSave());
@@ -2091,14 +2100,14 @@ el('docOpenIn').onchange = async () => {
   const f = el('docOpenIn').files[0]; if (!f) return;
   const t = await f.text();
   el('docOpenIn').value = '';
-  if (!/=/.test(t)) { saveInfo('Die Datei ist kein SYNTH-CITY-Projekt.'); return; }
-  loadDoc(t); prjSave(true); saveInfo('Projekt aus der Datei geladen.');
+  if (!/=/.test(t)) { saveInfo('The file is not a SYNTH CITY project.'); return; }
+  loadDoc(t); prjSave(true); saveInfo('Project loaded from file.');
   el('doc').close();
 };
 el('docCopy').onclick = async () => {
-  try { await navigator.clipboard.writeText(el('docText').value); el('docCopy').textContent = 'KOPIERT'; }
+  try { await navigator.clipboard.writeText(el('docText').value); el('docCopy').textContent = 'COPIED'; }
   catch (e) { el('docText').select(); }
-  setTimeout(() => el('docCopy').textContent = 'KOPIEREN', 1200);
+  setTimeout(() => el('docCopy').textContent = 'COPY', 1200);
 };
 
 const WORKLET_URL = 'worklet.js';
