@@ -503,6 +503,12 @@ textarea {
       <button id="docLoad">LADEN</button>
       <button id="docCopy">KOPIEREN</button>
       <button id="docNew">NEU (DEMO)</button>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button id="docSave">JETZT SPEICHERN</button>
+      <button id="docFile">ALS DATEI</button>
+      <button id="docOpen">DATEI &Ouml;FFNEN</button>
+      <input type="file" id="docOpenIn" hidden>
       <div class="spacer"></div>
       <button id="docClose">SCHLIESSEN</button>
     </div>
@@ -1312,16 +1318,17 @@ el('lockMore').onclick = () => { if (lockStep >= 0) stepMenu(lockStep); };
 // Alles in try/catch: in einem privaten Fenster gibt es ihn vielleicht gar nicht.
 const SMPDB = 'synthcity-samples';
 function idb() {
-  return new Promise((ok, no) => {
+  return frist(new Promise((ok, no) => {
     try {
       const r = indexedDB.open(SMPDB, 1);
       r.onupgradeneeded = () => r.result.createObjectStore('s', {keyPath: 'name'});
       r.onsuccess = () => ok(r.result);
       r.onerror = () => no(r.error);
     } catch (e) { no(e); }
-  });
+  }), 2000);
 }
 async function smpStore(name, data, rate, ch) {
+  cloudSmpPut(name, data, rate, ch);
   try {
     const db = await idb();
     await new Promise((ok, no) => {
@@ -1332,6 +1339,19 @@ async function smpStore(name, data, rate, ch) {
   } catch (e) { /* ohne Speicher geht es auch, nur nicht ueber die Sitzung hinaus */ }
 }
 async function smpFetch(name) {
+  const lokal = await smpFetchLocal(name);
+  if (lokal) return lokal;
+  const k = await cloudSmpGet(name);                   // nicht im Browser - vielleicht im Konto - vielleicht im Konto
+  if (k) smpStoreLocal(k.name, k.data, k.rate, k.ch);
+  return k;
+}
+async function smpStoreLocal(name, data, rate, ch) {
+  try {
+    const db = await idb();
+    db.transaction('s', 'readwrite').objectStore('s').put({name, data, rate, ch});
+  } catch (e) {}
+}
+async function smpFetchLocal(name) {
   try {
     const db = await idb();
     return await new Promise((ok, no) => {
@@ -1737,39 +1757,57 @@ el('docNew').onclick = () => {
 // der neuere Stand. Gespeichert wird nur, was sich geaendert hat.
 const PRJKEY = 'synthcity-projekt';
 let savedText = null, bootText = null, restoring = true, cloud = null, cloudAt = 0, cloudText = null;
+// Was gerade wohin geht - steht im DOK-Fenster, damit man sieht, ob Speichern wirkt.
+const stand = {browser: 'pruefe…', konto: 'verbinde…', zuletzt: '', geladen: ''};
+function standZeigen() {
+  const e = el('saveState'); if (!e) return;
+  e.innerHTML = (stand.geladen ? stand.geladen + '<br>' : '') +
+    'Browser-Speicher: ' + stand.browser + '<br>Konto: ' + stand.konto +
+    (stand.zuletzt ? '<br>Zuletzt gespeichert: ' + stand.zuletzt : '');
+}
+const saveInfo = t => { stand.geladen = t; standZeigen(); };
+// Manche Browser (eingebettete Seiten, private Fenster) lassen den Speicher-Aufruf einfach
+// haengen. Dann darf das Laden nicht ewig warten.
+const frist = (pr, ms) => Promise.race([pr, new Promise((_, no) => setTimeout(() => no(new Error('frist')), ms))]);
 function prjDb() {
-  return new Promise((ok, no) => {
+  return frist(new Promise((ok, no) => {
     try {
       const r = indexedDB.open('synthcity-projekt', 1);
       r.onupgradeneeded = () => r.result.createObjectStore('p');
       r.onsuccess = () => ok(r.result);
       r.onerror = () => no(r.error);
     } catch (e) { no(e); }
-  });
+  }), 2000);
 }
 async function prjLocalGet() {
-  let best = null;
+  let best = null, ok = false;
   try {
     const db = await prjDb();
-    best = await new Promise(ok => {
+    best = await frist(new Promise(res => {
       const r = db.transaction('p').objectStore('p').get('aktuell');
-      r.onsuccess = () => ok(r.result || null); r.onerror = () => ok(null);
-    });
+      r.onsuccess = () => res(r.result || null); r.onerror = () => res(null);
+    }), 2000);
+    ok = true;
   } catch (e) {}
   try {
     const l = JSON.parse(localStorage.getItem(PRJKEY) || 'null');
     if (l && (!best || l.t > best.t)) best = l;
+    ok = true;
   } catch (e) {}
+  stand.browser = ok ? 'bereit' : 'nicht verfuegbar';
   return best;
 }
 async function prjLocalPut(rec) {
-  try { localStorage.setItem(PRJKEY, JSON.stringify(rec)); } catch (e) {}
+  let ok = false;
+  try { localStorage.setItem(PRJKEY, JSON.stringify(rec)); ok = true; } catch (e) {}
   try {
     const db = await prjDb();
     db.transaction('p', 'readwrite').objectStore('p').put(rec, 'aktuell');
+    ok = true;
   } catch (e) {}
+  stand.browser = ok ? 'gespeichert' : 'nicht verfuegbar';
+  standZeigen();
 }
-function saveInfo(txt) { const e = el('saveState'); if (e) e.textContent = txt; }
 function prjSave(force) {
   if (restoring || !X) return;
   const text = str(X.scSave());
@@ -1777,60 +1815,161 @@ function prjSave(force) {
   const rec = {doc: text, t: Date.now(), v: 1};
   savedText = text;
   prjLocalPut(rec);
-  const zeit = new Date(rec.t).toLocaleTimeString('de-DE', {hour: '2-digit', minute: '2-digit'});
-  saveInfo('Gespeichert ' + zeit + ' im Browser' + (cloud ? ' und im Konto.' : '.'));
-  cloudPush();
+  stand.zuletzt = new Date(rec.t).toLocaleTimeString('de-DE', {hour: '2-digit', minute: '2-digit', second: '2-digit'});
+  standZeigen();
+  cloudPush(force);
 }
 // Ins Konto hoechstens alle 5 Sekunden - der Browser-Speicher haelt die Zwischenstaende.
 let cloudTimer = null;
-function cloudPush() {
-  if (!cloud || cloudTimer) return;
-  const warte = Math.max(0, 5000 - (Date.now() - cloudAt));
+function cloudPush(sofort) {
+  if (!cloud) return;
+  if (cloudTimer) { if (!sofort) return; clearTimeout(cloudTimer); cloudTimer = null; }
+  const warte = sofort ? 0 : Math.max(0, 5000 - (Date.now() - cloudAt));
   cloudTimer = setTimeout(async () => {
     cloudTimer = null;
-    if (!savedText || savedText === cloudText || savedText.length > 250000) return;
+    if (!savedText || savedText === cloudText) return;
+    if (savedText.length > 250000) { stand.konto = 'Projekt zu gross fuer das Konto'; standZeigen(); return; }
     const text = savedText;
     cloudAt = Date.now();
-    try { await cloud.set({doc: text, t: Date.now(), v: 1}); cloudText = text; }
-    catch (e) { saveInfo('Im Browser gespeichert - das Konto antwortet gerade nicht.'); }
+    try {
+      await frist(cloud.set({doc: text, t: Date.now(), v: 1}), 15000);
+      cloudText = text;
+      stand.konto = 'gespeichert ' + new Date().toLocaleTimeString('de-DE', {hour: '2-digit', minute: '2-digit', second: '2-digit'});
+    } catch (e) { stand.konto = 'antwortet nicht (' + ((e && (e.code || e.message)) || 'Fehler') + ')'; }
+    standZeigen();
     if (savedText !== cloudText) cloudPush();
   }, warte);
 }
+
+// Das Konto: einmal verbinden, alle warten auf dieselbe Verbindung.
+let kontoP = null;
+function konto() {
+  if (kontoP) return kontoP;
+  kontoP = (async () => {
+    for (let i = 0; i < 30 && !(window.claude && window.claude.use); i++) await new Promise(r => setTimeout(r, 100));
+    if (!window.claude || !window.claude.use) { stand.konto = 'nicht da (Seite laeuft ausserhalb von Claude)'; return null; }
+    const [db, user] = await frist(Promise.all([window.claude.use('db'), window.claude.use('user')]), 12000);
+    if (!db || !user) { stand.konto = 'nicht freigegeben oder nicht angemeldet'; return null; }
+    const id = await user.id();
+    if (!id) { stand.konto = 'nicht angemeldet'; return null; }
+    return {db, col: db.collection('data/users/' + id)};
+  })().catch(e => { stand.konto = 'Fehler: ' + ((e && (e.code || e.message)) || e); return null; })
+      .finally(standZeigen);
+  return kontoP;
+}
+
+// --- Samples auch im Konto --------------------------------------------------------------------
+// Der Browser-Speicher einer eingebetteten Seite kann jederzeit leer sein. Damit ein Projekt
+// nicht ohne seine Klaenge zurueckkommt, liegen die Samples zusaetzlich im Konto: als 16 Bit,
+// in Stuecken zu 60000 Werten (ein Dokument darf nicht beliebig gross sein).
+const SMP_STUECK = 60000;
+const smpKey = name => { let h = 0x811c9dc5; for (const c of new TextEncoder().encode(name)) { h ^= c; h = Math.imul(h, 0x01000193) >>> 0; } return 'smp-' + h.toString(16); };
+const b64von = u8 => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); };
+const b64nach = t => { const s = atob(t), u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return u; };
+const smpImKonto = new Set();
+async function cloudSmpPut(name, data, rate, ch) {
+  const k = await konto(); if (!k || !name || smpImKonto.has(name)) return;
+  try {
+    const kopf = k.col.doc(smpKey(name));
+    const da = await frist(kopf.get(), 10000);
+    if (da.exists && da.data().name === name && da.data().len === data.length) { smpImKonto.add(name); return; }
+    const n = Math.ceil(data.length / SMP_STUECK);
+    for (let c = 0; c < n; c++) {
+      const teil = data.subarray(c * SMP_STUECK, Math.min(data.length, (c + 1) * SMP_STUECK));
+      const i16 = new Int16Array(teil.length);
+      for (let i = 0; i < teil.length; i++) { const v = Math.max(-1, Math.min(1, teil[i])); i16[i] = Math.round(v * 32767); }
+      await frist(k.col.doc(smpKey(name) + '-' + c).set({d: b64von(new Uint8Array(i16.buffer))}), 20000);
+    }
+    await frist(kopf.set({name, rate, ch: ch || 1, len: data.length, n}), 10000);   // zuletzt: erst dann gilt es
+    smpImKonto.add(name);
+  } catch (e) { /* naechster Versuch beim naechsten Laden */ }
+}
+async function cloudSmpGet(name) {
+  const k = await konto(); if (!k) return null;
+  try {
+    const kopf = await frist(k.col.doc(smpKey(name)).get(), 10000);
+    if (!kopf.exists) return null;
+    const h = kopf.data();
+    if (h.name !== name) return null;
+    const data = new Float32Array(h.len);
+    for (let c = 0; c < h.n; c++) {
+      const st = await frist(k.col.doc(smpKey(name) + '-' + c).get(), 15000);
+      if (!st.exists) return null;
+      const u8 = b64nach(st.data().d);
+      const i16 = new Int16Array(u8.buffer, 0, u8.length >> 1);
+      for (let i = 0; i < i16.length; i++) data[c * SMP_STUECK + i] = i16[i] / 32767;
+    }
+    smpImKonto.add(name);
+    return {name, data, rate: h.rate, ch: h.ch || 1};
+  } catch (e) { return null; }
+}
+// Was im Projekt klingt, aber noch nicht im Konto liegt, wird nachgereicht.
+async function cloudSmpSync() {
+  for (let i = 0; i < X.scSmpSlots(); i++) {
+    if (!X.scSmpFrames(i)) continue;
+    const name = str(X.scSmpName(i));
+    if (!name || smpImKonto.has(name)) continue;
+    const rec = await smpFetchLocal(name);
+    if (rec) await cloudSmpPut(name, rec.data, rec.rate, rec.ch);
+  }
+}
+
 async function prjRestore() {
   bootText = str(X.scSave());
   const lokal = await prjLocalGet();
   if (lokal && lokal.doc) { loadDoc(lokal.doc); saveInfo('Projekt aus dem Browser-Speicher geladen.'); }
+  else standZeigen();
   bootText = str(X.scSave());
   savedText = lokal && lokal.doc ? bootText : null;     // nach dem Laden so, wie der Kern es schreibt
   const lokalT = lokal ? lokal.t : 0;
   restoring = false;
   // Konto: kommt spaeter oder gar nicht. Ist es dort neuer und wurde hier noch nichts
   // veraendert, gilt der Stand aus dem Konto.
+  const k = await konto();
+  if (!k) return;
   try {
-    for (let i = 0; i < 30 && !(window.claude && window.claude.use); i++) await new Promise(r => setTimeout(r, 100));
-    if (!window.claude || !window.claude.use) return;
-    const [db, user] = await Promise.all([window.claude.use('db'), window.claude.use('user')]);
-    if (!db || !user) return;
-    const id = await user.id();
-    if (!id) return;
-    const ref = db.collection('data/users/' + id).doc('projekt');
-    const snap = await Promise.race([ref.get(), new Promise((_, no) => setTimeout(() => no(new Error('zeit')), 10000))]);
+    const ref = k.col.doc('projekt');
+    const snap = await frist(ref.get(), 10000);
     cloud = ref;
     const d = snap.exists ? snap.data() : null;
     if (d && typeof d.doc === 'string') cloudText = d.doc;
+    stand.konto = 'verbunden';
     const unberuehrt = str(X.scSave()) === bootText;
     if (d && typeof d.doc === 'string' && d.t > lokalT && unberuehrt) {
       loadDoc(d.doc); savedText = str(X.scSave()); prjLocalPut({doc: d.doc, t: d.t, v: 1});
       saveInfo('Projekt aus dem Konto geladen.');
     } else {
-      saveInfo(savedText ? 'Wird automatisch gespeichert: im Browser und im Konto.' : 'Wird automatisch gespeichert.');
+      standZeigen();
       prjSave(); cloudPush();
     }
-  } catch (e) { /* ohne Konto bleibt der Browser-Speicher */ }
+    cloudSmpSync();
+  } catch (e) { stand.konto = 'Fehler beim Lesen: ' + ((e && (e.code || e.message)) || e); standZeigen(); }
 }
 setInterval(() => prjSave(false), 1500);
 document.addEventListener('visibilitychange', () => { if (document.hidden) prjSave(false); });
 window.addEventListener('pagehide', () => prjSave(false));
+el('docSave').onclick = () => { prjSave(true); el('docSave').textContent = 'GESPEICHERT'; setTimeout(() => el('docSave').textContent = 'JETZT SPEICHERN', 1500); };
+// Als Datei: der sicherste Weg, ein Projekt aufzuheben oder auf ein anderes Geraet zu bringen.
+el('docFile').onclick = async () => {
+  const text = str(X.scSave());
+  const name = 'synthcity-' + new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-') + '.txt';
+  try {
+    const dl = window.claude && window.claude.use ? await window.claude.use('downloads') : null;
+    if (dl) { await dl.save({filename: name, data: new Blob([text], {type: 'text/plain'})}); return; }
+  } catch (e) { if (e && e.code === 'dismissed') return; }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], {type: 'text/plain'}));
+  a.download = name; document.body.appendChild(a); a.click(); a.remove();
+};
+el('docOpen').onclick = () => el('docOpenIn').click();
+el('docOpenIn').onchange = async () => {
+  const f = el('docOpenIn').files[0]; if (!f) return;
+  const t = await f.text();
+  el('docOpenIn').value = '';
+  if (!/=/.test(t)) { saveInfo('Die Datei ist kein SYNTH-CITY-Projekt.'); return; }
+  loadDoc(t); prjSave(true); saveInfo('Projekt aus der Datei geladen.');
+  el('doc').close();
+};
 el('docCopy').onclick = async () => {
   try { await navigator.clipboard.writeText(el('docText').value); el('docCopy').textContent = 'KOPIERT'; }
   catch (e) { el('docText').select(); }

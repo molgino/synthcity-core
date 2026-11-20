@@ -135,8 +135,12 @@ darf, ins **eigene Konto** (privat, nur für den angemeldeten Nutzer; höchstens
 Start gewinnt der neuere Stand. Ein Update der Seite lässt das Projekt also stehen; der Kern
 liest ältere Dokumente weiter, fehlende Werte bekommen ihren Grundwert.
 
-Die Klänge der Samples liegen wie bisher im Browser-Speicher, das Dokument merkt sich nur ihre
-Namen. **NEU (DEMO)** im DOK-Fenster (zwei Tipps) fängt von vorn an. Ein Browser-Test ändert das
+Die Samples liegen im Browser-Speicher **und im Konto** (16 Bit, in Stücken zu 60000 Werten,
+weil ein Datenbank-Dokument begrenzt ist) — der Browser-Speicher einer eingebetteten Seite kann
+jederzeit leer sein. Fehlt ein Sample im Browser, kommt es aus dem Konto. Das DOK-Fenster zeigt,
+was wohin gespeichert wurde; dazu **JETZT SPEICHERN**, **ALS DATEI** und **DATEI ÖFFNEN**.
+Jeder Speicher-Zugriff hat eine Frist, damit ein hängender Browser-Speicher das Laden nicht
+blockiert. `tests/konto.js` spielt zwei Geräte gegen ein nachgebautes Konto durch. **NEU (DEMO)** im DOK-Fenster (zwei Tipps) fängt von vorn an. Ein Browser-Test ändert das
 Tempo, lädt neu und vergleicht das ganze Dokument.
 
 ## Kopieren und Einfügen

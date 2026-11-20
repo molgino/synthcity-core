@@ -22,7 +22,7 @@ test: tests/unit tests/render tests/plugin build/synthcity.clap web/synthcity.wa
 # Oberflaeche im echten Browser. Braucht node, playwright und einen kurzen Webserver.
 uitest: web/synthcity.wasm
 	@python3 -m http.server 8799 --directory web >/dev/null 2>&1 & srv=$$!; sleep 1; \
-	node tests/browser.js http://localhost:8799/index.html; st=$$?; \
+	node tests/browser.js http://localhost:8799/index.html && node tests/konto.js http://localhost:8799/index.html; st=$$?; \
 	kill $$srv >/dev/null 2>&1; wait $$srv 2>/dev/null; exit $$st
 
 bench: tools/bench
