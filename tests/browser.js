@@ -288,6 +288,17 @@ const stummMuster = async p => {
     await p.locator('#padTitle').tap(); await p.waitForTimeout(250);
     chk(await p.locator('#skala').isVisible(), 'ein Tipp auf den Titel oeffnet die Skala nicht');
     const chip = (titel, text) => p.locator('#skBody h4', {hasText: titel}).locator('xpath=following-sibling::div[1]').locator('button', {hasText: text}).first();
+    // Swing: eigener des Patterns, sonst der des Projekts
+    await chip('SWING', '67%').tap(); await p.waitForTimeout(150);
+    chk(await chip('SWING', '67%').evaluate(e => e.classList.contains('cur')), 'Swing 67 % ist nicht gewaehlt');
+    chk((await p.locator('#skBody h4', {hasText: 'SWING'}).textContent()).includes('EIGENER'), 'der Swing gilt nicht als eigener des Patterns');
+    await p.locator('#skBody h4', {hasText: 'SWING'}).locator('xpath=following-sibling::div[2]').locator('button', {hasText: '+1'}).tap();
+    await p.waitForTimeout(150);
+    chk((await p.locator('#skBody h4', {hasText: 'SWING'}).locator('xpath=following-sibling::div[2]').textContent()).includes('68 %'),
+        'der Swing laesst sich nicht fein verstellen');
+    await chip('SWING', 'PROJEKT').tap(); await p.waitForTimeout(150);
+    chk((await p.locator('#skBody h4', {hasText: 'SWING'}).textContent()).includes('VOM PROJEKT'), 'PROJEKT nimmt den eigenen Swing nicht zurueck');
+    await chip('SWING', '58%').tap(); await p.waitForTimeout(150);
     await chip('GESCHWINDIGKEIT', '2x').tap(); await p.waitForTimeout(150);
     chk(await chip('GESCHWINDIGKEIT', '2x').evaluate(e => e.classList.contains('cur')), '2x ist nicht gewaehlt');
     await chip('GESCHWINDIGKEIT', '1x').tap();
@@ -319,6 +330,12 @@ const stummMuster = async p => {
     await chip('TONLEITER', 'CHROMATISCH').tap();
     await p.locator('#skBody h4', {hasText: 'LAENGE'}).locator('xpath=following-sibling::div[1]').locator('button', {hasText: '\u221216'}).tap();
     await chip('TEILER', '1/16').tap();
+    await p.locator('#skClose').tap(); await p.waitForTimeout(200);
+    await p.locator('#docBtn').tap(); await p.waitForTimeout(200);
+    chk(/pat\.0\.swing = 58/.test(await p.locator('#docText').inputValue()), 'der Swing des Patterns steht nicht im Dokument');
+    await p.locator('#docClose').tap();
+    await p.locator('#padTitle').tap(); await p.waitForTimeout(200);
+    await chip('SWING', 'PROJEKT').tap();
     await p.locator('#skClose').tap(); await p.waitForTimeout(200);
   }
 

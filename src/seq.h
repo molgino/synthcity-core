@@ -31,6 +31,7 @@ inline int condAB(int a, int b, bool neg) { return (neg ? CND_NAB0 : CND_AB0) + 
 struct Seq {
     double sr = 48000.0;
     double bpm = 120.0;
+    double swing = 0.5;         // Anteil des ersten Steps an einem Paar: 0.5 gerade, 0.667 triolisch
     int64_t pos = 0;            // Samples seit Start
     bool running = false;
     bool fill = false;          // Performance-Ebene: aendert nie die Daten
@@ -116,7 +117,10 @@ struct Seq {
         static const int slotLen   = paramSlot(paramFind("trk.len"));
         static const int slotRtrg  = paramSlot(paramFind("trk.ratchet"));
 
+        // Swing: jeder zweite Step der Zeitachse kommt spaeter - am Raster, nicht an der
+        // Quelle, damit auch ein Step-Loop swingt. Die Laenge bleibt, nur der Anschlag rueckt.
         double nominal = (double)origin + (double)k * sp;
+        if (k & 1) nominal += (2.0 * swing - 1.0) * sp;
         double micro = (effective(tr, s, slotMicro) - 24) / 24.0;   // -1 .. +1 Step
         int64_t at = (int64_t)llround(nominal + micro * sp);
 

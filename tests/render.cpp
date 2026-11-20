@@ -987,6 +987,36 @@ int main() {
             "Akkord und Stimmenmodus ueberleben das Dokument nicht");
     }
 
+    grp("Swing: global und je Pattern");
+    {
+        // Wann beginnt Step 2 (Index 1)? Aus dem Alter seiner Stimme zurueckgerechnet.
+        auto start1 = [&](int gsw, int psw) {
+            e.prepare(48000.0f); setupBeat(e, 60);
+            Track& t = e.P.pat[0].t[0];
+            for (int s = 0; s < 4; s++) t.s[s].on = 1;
+            t.p[SL("trk.amp.rel")] = 90; t.p[SL("trk.len")] = 127;
+            e.P.g[SL("swing")] = (int16_t)gsw;
+            e.P.pat[0].swing = (uint8_t)psw;
+            e.start();
+            static float a[11000 * 2];
+            e.render(a, 11000);
+            for (int i = 0; i < NVOICES; i++)
+                if (e.v[i].used && e.v[i].step == 1) return 11000 - (int)e.v[i].age;
+            return -1;
+        };
+        int gerade = start1(50, 0), drittel = start1(67, 0), eigen = start1(67, 75);
+        chk(gerade >= 5990 && gerade <= 6010, "ohne Swing kommt Step 2 nicht nach einem Step");
+        chk(drittel >= 8030 && drittel <= 8090, "Swing 67 % schiebt Step 2 nicht um ein Drittel");
+        chk(eigen >= 8990 && eigen <= 9010, "der Swing des Patterns gilt nicht vor dem des Projekts");
+        e.P.pat[0].swing = 0;
+        e.P.g[SL("swing")] = 50;
+
+        e.P.pat[5].used = 1; e.P.pat[5].swing = 62;
+        static Doc d; d.clear(); projectToDoc(e.P, d);
+        static Project Q; projectFromDoc(d, Q);
+        chk(Q.pat[5].swing == 62 && Q.pat[0].swing == 0, "der Swing des Patterns ueberlebt das Dokument nicht");
+    }
+
     grp("Referenz-Aufnahme");
     {
         const int N = 96000;                         // zwei Sekunden

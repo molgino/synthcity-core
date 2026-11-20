@@ -160,6 +160,13 @@ void scSetPatBpm(int p, int v) {
     gEng.P.pat[p].bpm = (int16_t)(v <= 0 ? 0 : (v < 30 ? 30 : (v > 300 ? 300 : v)));
     if (p == gEng.pat) gEng.setTempo(gEng.effTempo(p));
 }
+// --- Swing je Pattern: 0 = der des Projekts ---------------------------------------------
+int  scPatSwing(int p)  { return (p >= 0 && p < NPATTERNS) ? gEng.P.pat[p].swing : 0; }
+void scSetPatSwing(int p, int v) {
+    if (p < 0 || p >= NPATTERNS) return;
+    gEng.P.pat[p].swing = (uint8_t)(v <= 0 ? 0 : (v < 50 ? 50 : (v > 80 ? 80 : v)));
+}
+int  scSwingNow()       { return gEng.swingOf(gEng.pat); }
 int  scTempoNow()       { return (int)(gEng.tempoOf(gEng.pat) + 0.5); }
 
 // --- Skala des Patterns: Geschwindigkeit, Wechsellaenge, Tonart ----------------------------

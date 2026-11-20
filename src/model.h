@@ -65,6 +65,7 @@ struct Pattern {
     SceneTrack sc[NSCENES][NTRACKS];
     uint8_t used = 0;
     int16_t bpm = 0;            // eigenes Tempo; 0 = das des Projekts
+    uint8_t swing = 0;          // eigener Swing 50..80 %; 0 = der des Projekts
     uint8_t mult = SPEED_1X;    // Geschwindigkeit (Index in SPEEDS)
     uint8_t chg = 16;           // nach so vielen Steps wechselt ein angewaehltes Pattern
     uint8_t root = 0;           // Grundton 0..11 (C..B)
@@ -94,7 +95,7 @@ inline void projectInit(Project& P) {
         if (d.scope == PS_GLOBAL) P.g[slot] = d.def;
     }
     for (int pi = 0; pi < NPATTERNS; pi++) {
-        P.pat[pi].used = 0; P.pat[pi].bpm = 0; P.pat[pi].mult = SPEED_1X;
+        P.pat[pi].used = 0; P.pat[pi].bpm = 0; P.pat[pi].swing = 0; P.pat[pi].mult = SPEED_1X;
         P.pat[pi].chg = 16; P.pat[pi].root = 0; P.pat[pi].scale = 0;
         for (int t = 0; t < NTRACKS; t++) {
             Track& tr = P.pat[pi].t[t];
@@ -112,7 +113,7 @@ inline void projectInit(Project& P) {
 inline void patternClear(Project& P, int i) {
     if (i < 0 || i >= NPATTERNS) return;
     Pattern& pt = P.pat[i];
-    pt.used = 0; pt.bpm = 0; pt.mult = SPEED_1X; pt.chg = 16; pt.root = 0; pt.scale = 0;
+    pt.used = 0; pt.bpm = 0; pt.swing = 0; pt.mult = SPEED_1X; pt.chg = 16; pt.root = 0; pt.scale = 0;
     for (int t = 0; t < NTRACKS; t++) {
         Track& tr = pt.t[t];
         tr.len = 16; tr.speed = 4;
@@ -171,6 +172,7 @@ inline void projectToDoc(const Project& P, Doc& d) {
         if (!pt.used) continue;
         snprintf(k, sizeof k, "pat.%d.used", pi); d.set(k, 1);
         if (pt.bpm) { snprintf(k, sizeof k, "pat.%d.bpm", pi); d.set(k, pt.bpm); }
+        if (pt.swing) { snprintf(k, sizeof k, "pat.%d.swing", pi); d.set(k, pt.swing); }
         if (pt.mult != SPEED_1X) { snprintf(k, sizeof k, "pat.%d.mult", pi); d.set(k, pt.mult); }
         if (pt.chg != 16)  { snprintf(k, sizeof k, "pat.%d.chg", pi);   d.set(k, pt.chg); }
         if (pt.root)       { snprintf(k, sizeof k, "pat.%d.root", pi);  d.set(k, pt.root); }
@@ -251,6 +253,8 @@ inline void projectFromDoc(const Doc& d, Project& P) {
         pt.chg   = lies("chg", 16, 1, NSTEPS);
         pt.root  = lies("root", 0, 0, 11);
         pt.scale = lies("scale", 0, 0, NSCALES - 1);
+        pt.swing = lies("swing", 0, 0, 80);
+        if (pt.swing && pt.swing < 50) pt.swing = 50;
         for (int t = 0; t < NTRACKS; t++) {
             Track& tr = pt.t[t];
             snprintf(k, sizeof k, "pat.%d.trk.%d.len", pi, t);   tr.len = (uint8_t)d.get(k, 16);

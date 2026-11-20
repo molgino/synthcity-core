@@ -1175,9 +1175,9 @@ function skalaOpen(pi) {
     });
     body.appendChild(box);
   };
-  const zahl = (wert, fn, lo, hi, einheit) => {
+  const zahl = (wert, fn, lo, hi, einheit, stufen) => {
     const box = document.createElement('div'); box.className = 'zahl';
-    for (const [t, d] of [['\u221216', -16], ['\u22121', -1], [null, 0], ['+1', 1], ['+16', 16]]) {
+    for (const [t, d] of (stufen || [['\u221216', -16], ['\u22121', -1], [null, 0], ['+1', 1], ['+16', 16]])) {
       if (t === null) { const sp = document.createElement('span'); sp.textContent = wert + ' ' + einheit; box.appendChild(sp); continue; }
       const b = document.createElement('button'); b.textContent = t;
       b.onclick = () => { fn(Math.max(lo, Math.min(hi, wert + d))); skalaOpen(pi); buildPads(); };
@@ -1189,6 +1189,16 @@ function skalaOpen(pi) {
 
   kopf('GESCHWINDIGKEIT');
   chips(liste(X.scNSpeeds(), X.scSpeedName), X.scPatMult(pi), i => cmd('scSetPatMult', pi, i));
+  // Swing: der eigene des Patterns oder der des Projekts. 50 % ist gerade, 67 % triolisch.
+  const swSlot = P.find(p => p.id === 'swing').slot;
+  const swProj = X.scGet(-1, swSlot), swPat = X.scPatSwing(pi);
+  const SW = [50, 54, 58, 62, 67, 71, 75];
+  kopf('SWING' + (swPat ? ' \u00b7 EIGENER DES PATTERNS' : ' \u00b7 VOM PROJEKT'));
+  chips(['PROJEKT ' + swProj + '%'].concat(SW.map(v => v + '%')),
+        swPat ? (SW.indexOf(swPat) + 1 || -1) : 0,
+        i => cmd('scSetPatSwing', pi, i ? SW[i - 1] : 0));
+  zahl(swPat || swProj, v => swPat ? cmd('scSetPatSwing', pi, v) : cmd('scSet', -1, swSlot, v), 50, 80,
+       '%', [['\u22121', -1], [null, 0], ['+1', 1]]);
   kopf('WECHSEL NACH');
   zahl(X.scPatChg(pi), v => cmd('scSetPatChg', pi, v), 1, 128, 'Steps');
   kopf('GRUNDTON');

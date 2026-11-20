@@ -88,6 +88,11 @@ sie durch dasselbe `setTempo` und springt nicht. Ein Teiler, der im Lauf wechsel
 fort, wo die Spur auf dem neuen Raster gerade steht, statt Steps nachzuholen. Das Echo bleibt
 am *musikalischen* Tempo, nicht am beschleunigten.
 
+Auch der **Swing** gehört dem Pattern, wenn es einen eigenen hat — sonst gilt der des
+Projekts (50 % gerade, 67 % triolisch, bis 80 %). Jeder zweite Step der Zeitachse rückt um
+`(2·swing − 1)` Steplängen nach hinten; das gilt am Raster, also swingt auch ein Step-Loop.
+Ein Klang-Test misst den Anschlag von Step 2 bei 50, 67 und einem eigenen 75 %.
+
 Die **Tonart** gehört auch dem Pattern: Grundton und Tonleiter (Dur, Moll, Kirchentonarten,
 Pentatonik, Blues). Spuren mit **SKALA an** rasten ihre Noten beim Anschlag auf den nächsten Ton
 der Leiter ein — bei Gleichstand auf den tieferen. Im Feinwert-Fenster heißt „eine Note höher"

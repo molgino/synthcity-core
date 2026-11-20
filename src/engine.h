@@ -294,6 +294,12 @@ struct Engine : Sink {
         int pb = (p >= 0 && p < NPATTERNS) ? P.pat[p].bpm : 0;
         return pb > 0 ? (double)pb : (double)P.g[paramSlot(paramFind("bpm"))];
     }
+    // Swing, der gerade gilt: der eigene des Patterns, sonst der des Projekts (50..80 %).
+    int swingOf(int p) const {
+        int s = (p >= 0 && p < NPATTERNS) ? P.pat[p].swing : 0;
+        if (!s) s = P.g[paramSlot(paramFind("swing"))];
+        return s < 50 ? 50 : (s > 80 ? 80 : s);
+    }
     double multOf(int p) const {
         int m = (p >= 0 && p < NPATTERNS) ? P.pat[p].mult : SPEED_1X;
         return SPEEDS[(m < 0 || m >= NSPEEDS) ? SPEED_1X : m].mult;
@@ -565,6 +571,7 @@ struct Engine : Sink {
     void renderPart(float* out, int frames) {
         for (int i = 0; i < frames * 2; i++) out[i] = 0.0f;
         nq = 0;
+        seq.swing = swingOf(pat) / 100.0;
         seq.process(P, pat, frames, *this);
         updateLive();
         float master = pLevel(P.g[paramSlot(paramFind("master.vol"))]);
