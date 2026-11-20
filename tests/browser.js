@@ -451,6 +451,71 @@ const stummMuster = async p => {
         'ein Tipp auf ein Pattern laesst den Song weiterlaufen');
   }
 
+  grp('Kopieren, Einfuegen, Trigless wird Trig, benutzte Patterns');
+  {
+    if ((await p.locator('#play').textContent()).trim() === 'STOP') await p.locator('#play').click();
+    await p.waitForTimeout(200);
+    const halten = async (loc, ms = 600) => { await loc.dispatchEvent('pointerdown'); await p.waitForTimeout(ms); await loc.dispatchEvent('pointerup'); await p.waitForTimeout(200); };
+    const ons = async () => p.evaluate(() => [...document.querySelectorAll('.pad')].map(e => e.classList.contains('on') ? 1 : 0).join(''));
+    const docText = async () => { await p.locator('#docBtn').tap(); await p.waitForTimeout(150); const t = await p.locator('#docText').inputValue(); await p.locator('#docClose').tap(); return t; };
+
+    // Ein leeres Pattern bekommt einen Trig: danach gilt es als benutzt und steht im Dokument
+    await p.locator('.pt').nth(12).tap(); await p.waitForTimeout(250);
+    await p.locator('.trk').nth(0).locator('.nm').tap(); await p.waitForTimeout(150);
+    chk(!(await p.locator('.pt').nth(12).evaluate(e => e.classList.contains('used'))), 'Pattern 13 ist schon vorher benutzt');
+    await p.locator('.pad').nth(0).tap(); await p.waitForTimeout(200);
+    chk(await p.locator('.pt').nth(12).evaluate(e => e.classList.contains('used')), 'Pattern 13 zeigt nach einem Trig nicht, dass es benutzt ist');
+    chk(/pat\.12\.trk\.0\.st\.0 = 1/.test(await docText()), 'der Trig in Pattern 13 fehlt im Dokument');
+
+    // Trigless Lock, dann Trig drauf: die Locks bleiben
+    const pad = p.locator('.pad').nth(2);
+    await halten(pad);
+    const fr = p.locator('.row', {hasText: 'trk.flt.freq'});
+    await fr.scrollIntoViewIfNeeded(); await fr.tap(); await p.waitForTimeout(200);
+    await p.locator('#fineBtns button').nth(0).tap(); await p.waitForTimeout(100);       // -10
+    await p.locator('#fineClose').tap(); await p.waitForTimeout(150);
+    await p.locator('#lockDone').tap(); await p.waitForTimeout(150);
+    chk(/pat\.12\.trk\.0\.st\.2 = 2/.test(await docText()), 'der trigless Lock ist nicht angelegt');
+    await pad.tap(); await p.waitForTimeout(200);
+    let d = await docText();
+    chk(/pat\.12\.trk\.0\.st\.2 = 1/.test(d), 'der trigless Step wird kein Trig');
+    chk(/pat\.12\.trk\.0\.st\.2\.flt\.freq = \d+/.test(d), 'der Trig hat den trigless Lock geloescht');
+    await pad.tap(); await p.waitForTimeout(200);                                   // Trig aus: Locks gehen mit
+    chk(!/pat\.12\.trk\.0\.st\.2\./.test(await docText()), 'ein ausgeschalteter Trig behaelt seine Locks');
+
+    // Step kopieren und einfuegen (im Lock-Modus ueber ...)
+    await halten(p.locator('.pad').nth(0));
+    await p.locator('#lockMore').tap(); await p.waitForTimeout(200);
+    await p.locator('#pickList button', {hasText: 'kopieren'}).tap(); await p.waitForTimeout(150);
+    await p.locator('.pad').nth(5).tap(); await p.waitForTimeout(150);                 // im Lock-Modus: Step 6 waehlen
+    await p.locator('#lockMore').tap(); await p.waitForTimeout(200);
+    await p.locator('#pickList button', {hasText: 'einf'}).tap(); await p.waitForTimeout(150);
+    await p.locator('#lockDone').tap(); await p.waitForTimeout(150);
+    chk((await ons()).slice(0, 6) === '100001', 'der Step wurde nicht eingefuegt: ' + await ons());
+
+    // Spur kopieren: Spur 1 -> Spur 5, nur Trigs
+    const muster = await ons();
+    await halten(p.locator('.trk').nth(0).locator('.nm'));
+    chk(await p.locator('#pick').isVisible(), 'langes Druecken auf die Spur oeffnet kein Menue');
+    await p.locator('#pickList button', {hasText: 'kopieren'}).tap(); await p.waitForTimeout(150);
+    await halten(p.locator('.trk').nth(4).locator('.nm'));
+    await p.locator('#pickList button', {hasText: 'Trigs einf'}).tap(); await p.waitForTimeout(150);
+    await p.locator('.trk').nth(4).locator('.nm').tap(); await p.waitForTimeout(200);
+    chk(await ons() === muster, 'die Trigs von Spur 1 sind nicht in Spur 5');
+
+    // Pattern kopieren: 13 -> 14
+    await halten(p.locator('.pt').nth(12));
+    await p.locator('#pickList button', {hasText: 'kopieren'}).tap(); await p.waitForTimeout(150);
+    await halten(p.locator('.pt').nth(13));
+    await p.locator('#pickList button', {hasText: 'einf'}).tap(); await p.waitForTimeout(200);
+    chk(await p.locator('.pt').nth(13).evaluate(e => e.classList.contains('used')), 'Pattern 14 ist nach dem Einfuegen nicht benutzt');
+    await p.locator('.pt').nth(13).tap(); await p.waitForTimeout(250);
+    await p.locator('.trk').nth(4).locator('.nm').tap(); await p.waitForTimeout(200);
+    chk(await ons() === muster, 'Pattern 14 hat nicht die Trigs von Pattern 13');
+    await p.locator('.trk').nth(0).locator('.nm').tap();
+    await p.locator('.pt').nth(0).tap(); await p.waitForTimeout(250);
+  }
+
   grp('Das Projekt ueberlebt ein Neuladen (Update der Seite)');
   {
     if ((await p.locator('#play').textContent()).trim() === 'STOP') await p.locator('#play').click();

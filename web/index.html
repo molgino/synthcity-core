@@ -81,6 +81,7 @@ button:focus-visible { outline: 2px solid var(--ok); outline-offset: 2px; }
 .main { display: grid; grid-template-columns: var(--rail) minmax(0, 1fr); min-height: 0; min-width: 0; }
 .rail { border-right: 1px solid var(--line); background: var(--surface); overflow-y: auto; }
 .trk {
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
   display: flex; align-items: stretch; gap: 6px; padding: 4px 5px 4px 8px;
   border-bottom: 1px solid var(--line); cursor: pointer; min-height: 48px;
   overflow: hidden;                 /* nichts darf unter die Arbeitsflaeche ragen */
@@ -356,6 +357,7 @@ textarea {
           <span id="lockTxt">LOCK &middot; STEP 1</span>
           <button class="tiny" id="lockPrev">&#9664;</button>
           <button class="tiny" id="lockNext">&#9654;</button>
+          <button class="tiny" id="lockMore" aria-label="Step kopieren">&middot;&middot;&middot;</button>
           <div class="spacer"></div>
           <button class="tiny" id="lockDone">FERTIG</button>
         </div>
@@ -663,7 +665,19 @@ function buildRail() {
     };
     m.addEventListener('pointerdown', ev => { ev.preventDefault(); schalten(ev); });
     m.addEventListener('click', schalten);
+    let halt = null, lang = false;
+    d.addEventListener('pointerdown', ev => {
+      if (ev.target.classList.contains('m')) return;
+      lang = false;
+      halt = setTimeout(() => { halt = null; lang = true; trackMenu(t); }, 450);
+    });
+    const los = () => { clearTimeout(halt); halt = null; };
+    d.addEventListener('pointerup', los);
+    d.addEventListener('pointercancel', los);
+    d.addEventListener('pointerleave', los);
+    d.addEventListener('contextmenu', ev => ev.preventDefault());
     d.addEventListener('click', () => {
+      if (lang) { lang = false; return; }
       sel = t;
       if (lockStep >= 0) closeLock();
       buildPads(); buildParams();                      // der Scene-Modus bleibt: naechste Spur, dieselbe Scene
@@ -700,6 +714,39 @@ function buildPats() {
     box.appendChild(d);
   }
 }
+// Was in der Ablage liegt - nur fuer die Beschriftung; die Daten haelt der Kern.
+const clip = {pat: -1, trk: -1, trkPat: -1, step: -1};
+function menuList(title) {
+  el('pickTitle').textContent = title;
+  const list = el('pickList');
+  list.innerHTML = '';
+  return (text, fn, info) => {
+    const b = document.createElement('button');
+    b.innerHTML = `<span class="n">${text}</span>` + (info ? `<span class="v">${info}</span>` : '');
+    b.onclick = () => { fn(); el('pick').close(); buildPats(); buildPads(); buildParams(); };
+    list.appendChild(b);
+  };
+}
+// Spur: lange auf die Spurnummer druecken.
+function trackMenu(t) {
+  const add = menuList('SPUR ' + (t + 1) + ' \u00b7 PATTERN ' + (X.scPattern() + 1));
+  add('kopieren', () => { cmd('scClipTrack', t); clip.trk = t; clip.trkPat = X.scPattern(); }, 'Trigs + Klang');
+  if (clip.trk >= 0) {
+    const von = 'von Spur ' + (clip.trk + 1) + ' / P' + (clip.trkPat + 1);
+    add('Trigs einf\u00fcgen', () => cmd('scPasteTrack', t, 0), von);
+    add('alles einf\u00fcgen', () => { cmd('scPasteTrack', t, 1); }, von + ', mit Klang');
+  }
+  add('Trigs leeren', () => { if (lockStep >= 0) closeLock(); cmd('scClearTrigs', t); });
+  el('pick').showModal();
+}
+// Step: im Lock-Modus ueber den Knopf in der Leiste.
+function stepMenu(st) {
+  const add = menuList('STEP ' + (st + 1) + ' \u00b7 SPUR ' + (sel + 1));
+  add('kopieren', () => { cmd('scClipStep', sel, st); clip.step = st; }, 'Trig + Locks');
+  if (clip.step >= 0) add('einf\u00fcgen', () => cmd('scPasteStep', sel, st), 'Kopie von Step ' + (clip.step + 1));
+  add('Locks entfernen', () => clearLocks(st));
+  el('pick').showModal();
+}
 function patMenu(i) {
   el('pickTitle').textContent = 'PATTERN ' + (i + 1);
   const list = el('pickList');
@@ -714,9 +761,9 @@ function patMenu(i) {
     if (node && playing) node.port.postMessage({fn: 'scPatQueue', args: [i]});
     else cmd('scPatQueue', i);
   });
-  if (i !== X.scPattern())
-    add('Pattern ' + (X.scPattern() + 1) + ' hierher kopieren',
-        () => cmd('scPatCopy', X.scPattern(), i));
+  add('kopieren', () => { cmd('scClipPat', i); clip.pat = i; });
+  if (clip.pat >= 0)
+    add('einf\u00fcgen: Kopie von Pattern ' + (clip.pat + 1) + ' hierher', () => cmd('scPastePat', i));
   add('leeren', () => cmd('scPatClear', i));
   add('Skala und Tonart \u2026', () => setTimeout(() => skalaOpen(i), 0));
   el('pick').showModal();
@@ -747,8 +794,11 @@ function buildPads() {
       clearTimeout(timer); timer = null;
       if (moved) return;
       if (lockStep >= 0) { openLock(s); return; } // im Lock-Modus: Step wechseln
-      cmd('scStepSet', sel, s, X.scStepGet(sel, s) ? 0 : 1);
-      if (!X.scStepGet(sel, s)) clearLocks(s);
+      // Ein trigless Step wird zum Trig - seine Locks bleiben. Nur ein Trig, der
+      // ausgeschaltet wird, nimmt seine Locks mit.
+      const war = X.scStepGet(sel, s);
+      cmd('scStepSet', sel, s, war === 1 ? 0 : 1);
+      if (war === 1) clearLocks(s);
     };
     p.addEventListener('pointerup', up);
     p.addEventListener('pointercancel', () => { clearTimeout(timer); timer = null; });
@@ -1255,6 +1305,7 @@ el('sceneClear').onclick = () => {
 };
 el('lockPrev').onclick = () => jumpTrig(-1);
 el('lockNext').onclick = () => jumpTrig(1);
+el('lockMore').onclick = () => { if (lockStep >= 0) stepMenu(lockStep); };
 
 // --- Eigener Speicher: Samples ueberleben das Schliessen der Seite ----------------------------
 // Das Dokument merkt sich nur NAMEN. Den Klang dazu sucht die Huelle - hier im Browser-Speicher.

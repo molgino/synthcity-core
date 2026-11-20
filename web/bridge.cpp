@@ -47,6 +47,11 @@ const char* scMachLabel(int m, int which) {
 }
 int scMachCount() { return machineCount(); }
 
+// Wer in ein Pattern schreibt, macht es zu einem benutzten - sonst fehlt es im Dokument
+// (und damit nach dem naechsten Laden) und die Pattern-Leiste zeigt es als leer.
+static Pattern& W() { gEng.P.pat[gEng.pat].used = 1; return gEng.P.pat[gEng.pat]; }
+static Pattern& WP(int p) { gEng.P.pat[p].used = 1; return gEng.P.pat[p]; }
+
 // --- Werte ------------------------------------------------------------------------------------
 int  scGet(int track, int slot) {
     if (track < 0) return gEng.P.g[slot];
@@ -57,15 +62,15 @@ void scSet(int track, int slot, int v) {
         gEng.P.g[slot] = (int16_t)v;
         // Das Projekttempo gilt nur, wo das Pattern kein eigenes hat.
         if (slot == paramSlot(paramFind("bpm"))) gEng.setTempo(gEng.effTempo(gEng.pat));
-    } else gEng.P.pat[gEng.pat].t[track].p[slot] = (int16_t)v;
+    } else W().t[track].p[slot] = (int16_t)v;
 }
 
 // Machine wechseln: die beiden Quellregler fangen bei den Grundwerten DIESER Machine an.
-void scSetMachine(int t, int m) { machineSelect(gEng.P.pat[gEng.pat].t[t].p, m); }
+void scSetMachine(int t, int m) { machineSelect(W().t[t].p, m); }
 
 // --- Steps und Locks ---------------------------------------------------------------------------
 int  scStepGet(int t, int s) { return gEng.P.pat[gEng.pat].t[t].s[s].on; }
-void scStepSet(int t, int s, int on) { gEng.P.pat[gEng.pat].t[t].s[s].on = (uint8_t)on; }
+void scStepSet(int t, int s, int on) { W().t[t].s[s].on = (uint8_t)on; }
 int  scNLocks(int t, int s) { return gEng.P.pat[gEng.pat].t[t].s[s].nLock; }
 int  scLockSlot(int t, int s, int i) { return gEng.P.pat[gEng.pat].t[t].s[s].lock[i].slot; }
 int  scLockVal(int t, int s, int i)  { return gEng.P.pat[gEng.pat].t[t].s[s].lock[i].val; }
@@ -76,19 +81,19 @@ int  scLockGet(int t, int s, int slot) {
     return l ? l->val : -32768;
 }
 void scLockSet(int t, int s, int slot, int v, int slide) {
-    gEng.P.pat[gEng.pat].t[t].s[s].setLock(slot, (int16_t)v, (uint8_t)slide);
+    W().t[t].s[s].setLock(slot, (int16_t)v, (uint8_t)slide);
 }
 void scLockClear(int t, int s, int slot) {
-    Step& st = gEng.P.pat[gEng.pat].t[t].s[s];
+    Step& st = W().t[t].s[s];
     for (int i = 0; i < st.nLock; i++)
         if (st.lock[i].slot == slot) { st.lock[i] = st.lock[--st.nLock]; return; }
 }
 
 // --- Spur ----------------------------------------------------------------------------------------
 int  scTrackLen(int t)   { return gEng.P.pat[gEng.pat].t[t].len; }
-void scSetTrackLen(int t, int n) { gEng.P.pat[gEng.pat].t[t].len = (uint8_t)(n < 1 ? 1 : n > NSTEPS ? NSTEPS : n); }
+void scSetTrackLen(int t, int n) { W().t[t].len = (uint8_t)(n < 1 ? 1 : n > NSTEPS ? NSTEPS : n); }
 int  scSpeed(int t)      { return gEng.P.pat[gEng.pat].t[t].speed; }
-void scSetSpeed(int t, int n) { gEng.setDiv(t, n); }
+void scSetSpeed(int t, int n) { W(); gEng.setDiv(t, n); }
 int  scNTracks() { return NTRACKS; }
 int  scNSteps()  { return NSTEPS; }
 
@@ -119,6 +124,44 @@ void scSetPattern(int p) {
     gEng.seq.toPattern(gEng.seq.pos);
     gEng.seq.bpm = gEng.effTempo(p);
     gEng.resetTrackValues();
+}
+// --- Kopieren und Einfuegen ------------------------------------------------------------------
+// Die Ablage liegt im Kern, nicht in der Seite: beide Kerne (Anzeige und Klang) bekommen
+// dieselben Befehle und halten so dieselbe Ablage. Kopiert wird ein Abbild - was danach an der
+// Quelle geschieht, aendert die Ablage nicht mehr.
+static Pattern gClipPat;  static int gHasPat = 0;
+static Track   gClipTrk;  static int gHasTrk = 0;
+static Step    gClipStep; static int gHasStep = 0;
+void scClipPat(int p)   { if (p < 0 || p >= NPATTERNS) return; gClipPat = gEng.P.pat[p]; gHasPat = 1; }
+int  scHasClipPat()     { return gHasPat; }
+void scPastePat(int p) {
+    if (!gHasPat || p < 0 || p >= NPATTERNS) return;
+    gEng.P.pat[p] = gClipPat; gEng.P.pat[p].used = 1;
+    if (p == gEng.pat) { gEng.resetTrackValues(); gEng.setTempo(gEng.effTempo(p)); }
+}
+void scClipTrack(int t) { if (t < 0 || t >= NTRACKS) return; gClipTrk = gEng.P.pat[gEng.pat].t[t]; gHasTrk = 1; }
+int  scHasClipTrack()   { return gHasTrk; }
+// mode 0: nur Trigs und Locks (der Klang der Ziel-Spur bleibt), 1: alles - Klang, Laenge, Trigs
+void scPasteTrack(int t, int mode) {
+    if (!gHasTrk || t < 0 || t >= NTRACKS) return;
+    Track& tr = W().t[t];
+    if (mode == 1) tr = gClipTrk;
+    else for (int s = 0; s < NSTEPS; s++) tr.s[s] = gClipTrk.s[s];
+    if (mode == 1) gEng.resetTrackValues();
+}
+void scClearTrigs(int t) {
+    if (t < 0 || t >= NTRACKS) return;
+    Track& tr = W().t[t];
+    for (int s = 0; s < NSTEPS; s++) { tr.s[s].on = 0; tr.s[s].nLock = 0; }
+}
+void scClipStep(int t, int s) {
+    if (t < 0 || t >= NTRACKS || s < 0 || s >= NSTEPS) return;
+    gClipStep = gEng.P.pat[gEng.pat].t[t].s[s]; gHasStep = 1;
+}
+int  scHasClipStep()    { return gHasStep; }
+void scPasteStep(int t, int s) {
+    if (!gHasStep || t < 0 || t >= NTRACKS || s < 0 || s >= NSTEPS) return;
+    W().t[t].s[s] = gClipStep;
 }
 int  scPatUsed(int p)   { return (p >= 0 && p < NPATTERNS) ? gEng.P.pat[p].used : 0; }
 void scPatCopy(int a, int b) { patternCopy(gEng.P, a, b); }
@@ -157,14 +200,14 @@ int  scSongPos()        { return gEng.songPos; }
 int  scPatBpm(int p)    { return (p >= 0 && p < NPATTERNS) ? gEng.P.pat[p].bpm : 0; }
 void scSetPatBpm(int p, int v) {
     if (p < 0 || p >= NPATTERNS) return;
-    gEng.P.pat[p].bpm = (int16_t)(v <= 0 ? 0 : (v < 30 ? 30 : (v > 300 ? 300 : v)));
+    WP(p).bpm = (int16_t)(v <= 0 ? 0 : (v < 30 ? 30 : (v > 300 ? 300 : v)));
     if (p == gEng.pat) gEng.setTempo(gEng.effTempo(p));
 }
 // --- Swing je Pattern: 0 = der des Projekts ---------------------------------------------
 int  scPatSwing(int p)  { return (p >= 0 && p < NPATTERNS) ? gEng.P.pat[p].swing : 0; }
 void scSetPatSwing(int p, int v) {
     if (p < 0 || p >= NPATTERNS) return;
-    gEng.P.pat[p].swing = (uint8_t)(v <= 0 ? 0 : (v < 50 ? 50 : (v > 80 ? 80 : v)));
+    WP(p).swing = (uint8_t)(v <= 0 ? 0 : (v < 50 ? 50 : (v > 80 ? 80 : v)));
 }
 int  scSwingNow()       { return gEng.swingOf(gEng.pat); }
 int  scTempoNow()       { return (int)(gEng.tempoOf(gEng.pat) + 0.5); }
@@ -173,19 +216,19 @@ int  scTempoNow()       { return (int)(gEng.tempoOf(gEng.pat) + 0.5); }
 int  scPatMult(int p)   { return (p >= 0 && p < NPATTERNS) ? gEng.P.pat[p].mult : SPEED_1X; }
 void scSetPatMult(int p, int m) {
     if (p < 0 || p >= NPATTERNS) return;
-    gEng.P.pat[p].mult = (uint8_t)(m < 0 ? 0 : (m >= NSPEEDS ? NSPEEDS - 1 : m));
+    WP(p).mult = (uint8_t)(m < 0 ? 0 : (m >= NSPEEDS ? NSPEEDS - 1 : m));
     if (p == gEng.pat) gEng.setTempo(gEng.effTempo(p));   // umrechnen, nicht springen
 }
 int  scPatChg(int p)    { return (p >= 0 && p < NPATTERNS) ? gEng.P.pat[p].chg : 16; }
 void scSetPatChg(int p, int n) {
     if (p < 0 || p >= NPATTERNS) return;
-    gEng.P.pat[p].chg = (uint8_t)(n < 1 ? 1 : (n > NSTEPS ? NSTEPS : n));
+    WP(p).chg = (uint8_t)(n < 1 ? 1 : (n > NSTEPS ? NSTEPS : n));
 }
 int  scPatRoot(int p)   { return (p >= 0 && p < NPATTERNS) ? gEng.P.pat[p].root : 0; }
 int  scPatScale(int p)  { return (p >= 0 && p < NPATTERNS) ? gEng.P.pat[p].scale : 0; }
 void scSetPatKey(int p, int root, int scale) {
     if (p < 0 || p >= NPATTERNS) return;
-    gEng.P.pat[p].root = (uint8_t)(((root % 12) + 12) % 12);
+    WP(p).root = (uint8_t)(((root % 12) + 12) % 12);
     gEng.P.pat[p].scale = (uint8_t)(scale < 0 ? 0 : (scale >= NSCALES ? NSCALES - 1 : scale));
 }
 int  scNSpeeds()        { return NSPEEDS; }
@@ -220,10 +263,10 @@ int   scIsFill()            { return gEng.seq.fill ? 1 : 0; }
 void  scStepLoop(int on, int from, int len) {
     gEng.seq.loopOn = on != 0; gEng.seq.loopFrom = from; gEng.seq.loopLen = len;
 }
-void  scSceneSet(int scene, int t, int slot, int v) { gEng.P.pat[gEng.pat].sc[scene][t].set(slot, (int16_t)v); }
+void  scSceneSet(int scene, int t, int slot, int v) { W().sc[scene][t].set(slot, (int16_t)v); }
 void  scSceneClear(int scene, int t, int slot) {
     if (scene < 0 || scene >= NSCENES || t < 0 || t >= NTRACKS) return;
-    gEng.P.pat[gEng.pat].sc[scene][t].clear(slot);
+    W().sc[scene][t].clear(slot);
 }
 // Eine ganze Scene des laufenden Patterns leeren - alle Spuren.
 void  scSceneClearAll(int scene) {

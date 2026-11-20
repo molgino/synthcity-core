@@ -123,6 +123,15 @@ inline void patternClear(Project& P, int i) {
         for (int k = 0; k < NSCENES; k++) pt.sc[k][t].n = 0;
     }
 }
+// Hat das Pattern irgendeinen Trig oder Lock? Dann gehoert es ins Dokument, auch wenn
+// niemand es als benutzt markiert hat.
+inline bool patternHasSteps(const Pattern& pt) {
+    for (int t = 0; t < NTRACKS; t++)
+        for (int s = 0; s < NSTEPS; s++)
+            if (pt.t[t].s[s].on || pt.t[t].s[s].nLock) return true;
+    return false;
+}
+
 inline void patternCopy(Project& P, int from, int to) {
     if (from < 0 || from >= NPATTERNS || to < 0 || to >= NPATTERNS || from == to) return;
     P.pat[to] = P.pat[from];
@@ -169,7 +178,7 @@ inline void projectToDoc(const Project& P, Doc& d) {
     }
     for (int pi = 0; pi < NPATTERNS; pi++) {
         const Pattern& pt = P.pat[pi];
-        if (!pt.used) continue;
+        if (!pt.used && !patternHasSteps(pt)) continue;     // Steps gehen nie verloren
         snprintf(k, sizeof k, "pat.%d.used", pi); d.set(k, 1);
         if (pt.bpm) { snprintf(k, sizeof k, "pat.%d.bpm", pi); d.set(k, pt.bpm); }
         if (pt.swing) { snprintf(k, sizeof k, "pat.%d.swing", pi); d.set(k, pt.swing); }

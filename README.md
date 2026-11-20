@@ -139,6 +139,22 @@ Die Klänge der Samples liegen wie bisher im Browser-Speicher, das Dokument merk
 Namen. **NEU (DEMO)** im DOK-Fenster (zwei Tipps) fängt von vorn an. Ein Browser-Test ändert das
 Tempo, lädt neu und vergleicht das ganze Dokument.
 
+## Kopieren und Einfügen
+
+- **Pattern:** lange auf die Pattern-Nummer drücken → *kopieren*, dann auf dem Ziel → *einfügen*.
+- **Spur:** lange auf die Spurnummer drücken → *kopieren*; am Ziel *Trigs einfügen* (Klang der
+  Ziel-Spur bleibt) oder *alles einfügen* (mit Klang und Länge). Auch über Patterns hinweg.
+- **Step:** im Lock-Modus über **···** → Step samt Locks kopieren und auf einen anderen Step legen.
+
+Die Ablage liegt im Kern, nicht in der Seite — beide Kerne bekommen dieselben Befehle. Kopiert
+wird ein Abbild; was danach an der Quelle passiert, ändert die Ablage nicht.
+
+Ein **trigless Step**, auf den man einen Trig legt, behält seine Locks; nur ein Trig, der
+ausgeschaltet wird, nimmt sie mit. Und ein Pattern, in das man schreibt, gilt sofort als
+benutzt — vorher fehlten Patterns, die nur über Trigs gefüllt wurden, im Dokument und damit
+nach dem nächsten Laden. Das Dokument schreibt jetzt zusätzlich jedes Pattern mit Trigs mit,
+benutzt oder nicht.
+
 ## Genaue Werte per Touch
 
 Ziehen ist für grobe Wege — eine Note höher trifft man damit nur durch Glück. **Antippen**

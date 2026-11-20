@@ -1015,6 +1015,10 @@ int main() {
         static Doc d; d.clear(); projectToDoc(e.P, d);
         static Project Q; projectFromDoc(d, Q);
         chk(Q.pat[5].swing == 62 && Q.pat[0].swing == 0, "der Swing des Patterns ueberlebt das Dokument nicht");
+        // Ein Pattern mit Trigs, das niemand als benutzt markiert hat, geht trotzdem nicht verloren
+        e.P.pat[9].used = 0; e.P.pat[9].t[3].s[4].on = 1;
+        d.clear(); projectToDoc(e.P, d); projectFromDoc(d, Q);
+        chk(Q.pat[9].used == 1 && Q.pat[9].t[3].s[4].on == 1, "ein Pattern mit Trigs fehlt im Dokument");
     }
 
     grp("Referenz-Aufnahme");
