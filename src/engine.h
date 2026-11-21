@@ -87,6 +87,7 @@ struct Voice {
         mod.start(pf, spb, t0, (uint32_t)when);
         ctl(sr, live);
         ms.seed = (uint32_t)when * 2654435761u + 0x9E3779B9u;   // reproduzierbarer Zufall je Anschlag
+        ms.step = (uint8_t)st;
         mach->start(ms, hz, vel, pm, sr, *pool);
     }
     void release() { env.release(); left = -1; }

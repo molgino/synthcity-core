@@ -10,6 +10,7 @@ enum { MACH_STATE = 256, MACH_CHUNK = 32 };
 
 struct MState { alignas(16) unsigned char raw[MACH_STATE];
     uint32_t seed = 1;          // vom Anschlag gesetzt: Zufall, der trotzdem reproduzierbar ist
+    uint8_t  step = 0;          // vom Anschlag gesetzt: auf welchem Step (fuer CHOP FOLLOW STEP)
     template <class T> T& as() { return *(T*)raw; }
     template <class T> const T& as() const { return *(const T*)raw; }
 };
@@ -309,11 +310,15 @@ struct MachSmpl : Machine {
         double gp[2];               // Startpunkt der beiden Koerner (TIME)
         float gph[2];               // Phase der Koerner 0..1
         int32_t at, s, e, la;       // Block-Lage, Bereich [s, e), Schleifenanfang
+        int32_t wspan;              // worauf sich BEATS bezieht (ganzes Sample bei CHOP)
         int8_t dir;                 // +1 vorwaerts, -1 rueckwaerts
         uint8_t ch, loop, done;     // loop: 0 aus, 1 vorwaerts, 2 Ping-Pong
     };
     static_assert(sizeof(St) <= MACH_STATE, "Zustand passt nicht in den Block");
     enum { K_START, K_FINE, K_LOOP, K_TUNE, K_REV, K_WARP, K_BEATS, K_LEN };
+    // Welcher Regler spielt welche Rolle? -1: gibt es bei dieser Machine nicht (Grundwert gilt).
+    virtual int kn(int role) const { return role; }
+    float kv(const float* p, int role, float dflt) const { int k = kn(role); return k < 0 ? dflt : knob(p, k); }
 
     // Alle Grundwerte so, dass ein altes Projekt klingt wie vorher.
     int def(int k) const override { static const int d[MACH_KNOBS] = {0, 64, 0, 64, 0, 0, 0, 0}; return d[k & 7]; }
@@ -354,21 +359,25 @@ struct MachSmpl : Machine {
         const SamplePool::Slot& sl = pool.s[k];
         int a = sl.a, e = sl.end();
         // START verschiebt innerhalb des Ausschnitts, LENGTH kuerzt ab dort (0 = bis zum Ende)
-        int s0 = a + (int)(pUni(knob(p, K_START)) * (e - a - 1));
-        float lv = knob(p, K_LEN);
-        int e0 = lv < 0.5f ? e : s0 + 2 + (int)(pUni(lv) * (e - s0 - 2));
-        if (e0 > e) e0 = e;
+        int s0 = a + (int)(pUni(kv(p, K_START, 0)) * (e - a - 1));
+        bereich(st, sl, p, s0, e, e - a);
+        (void)vel; (void)hz; (void)sr;
+    }
+    // Den Bereich [s0, ende) einrichten: LENGTH, Loop, Richtung. span = worauf BEATS sich bezieht.
+    void bereich(St& st, const SamplePool::Slot& sl, const float* p, int s0, int ende, int span) const {
+        float lv = kv(p, K_LEN, 0);
+        int e0 = lv < 0.5f ? ende : s0 + 2 + (int)(pUni(lv) * (ende - s0 - 2));
+        if (e0 > ende) e0 = ende;
         if (e0 - s0 < 2) return;
-        st.at = sl.at; st.ch = sl.ch; st.s = s0; st.e = e0;
-        int lm = stufe(knob(p, K_LOOP), 4);
+        st.at = sl.at; st.ch = sl.ch; st.s = s0; st.e = e0; st.wspan = span > 2 ? span : e0 - s0;
+        int lm = kn(K_LOOP) < 0 ? 1 : stufe(knob(p, kn(K_LOOP)), 4);
         st.loop = lm == 0 ? (sl.loop ? 1 : 0) : (lm == 1 ? 0 : (lm == 2 ? 1 : 2));
         int la = sl.loopStart();
         st.la = (lm == 0 && la >= s0 && la < e0 - 1) ? la : s0;
-        st.dir = stufe(knob(p, K_REV), 2) ? -1 : 1;
+        st.dir = stufe(kv(p, K_REV, 0), 2) ? -1 : 1;
         st.pos = st.dir > 0 ? (double)s0 : (double)(e0 - 1);
         st.gp[0] = st.gp[1] = st.pos; st.gph[0] = 0.0f; st.gph[1] = 0.5f;
         st.done = 0;
-        (void)vel; (void)hz; (void)sr;
     }
     bool stereo(const float* p, const SamplePool& pool) const override {
         int k = (int)(p[slotSmp()] + 0.5f);
@@ -431,14 +440,14 @@ struct MachSmpl : Machine {
         int k = (int)(p[slotSmp()] + 0.5f);
         float rate = pool.empty(k) ? 48000.0f : pool.s[k].rate;
         // Note 60 spielt das Sample in seiner Aufnahmegeschwindigkeit ab; TUNE und FINE stimmen dazu.
-        float noteR = (hz / noteHz(60.0f)) * exp2f((tune(knob(p, K_TUNE)) * 100.0f + pBip(knob(p, K_FINE)) * 100.0f) / 1200.0f);
+        float noteR = (hz / noteHz(60.0f)) * exp2f((tune(kv(p, K_TUNE, 64)) * 100.0f + pBip(kv(p, K_FINE, 64)) * 100.0f) / 1200.0f);
         float base = rate / sr;
-        int warp = stufe(knob(p, K_WARP), 3);
+        int warp = stufe(kv(p, K_WARP, 0), 3);
         double zeit = 1.0;                      // Faktor, damit der Bereich BEATS im Tempo dauert
         if (warp) {
-            float sek = (float)(st.e - st.s) / rate;
+            float sek = (float)st.wspan / rate;
             float bpm = machTempo() < 20.0f ? 20.0f : machTempo();
-            float beats = beatsOf(stufe(knob(p, K_BEATS), 10));
+            float beats = beatsOf(stufe(kv(p, K_BEATS, 0), 10));
             if (beats <= 0.0f) {                // AUTO: die naechste Zweierpotenz an Beats
                 float b = sek * bpm / 60.0f;
                 beats = 0.25f;
@@ -478,18 +487,73 @@ struct MachSmpl : Machine {
     }
 };
 
+// --- CHOP: das Sample in gleiche Stuecke schneiden -----------------------------------------
+// SLICES Stuecke, SLICE waehlt eines (lockbar je Step) - oder FOLLOW: Step n spielt Stueck n,
+// bzw. ein zufaelliges. Abgespielt wird wie bei SMPL; WARP und BEATS beziehen sich auf das
+// ganze Sample, damit jedes Stueck im Tempo genau seinen Anteil dauert.
+struct MachChop : MachSmpl {
+    enum { C_SLICES, C_SLICE, C_FOLLOW, C_TUNE, C_REV, C_WARP, C_BEATS, C_LEN };
+    int kn(int role) const override {
+        switch (role) {
+        case K_TUNE: return C_TUNE; case K_REV: return C_REV; case K_WARP: return C_WARP;
+        case K_BEATS: return C_BEATS; case K_LEN: return C_LEN; default: return -1;     // kein START/FINE/LOOP
+        }
+    }
+    static int nSlices(float v) { static const int n[6] = {2, 4, 8, 16, 32, 64}; return n[stufe(v, 6)]; }
+    const char* name() const override { return "CHOP"; }
+    const char* label(int k) const override {
+        static const char* l[MACH_KNOBS] = {"SLICES", "SLICE", "FOLLOW", "TUNE", "REVERSE", "WARP", "BEATS", "LENGTH"};
+        return l[k & 7];
+    }
+    int def(int k) const override { static const int d[MACH_KNOBS] = {3 * 128 / 6 + 10, 0, 0, 64, 0, 0, 0, 0}; return d[k & 7]; }
+    int steps(int k) const override {
+        switch (k) { case C_SLICES: return 6; case C_FOLLOW: return 3; case C_REV: return 2; case C_WARP: return 3; case C_BEATS: return 10; default: return 0; }
+    }
+    void text(int k, float v, char* out, int n) const override {
+        switch (k) {
+        case C_SLICES: snprintf(out, n, "%d", nSlices(v)); return;
+        case C_SLICE:  snprintf(out, n, "%d", (int)(v + 0.5f) + 1); return;
+        case C_FOLLOW: { static const char* t[3] = {"OFF", "STEP", "RANDOM"}; snprintf(out, n, "%s", t[stufe(v, 3)]); return; }
+        case C_TUNE:   MachSmpl::text(K_TUNE, v, out, n); return;
+        case C_REV:    MachSmpl::text(K_REV, v, out, n); return;
+        case C_WARP:   MachSmpl::text(K_WARP, v, out, n); return;
+        case C_BEATS:  MachSmpl::text(K_BEATS, v, out, n); return;
+        default:       MachSmpl::text(K_LEN, v, out, n); return;
+        }
+    }
+    void start(MState& m, float hz, float vel, const float* p, float sr,
+               const SamplePool& pool) const override {
+        St& st = m.as<St>();
+        int k = (int)(p[slotSmp()] + 0.5f);
+        st.done = 1;
+        if (pool.empty(k)) return;
+        const SamplePool::Slot& sl = pool.s[k];
+        int a = sl.a, e = sl.end(), len = e - a;
+        int ns = nSlices(knob(p, C_SLICES));
+        int follow = stufe(knob(p, C_FOLLOW), 3);
+        int i = (int)(knob(p, C_SLICE) + 0.5f);
+        if (follow == 1) i = m.step;
+        else if (follow == 2) { uint32_t r = m.seed | 1u; i = (int)(machRng(r) % (uint32_t)ns); }
+        i = ((i % ns) + ns) % ns;
+        int s0 = a + (int)((int64_t)len * i / ns), e0 = a + (int)((int64_t)len * (i + 1) / ns);
+        bereich(st, sl, p, s0, e0, len);
+        (void)vel; (void)hz; (void)sr;
+    }
+};
+
 // Register aller Machines. trk.machine ist der Index hier - die Reihenfolge darf nie wechseln.
 inline const Machine* machineAt(int i) {
     static const MachPoly poly;
     static const MachFm   fm;
     static const MachDrum drum;
     static const MachSmpl smpl;
-    static const Machine* const all[] = { &poly, &fm, &drum, &smpl };
+    static const MachChop chop;
+    static const Machine* const all[] = { &poly, &fm, &drum, &smpl, &chop };
     enum { N = (int)(sizeof all / sizeof *all) };
     if (i < 0 || i >= N) i = 0;
     return all[i];
 }
-inline int machineCount() { return 4; }
+inline int machineCount() { return 5; }
 
 // Eine andere Machine waehlen heisst: ihre beiden Regler fangen bei IHREN Grundwerten an.
 // Sonst steht der Sampler beim Umschalten mitten im Sample.

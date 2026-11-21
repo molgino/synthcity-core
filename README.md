@@ -186,7 +186,12 @@ Machine, unbenutzte blendet die Oberfläche aus. Belegt so, dass **alte Projekte
   am besten passende Stelle) — Dauer = **BEATS** im aktuellen Tempo, Tonhöhe nur von Note/TUNE.
   BEATS AUTO nimmt die nächste Zweierpotenz. Klang-Tests: rückwärts, Oktave, Loop-Ende,
   Ping-Pong, halbes Tempo ohne Tonhöhenänderung (gemessen 440,0 Hz, Reinheit 99 %).
-- Regler mit festen Stufen (LOOP, REVERSE, WARP, BEATS, FM ALGO, RATIO) öffnen eine Liste.
+- **CHOP — Sample in Stücke:** SLICES (2–64 gleiche Stücke), SLICE (welches, lockbar je Step),
+  **FOLLOW** (OFF / STEP: Step n spielt Stück n / RANDOM), TUNE, REVERSE, WARP, BEATS, LENGTH.
+  Teilt sich die Wiedergabe mit SMPL; WARP und BEATS beziehen sich aufs ganze Sample, so dauert
+  jedes Stück im Tempo genau seinen Anteil. Klang-Tests: drittes von vier Stücken, Stückende,
+  FOLLOW STEP (Mutation wird rot), gedehnte Stücke ohne Tonhöhenänderung.
+- Regler mit festen Stufen (LOOP, REVERSE, WARP, BEATS, SLICES, FOLLOW, FM ALGO, RATIO) öffnen eine Liste.
 - **Filtertyp LADDER 24:** vier TPT-Einpoler mit Rückkopplung und Sättigung im Eingang — der
   analoge 24-dB-Tiefpass, stabil bis zur Selbstoszillation.
 - **Base-Width** auf jeder Spur (Reiter FLTR): BASE = Hochpass, WIDTH = Tiefpass so viele Oktaven

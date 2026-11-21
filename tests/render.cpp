@@ -1340,6 +1340,47 @@ int main() {
         chk(f(2000, 440) > f(2000, 220) * 8.0f, "BEATS AUTO trifft die Laenge nicht");
     }
 
+    grp("CHOP: Stuecke, FOLLOW STEP, Warp");
+    {
+        // vier Viertel: 220, 330, 440, 660 Hz, je 0,25 s
+        static float smp[48000];
+        const float fq[4] = {220, 330, 440, 660};
+        for (int i = 0; i < 48000; i++) smp[i] = sinf(6.2831853f * fq[i / 12000] * i / 48000.0f) * 0.8f;
+        static float b[48000 * 2];
+        auto stufe = [](int i, int n) { return i * 128 / n + 64 / n; };
+        auto spiel = [&](std::initializer_list<std::pair<int, int>> knoepfe, int frames, bool alleSteps, int noteLen = 12) {
+            e.prepare(48000.0f);
+            e.pool.set(0, smp, 48000, 48000.0f, "vier", false);
+            setupBeat(e, 60);
+            Track& t = e.P.pat[0].t[0];
+            for (int st = 0; st < 16; st++) t.s[st].on = alleSteps || st == 0;
+            machineSelect(t.p, 4); t.p[SL("trk.smp")] = 0;
+            t.p[SL("trk.flt.freq")] = 127; t.p[SL("trk.amp.sus")] = 100; t.p[SL("trk.amp.dec")] = 127;
+            t.p[SL("trk.len")] = (int16_t)noteLen; t.p[SL("trk.amp.rel")] = 0;
+            for (auto& kv : knoepfe) t.p[knobSlot(kv.first)] = (int16_t)kv.second;
+            e.start(); e.render(b, frames);
+        };
+        auto f = [&](int von, int n, float hz) { return bin(b + von * 2, n, hz, 48000.0f); };
+        chk(!strcmp(machineAt(4)->name(), "CHOP"), "Machine 4 heisst nicht CHOP");
+        // 4 Stuecke, Stueck 3 (Index 2) = 440 Hz
+        spiel({{0, stufe(1, 6)}, {1, 2}}, 6000, false);
+        chk(f(500, 4000, 440) > f(500, 4000, 220) * 8.0f && f(500, 4000, 440) > f(500, 4000, 660) * 8.0f, "SLICE 3 von 4 spielt nicht das dritte Stueck");
+        // Ein Stueck endet nach seinem Viertel - es laeuft nicht ins naechste
+        spiel({{0, stufe(1, 6)}, {1, 0}}, 18000, false);
+        chk(rms(b + 13000 * 2, 4000) < 0.001f, "ein Stueck spielt ueber sein Ende hinaus");
+        // FOLLOW STEP: Step n spielt Stueck n (4 Stuecke, Steps zu 6000 Samples)
+        spiel({{0, stufe(1, 6)}, {2, stufe(1, 3)}}, 24000, true);
+        chk(f(6500, 4000, 330) > f(6500, 4000, 220) * 8.0f, "FOLLOW STEP: Step 2 spielt nicht Stueck 2");
+        chk(f(18500, 4000, 660) > f(18500, 4000, 440) * 8.0f, "FOLLOW STEP: Step 4 spielt nicht Stueck 4");
+        // WARP TIME: das ganze Sample = 4 Beats (2 s) -> jedes Stueck dauert 0,5 s, Tonhoehe bleibt
+        spiel({{0, stufe(1, 6)}, {1, 0}, {5, stufe(2, 3)}, {6, stufe(4, 10)}}, 30000, false, 98);
+        chk(f(14000, 6000, 220) > f(14000, 6000, 330) * 8.0f, "CHOP WARP TIME: das erste Stueck dauert nicht laenger");
+        chk(sane(b, 30000 * 2), "CHOP laeuft aus dem Ruder");
+        char tx[32];
+        machineAt(4)->text(1, 4, tx, sizeof tx); chk(!strcmp(tx, "5"), "SLICE 4 heisst nicht 5");
+        machineAt(4)->text(0, stufe(3, 6), tx, sizeof tx); chk(!strcmp(tx, "16"), "SLICES Stufe 4 ist nicht 16");
+    }
+
     grp("Referenz-Aufnahme");
     {
         const int N = 96000;                         // zwei Sekunden

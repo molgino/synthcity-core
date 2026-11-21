@@ -183,12 +183,12 @@ async function R(p, id) {
   grp('Auswahllisten statt Zahlen');
   const eng = (await R(p, 'trk.machine'));
   await eng.scrollIntoViewIfNeeded();
-  chk(['POLY', 'FM', 'DRUM', 'SMPL'].includes((await eng.locator('.v').textContent()).trim()),
+  chk(['POLY', 'FM', 'DRUM', 'SMPL', 'CHOP'].includes((await eng.locator('.v').textContent()).trim()),
       'ENGINE zeigt keinen Namen');
   await eng.tap();
   await p.waitForTimeout(300);
   const engListe = (await p.locator('#pickList button').allTextContents()).map(t => t.trim());
-  chk(engListe.join(',') === 'POLY,FM,DRUM,SMPL', 'die Engine-Liste stimmt nicht');
+  chk(engListe.join(',') === 'POLY,FM,DRUM,SMPL,CHOP', 'die Engine-Liste stimmt nicht');
   await p.locator('#pickList button', {hasText: 'FM'}).tap();
   await p.waitForTimeout(300);
   const a = (await R(p, 'trk.src.a'));
