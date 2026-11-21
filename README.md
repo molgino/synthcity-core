@@ -171,7 +171,8 @@ Oktave, FREE hängt am Takt, Mod-Hüllkurve auf VOLUME, LFO2 auf CUTOFF; zwei Mu
 Jedes Pattern hat neben den 8 Spuren eine **FX-Spur** (in der Spurleiste unten: **FX**). Ihre
 Steps lösen nichts aus — jeder ist ein Lock-Step für die Projekt-Effekte: DELAY (Time, Feedback,
 Tone, Level), REVERB (Size, Decay, Damping, Level) und MASTER. Ein Tipp auf einen Pad öffnet den
-Lock; ohne Lock gilt der Grundwert aus dem FX-Reiter. Die FX-Spur hat eigene Länge und eigenen
+Lock; ohne gehaltenen Step zeigt die FX-Spur die Grundwerte (BASE VALUES) — die Effekte
+stehen nur hier, nicht zusätzlich als Reiter jeder Spur. Die FX-Spur hat eigene Länge und eigenen
 Teiler (Skala-Fenster), wird mit dem Pattern kopiert, geleert und gespeichert
 (`pat.N.fx.st.S.fx.a.fb = 80`). Im Kern ist sie Spur 8 der Brücke (`scStepGet(8, …)`); die
 Engine liest die Effektwerte je Block über `gNow()`. Ein Klang-Test lockt MASTER auf Steps 5–8

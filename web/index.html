@@ -303,7 +303,7 @@ textarea {
   .trk .m { width: 32px; }
   /* Flachere Pads: im Hochformat bleibt sonst fuer die Regler kaum eine Zeile. */
   .pad { aspect-ratio: 16 / 9; }
-  .ptabs { grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 3px; padding: 6px 6px 5px; }
+  .ptabs { grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 3px; padding: 6px 6px 5px; }
   .ptab { font-size: 9.5px; letter-spacing: 0; min-height: 30px; padding: 0 1px; text-overflow: clip; }
   .brand { display: none; }          /* schmaler Schirm: die Knoepfe sind wichtiger */
   .padgrid { grid-template-columns: repeat(4, 1fr); }
@@ -546,7 +546,7 @@ const GROUP = {note: 'Anschlag', vel: 'Anschlag', len: 'Anschlag', prob: 'Anschl
 
 // Reiter ueber den Reglern: immer nur eine Gruppe, statt einer langen Liste zum Scrollen.
 const TABNAME = {Anschlag: 'TRIG', Akkord: 'CHRD', Quelle: 'SRC', Filter: 'FLTR', Mod: 'MOD',
-                 Huellkurve: 'AMP', Ausgang: 'MIX', FX: 'FX'};
+                 Huellkurve: 'AMP', Ausgang: 'MIX'};
 let grpSel = 'Anschlag';
 try { grpSel = localStorage.getItem('synthcity-tab') || grpSel; } catch (e) {}
 let X = null;                 // der Kern im Hauptfaden: Modell, Texte, Speichern
@@ -720,16 +720,25 @@ function buildRail() {
     // Zwei Wege auf denselben Knopf: faellt der eine aus (schnelle Tipps hintereinander
     // verschluckt der Browser den Zeiger-Druck), greift der andere. Die Sperre verhindert,
     // dass beide zusammen zweimal schalten - unterm Strich: ein Druck, eine Wirkung.
-    let zuletzt = 0;
+    // Geschaltet wird beim LOSLASSEN und nur ohne Wischen - sonst mutet, wer ueber die
+    // Spurleiste scrollt, jede Spur, auf der sein Finger aufsetzt.
+    let zuletzt = 0, x0 = 0, y0 = 0, unten = false;
     const schalten = ev => {
       ev.stopPropagation();
       const jetzt = Date.now();
-      if (jetzt - zuletzt < 150) return;
+      if (jetzt - zuletzt < 250) return;
       zuletzt = jetzt;
       cmd('scMute', t, X.scIsMute(t) ? 0 : 1);
     };
-    m.addEventListener('pointerdown', ev => { ev.preventDefault(); schalten(ev); });
-    m.addEventListener('click', schalten);
+    m.addEventListener('pointerdown', ev => { ev.stopPropagation(); unten = true; x0 = ev.clientX; y0 = ev.clientY; });
+    m.addEventListener('pointerup', ev => {
+      if (!unten) return;
+      unten = false;
+      if (Math.abs(ev.clientX - x0) > 10 || Math.abs(ev.clientY - y0) > 10) return;
+      ev.preventDefault(); schalten(ev);
+    });
+    m.addEventListener('pointercancel', () => { unten = false; });
+    m.addEventListener('click', ev => { ev.stopPropagation(); if (Date.now() - zuletzt >= 250) schalten(ev); });
     let halt = null, lang = false;
     d.addEventListener('pointerdown', ev => {
       if (ev.target.classList.contains('m')) return;
@@ -964,8 +973,15 @@ function buildParams() {
     dragRow(row, p);
     box.appendChild(row);
   }
-  // Effekte und Summe gehoeren dem Projekt, nicht der Spur - eigener Reiter.
-  gruppen.push('FX');
+  if (fxSpur) {
+    const h = document.createElement('div');
+    h.className = 'grp lbl'; h.dataset.g = 'FX'; h.id = 'fxHint';
+    h.textContent = lockStep >= 0 ? 'STEP ' + (lockStep + 1) + ' \u00b7 LOCKS FOR THIS STEP'
+                                  : 'BASE VALUES \u00b7 TAP A STEP TO LOCK IT';
+    box.appendChild(h);
+  }
+  // Effekte und Summe gehoeren dem Projekt: sie stehen nur auf der FX-Spur (ohne gehaltenen
+  // Step der Grundwert, mit gehaltenem Step der Lock) - nicht doppelt als Reiter jeder Spur.
   let fxKopf = '';
   const fxReihe = id => id.startsWith('fx.a') ? 0 : id.startsWith('fx.b') ? 1 : 2;
   for (const p of P.filter(q => q.scope !== 1 && /^(fx\.|master\.)/.test(q.id))

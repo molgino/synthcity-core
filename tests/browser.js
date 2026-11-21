@@ -77,7 +77,7 @@ async function R(p, id) {
   const mach = (await p.locator('.row[data-id="trk.machine"] .v').textContent()).trim();
   chk((await smpSichtbar()) === (mach === 'SMPL'), 'SAMPLE ist bei ' + mach + ' falsch ein- oder ausgeblendet');
   // Reiter: es ist immer nur eine Gruppe zu sehen
-  chk(await p.locator('.ptab').count() === 8, 'nicht acht Reiter: ' + await p.locator('.ptab').count());
+  chk(await p.locator('.ptab').count() === 7, 'nicht sieben Reiter: ' + await p.locator('.ptab').count());
   // MOD: zwei LFOs und eine Mod-Huellkurve, Ziel aus einer Liste
   await p.locator('.ptab', {hasText: 'MOD'}).click(); await p.waitForTimeout(100);
   const modIds = await p.evaluate(() => [...document.querySelectorAll('.row')].filter(r => !r.hidden).map(r => r.dataset.id));
@@ -97,7 +97,9 @@ async function R(p, id) {
   await p.locator('.row[data-id="trk.lfo1.dest"]').click(); await p.waitForTimeout(200);
   await p.locator('#pickList button', {hasText: 'NONE'}).click(); await p.waitForTimeout(150);
   // FX: Echo, Hall und Summe sind Projektwerte und lassen sich verstellen
-  await p.locator('.ptab', {hasText: 'FX'}).click(); await p.waitForTimeout(100);
+  chk(await p.locator('.ptab', {hasText: 'FX'}).count() === 0, 'die Effekte stehen doppelt: als Reiter jeder Spur');
+  await p.locator('.trk.fxtrk').click(); await p.waitForTimeout(150);
+  chk((await p.locator('#fxHint').textContent()).includes('BASE VALUES'), 'die FX-Spur sagt nicht, dass hier die Grundwerte stehen');
   const fxIds = await p.evaluate(() => [...document.querySelectorAll('.row')].filter(r => !r.hidden).map(r => r.dataset.id));
   chk(['fx.a.div', 'fx.a.fb', 'fx.b.size', 'fx.b.dec', 'master.vol'].every(i => fxIds.includes(i)), 'der FX-Reiter zeigt nicht alle Effekte: ' + fxIds.join(','));
   const hz = p.locator('.row[data-id="fx.b.dec"]');
@@ -112,6 +114,7 @@ async function R(p, id) {
   await p.locator('.row[data-id="fx.a.div"]').click(); await p.waitForTimeout(200);
   chk(await p.locator('#pick').isVisible() && await p.locator('#pickList button').count() === 9, 'ECHO hat keine Auswahlliste der Notenwerte');
   await p.locator('#pickClose').click(); await p.waitForTimeout(100);
+  await p.locator('.trk').nth(0).locator('.nm').click(); await p.waitForTimeout(150);
   await p.locator('.ptab', {hasText: 'FLTR'}).click(); await p.waitForTimeout(100);
   const sichtbar = await p.evaluate(() => [...document.querySelectorAll('.row')].filter(r => !r.hidden).map(r => r.querySelector('small').textContent));
   chk(sichtbar.length > 0 && sichtbar.every(id => id.startsWith('trk.flt.')), 'der Reiter FILTER zeigt nicht nur Filter: ' + sichtbar.join(','));
@@ -132,6 +135,14 @@ async function R(p, id) {
   chk(await stummMuster(p) === '00000000', 'das Aufheben ging verloren');
   chk(!(await p.locator('.trk').nth(2).evaluate(e => e.classList.contains('sel'))),
       'der Mute-Knopf waehlt die Spur mit');
+  // Wischen ueber die Spurleiste schaltet nichts: erst beim Loslassen, und nur ohne Bewegung
+  {
+    const mb = await p.locator('.trk').nth(4).locator('.m').boundingBox();
+    await p.locator('.trk').nth(4).locator('.m').dispatchEvent('pointerdown', {clientX: mb.x + 10, clientY: mb.y + 10, pointerId: 7});
+    await p.locator('.trk').nth(4).locator('.m').dispatchEvent('pointerup', {clientX: mb.x + 10, clientY: mb.y + 60, pointerId: 7});
+    await p.waitForTimeout(200);
+    chk(await stummMuster(p) === '00000000', 'ein Wisch ueber M schaltet die Spur stumm');
+  }
 
   grp('Stumm heisst still - gemessen am Audio-Kern');
   for (let t = 0; t < 8; t++) { await p.locator('.trk').nth(t).locator('.m').tap(); await p.waitForTimeout(60); }
