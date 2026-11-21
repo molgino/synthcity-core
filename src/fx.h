@@ -34,7 +34,8 @@ struct Delay {
     // Kreuzweise Rueckkopplung: das Echo wandert zwischen links und rechts.
     void run(const float* inL, const float* inR, float* outL, float* outR, int n,
              float fb, float tone, float gain) {
-        float c = tone * tone;                       // Hoehen im Echo daempfen
+        // TONE 1 = hell (kein Filter), 0 = dunkel. Nie ganz zu: c < 1, sonst verstummt das Echo.
+        float c = (1.0f - tone) * (1.0f - tone) * 0.92f;
         for (int i = 0; i < n; i++) {
             int rd = at;
             float dl = l[rd], dr = r[rd];
@@ -50,45 +51,80 @@ struct Delay {
 };
 
 // --- Bus B: Hall als Feedback-Delay-Netzwerk ------------------------------------------------
-// Vier Leitungen, eine Householder-Matrix dazwischen: wenig Rechnung, dichte Fahne.
+// Vier Allpaesse verwischen den Eingang (Diffusion), dann acht Leitungen mit einer Hadamard-
+// Matrix dazwischen. Die Abklingzeit ist eine echte RT60 in Sekunden: jede Leitung bekommt
+// genau die Daempfung, die ihrer Laenge entspricht - so klingt der Raum gleichmaessig aus.
+struct Allpass {
+    enum { MAX = 1024 };
+    float b[MAX]; int at = 0, len = 100;
+    void reset() { for (int i = 0; i < MAX; i++) b[i] = 0.0f; at = 0; }
+    float run(float x, float g) {
+        float d = b[at];
+        float y = d - g * x;
+        b[at] = undenorm(x + g * y);
+        if (++at >= len) at = 0;
+        return y;
+    }
+};
 struct Reverb {
-    enum { N = 4, MAX = 4800 };
+    enum { N = 8, MAX = 9600 };
     float buf[N][MAX];
-    int   at[N] = {0, 0, 0, 0}, len[N] = {1237, 1601, 1867, 2203};
-    float lp[N] = {0, 0, 0, 0};
+    int   at[N] = {0}, len[N] = {0};
+    float lp[N] = {0};
+    Allpass ap[4];
+    float sr = 48000.0f;
 
     void reset() {
         for (int i = 0; i < N; i++) { for (int k = 0; k < MAX; k++) buf[i][k] = 0.0f; at[i] = 0; lp[i] = 0.0f; }
+        static const int al[4] = {142, 107, 379, 277};
+        for (int i = 0; i < 4; i++) { ap[i].reset(); ap[i].len = al[i]; }
+        setSize(0.5f, sr);
     }
-    void setSize(float size, float sr) {
-        static const int base[N] = {1237, 1601, 1867, 2203};   // teilerfremd: keine stehenden Wellen
-        float f = (0.35f + 0.65f * size) * sr / 48000.0f;
+    void setSize(float size, float rate) {
+        sr = rate;
+        // teilerfremd: keine stehenden Wellen. 32 .. 88 ms bei mittlerer Groesse.
+        static const int base[N] = {1559, 1907, 2251, 2683, 3011, 3407, 3793, 4243};
+        float f = (0.45f + 1.5f * size) * sr / 48000.0f;
         for (int i = 0; i < N; i++) {
             int n = (int)(base[i] * f);
             len[i] = n < 64 ? 64 : (n > MAX ? MAX : n);
             if (at[i] >= len[i]) at[i] = 0;
         }
+        static const int al[4] = {142, 107, 379, 277};
+        for (int i = 0; i < 4; i++) {
+            int n = (int)((float)al[i] * sr / 48000.0f);
+            ap[i].len = n < 8 ? 8 : (n > Allpass::MAX ? Allpass::MAX : n);
+            if (ap[i].at >= ap[i].len) ap[i].at = 0;
+        }
     }
+    // decay 0..1 -> 0,3 .. 15 s; damp 0..1 -> Hoehen klingen schneller ab (nie ganz zu).
     void run(const float* inL, const float* inR, float* outL, float* outR, int n,
              float decay, float damp, float gain) {
-        float c = damp * damp;
+        float rt = 0.3f * powf(50.0f, decay);
+        float g[N];
+        for (int k = 0; k < N; k++) g[k] = powf(10.0f, -3.0f * (float)len[k] / (sr * rt));
+        float c = damp * 0.85f;
+        const float h = 0.35355339f;                 // 1/sqrt(8): Hadamard bleibt verlustfrei
         for (int i = 0; i < n; i++) {
+            float x = 0.5f * (inL[i] + inR[i]);
+            for (int a = 0; a < 4; a++) x = ap[a].run(x, 0.62f);
             float v[N];
             for (int k = 0; k < N; k++) {
-                float x = buf[k][at[k]];
-                lp[k] = x + (lp[k] - x) * c;
+                float y = buf[k][at[k]];
+                lp[k] = y * (1.0f - c) + lp[k] * c;
                 v[k] = lp[k];
             }
-            // Householder: jede Leitung bekommt den halben Mittelwert aller abgezogen
-            float s = 0.5f * (v[0] + v[1] + v[2] + v[3]);
-            float w[N] = {s - v[0], s - v[1], s - v[2], s - v[3]};
-            float inM = 0.5f * (inL[i] + inR[i]);
+            // schnelle Walsh-Hadamard-Transformation (8 Punkte)
+            for (int st = 1; st < N; st <<= 1)
+                for (int k = 0; k < N; k += st << 1)
+                    for (int j = k; j < k + st; j++) { float p = v[j], q = v[j + st]; v[j] = p + q; v[j + st] = p - q; }
             for (int k = 0; k < N; k++) {
-                buf[k][at[k]] = undenorm(inM + w[k] * decay);
+                buf[k][at[k]] = undenorm(x + v[k] * h * g[k]);
                 if (++at[k] >= len[k]) at[k] = 0;
             }
-            outL[i] += 0.6f * gain * (v[0] + v[2]);
-            outR[i] += 0.6f * gain * (v[1] + v[3]);
+            float l = lp[0] + lp[2] + lp[4] + lp[6], r = lp[1] + lp[3] + lp[5] + lp[7];
+            outL[i] += 0.25f * gain * l;
+            outR[i] += 0.25f * gain * r;
         }
     }
 };

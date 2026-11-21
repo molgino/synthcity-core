@@ -651,7 +651,7 @@ struct Engine : Sink {
         reverb.setSize(pUni(gNow(sSize, fs)), sr);
         float fb   = pUni(gNow(sFb, fs)) * 0.95f;
         float tone = pUni(gNow(sTone, fs));
-        float dec  = 0.3f + pUni(gNow(sDec, fs)) * 0.69f;
+        float dec  = pUni(gNow(sDec, fs));
         float damp = pUni(gNow(sDamp, fs));
         float aVol = pLevel(gNow(sAVol, fs)), bVol = pLevel(gNow(sBVol, fs));
 

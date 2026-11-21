@@ -628,6 +628,31 @@ int main() {
         e.start(); e.render(hall, N);
         chk(rms(hall + 20000 * 2, 4000) > 0.001f, "der Hall hat keine Fahne");
         chk(rms(hall + 20000 * 2, 4000) < rms(hall, 4000), "die Fahne wird nicht leiser");
+
+        // Gemeldet: DAMP 127 machte den Hall stumm, TONE 127 das Echo. Beides darf nie sein -
+        // und eine laengere Abklingzeit muss laenger klingen.
+        auto fahne = [&](int dec, int damp) {
+            e.prepare(48000.0f);
+            projectInit(e.P); e.P.pat[0].used = 1;
+            Track& h = e.P.pat[0].t[0];
+            h.p[SL("trk.note")] = 57; h.p[SL("trk.amp.dec")] = 40; h.p[SL("trk.send.b")] = 110;
+            h.s[0].on = 1;
+            e.P.g[SL("fx.b.dec")] = (int16_t)dec; e.P.g[SL("fx.b.damp")] = (int16_t)damp;
+            e.start(); e.render(hall, 72000);
+            return rms(hall + 60000 * 2, 8000);
+        };
+        chk(fahne(90, 127) > 0.002f, "DAMP 127 macht den Hall stumm");
+        chk(fahne(110, 40) > fahne(50, 40) * 4.0f, "mehr DECAY klingt nicht laenger");
+        {
+            e.prepare(48000.0f);
+            projectInit(e.P); e.P.pat[0].used = 1;
+            Track& h = e.P.pat[0].t[0];
+            h.p[SL("trk.note")] = 57; h.p[SL("trk.amp.dec")] = 30; h.p[SL("trk.send.a")] = 110;
+            h.s[0].on = 1;
+            e.P.g[SL("fx.a.tone")] = 127; e.P.g[SL("fx.a.fb")] = 80;
+            e.start(); e.render(hall, 48000);
+            chk(rms(hall + 30000 * 2, 8000) > 0.002f, "TONE 127 macht das Echo stumm");
+        }
         chk(sane(hall, N * 2), "der Hall laeuft aus dem Ruder");
     }
 
