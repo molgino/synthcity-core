@@ -963,7 +963,7 @@ function buildParams() {
       box.appendChild(h);
     }
     const row = document.createElement('div');
-    row.className = 'row' + (X.scEnumCount(p.i) || p.id === 'trk.smp' ? ' pick' : '');
+    row.className = 'row' + (X.scEnumCount(p.i) || p.id === 'trk.smp' || knobSteps(p) ? ' pick' : '');
     row.innerHTML = `<div class="nm">${rowName(p)}<small>${p.id}</small></div>
                      <div style="display:flex;align-items:center"><span class="v"></span></div>
                      <div class="bar"></div>`;
@@ -1063,18 +1063,26 @@ function writeValue(p, v) {
 }
 // Werte mit Bedeutung (Engine, Filtertyp, Bedingung) kommen als Liste - eine Zahl,
 // die man nachschlagen muss, waere keine Anzeige.
+// Machine-Regler mit festen Stufen (LOOP, WARP, ALGO ...): Stufe i hat den Wert i*128/n + 64/n.
+const knobSteps = p => {
+  const m = /^trk\.src\.([a-h])$/.exec(p.id);
+  return m && sel < FXT ? X.scMachSteps(machOf(sel), m[1].charCodeAt(0) - 97) : 0;
+};
 function openPick(p) {
   if (p.id === 'trk.smp') return openSmpPick(p);
-  const n = X.scEnumCount(p.i);
+  const ks = X.scEnumCount(p.i) ? 0 : knobSteps(p);
+  const n = X.scEnumCount(p.i) || ks;
   if (!n) return;
-  const cur = valueOf(p).v;
+  const stufeV = i => ks ? Math.floor(i * 128 / ks + 64 / ks) : X.scEnumValue(p.i, i);
+  const curRaw = valueOf(p).v;
+  const cur = ks ? stufeV(Math.min(ks - 1, Math.floor(curRaw * ks / 128))) : curRaw;
   el('pickTitle').textContent = rowName(p) + '  ' + p.id;
   const list = el('pickList');
   list.innerHTML = '';
   let group = '';
   for (let i = 0; i < n; i++) {
-    const v = X.scEnumValue(p.i, i);
-    const g = str(X.scEnumGroup(p.i, i));
+    const v = stufeV(i);
+    const g = ks ? '' : str(X.scEnumGroup(p.i, i));
     if (g && g !== group) {
       group = g;
       const h = document.createElement('div');
@@ -1262,7 +1270,7 @@ function dragRow(row, p) {
   });
   const end = e => {
     if (id !== null && mode === 0) {                    // getippt, nicht gezogen
-      if (X.scEnumCount(p.i) || p.id === 'trk.smp') openPick(p);
+      if (X.scEnumCount(p.i) || p.id === 'trk.smp' || knobSteps(p)) openPick(p);
       else openFineParam(p);
     }
     id = null; mode = 0;

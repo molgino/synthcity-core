@@ -1288,6 +1288,58 @@ int main() {
         chk(bin(b2, N, 4070.0f, 48000.0f) * 8.0f < bin(a, N, 4070.0f, 48000.0f) + 1e-6f, "WIDTH schneidet die Hoehen nicht");
     }
 
+    grp("Sampler: Loop, Reverse, Tune, Warp (Repitch und Time)");
+    {
+        // Sample: 0,5 s 440 Hz, dann 0,5 s 880 Hz
+        static float smp[48000];
+        for (int i = 0; i < 48000; i++) smp[i] = sinf(6.2831853f * (i < 24000 ? 440.0f : 880.0f) * i / 48000.0f) * 0.8f;
+        static float b[72000 * 2];
+        auto spiel = [&](std::initializer_list<std::pair<int, int>> knoepfe, int frames) {
+            e.prepare(48000.0f);
+            e.pool.set(0, smp, 48000, 48000.0f, "zwei", false);
+            setupBeat(e, 60);
+            Track& t = e.P.pat[0].t[0];
+            for (int st = 1; st < 16; st++) t.s[st].on = 0;
+            machineSelect(t.p, 3); t.p[SL("trk.smp")] = 0;
+            t.p[SL("trk.flt.freq")] = 127; t.p[SL("trk.amp.sus")] = 100; t.p[SL("trk.amp.dec")] = 127;
+            t.p[SL("trk.len")] = 107;                         // 22 Steps: laenger als alles hier
+            for (auto& kv : knoepfe) t.p[knobSlot(kv.first)] = (int16_t)kv.second;
+            e.P.g[SL("bpm")] = 120;
+            e.start(); e.render(b, frames);
+        };
+        auto f = [&](int von, float hz) { return bin(b + von * 2, 6000, hz, 48000.0f); };
+        auto stufe = [](int i, int n) { return i * 128 / n + 64 / n; };
+        // vorwaerts: erst 440; REVERSE: erst 880
+        spiel({}, 30000);
+        chk(f(2000, 440) > f(2000, 880) * 8.0f, "vorwaerts beginnt das Sample nicht vorne");
+        spiel({{4, stufe(1, 2)}}, 30000);
+        chk(f(2000, 880) > f(2000, 440) * 8.0f, "REVERSE spielt nicht rueckwaerts");
+        // TUNE +12: eine Oktave hoeher
+        spiel({{3, 64 + 32}}, 12000);
+        chk(f(2000, 880) > f(2000, 440) * 8.0f, "TUNE +12 stimmt nicht eine Oktave hoeher");
+        // Ohne Loop ist nach 1 s Schluss, PING-PONG laeuft weiter
+        spiel({{2, stufe(1, 4)}}, 72000);
+        chk(rms(b + 56000 * 2, 8000) < 0.001f, "LOOP OFF spielt ueber das Ende hinaus");
+        spiel({{2, stufe(3, 4)}}, 72000);
+        chk(rms(b + 56000 * 2, 8000) > 0.05f, "PING-PONG haelt nicht an");
+        chk(f(50000, 880) > f(50000, 440) * 4.0f, "PING-PONG laeuft nach dem Ende nicht rueckwaerts durch 880 Hz");
+        // WARP: das 1-s-Sample soll 4 Beats dauern (2 s bei 120 bpm) - halbe Geschwindigkeit
+        spiel({{5, stufe(1, 3)}, {6, stufe(4, 10)}}, 30000);       // REPITCH: Band - halbe Tonhoehe
+        chk(f(2000, 220) > f(2000, 440) * 8.0f, "WARP REPITCH: halbe Geschwindigkeit klingt nicht eine Oktave tiefer");
+        spiel({{5, stufe(2, 3)}, {6, stufe(4, 10)}}, 72000);       // TIME: Tonhoehe bleibt
+        chk(f(2000, 440) > f(2000, 220) * 8.0f, "WARP TIME aendert die Tonhoehe");
+        chk(f(36000, 440) > f(36000, 880) * 4.0f, "WARP TIME: nach 0,75 s ist das Sample nicht erst bei einem Viertel (440 Hz)");
+        chk(f(60000, 880) > f(60000, 440) * 4.0f, "WARP TIME: nach 1,25 s ist das Sample nicht in der zweiten Haelfte (880 Hz)");
+        chk(sane(b, 72000 * 2), "WARP TIME laeuft aus dem Ruder");
+        // TIME mit 1 Beat: doppelt so schnell, Tonhoehe bleibt, nach 0,5 s ist Schluss
+        spiel({{5, stufe(2, 3)}, {6, stufe(2, 10)}}, 48000);
+        chk(f(2000, 440) > f(2000, 880) * 4.0f, "WARP TIME schnell: die Tonhoehe springt");
+        chk(rms(b + 30000 * 2, 8000) < 0.01f, "WARP TIME schnell: das Sample dauert nicht nur einen Beat");
+        // AUTO bei 120 bpm: 1 s = 2 Beats - REPITCH laesst es unveraendert
+        spiel({{5, stufe(1, 3)}}, 12000);
+        chk(f(2000, 440) > f(2000, 220) * 8.0f, "BEATS AUTO trifft die Laenge nicht");
+    }
+
     grp("Referenz-Aufnahme");
     {
         const int N = 96000;                         // zwei Sekunden

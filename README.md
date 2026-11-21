@@ -179,6 +179,14 @@ Machine, unbenutzte blendet die Oberfläche aus. Belegt so, dass **alte Projekte
   RATIO A/B, LEVEL A/B, DETUNE, **MOD DECAY** (die Modulatoren klingen ab: hell im Anschlag,
   weich im Ausklang; OFF = wie die alte 2-Operator-FM).
 - **DRUM:** dazu SWEEP T (35–200 ms) und DRIVE.
+- **SMPL — der Sampler:** START, FINE, **LOOP** (SLOT = wie im Editor / OFF / FORWARD /
+  PING-PONG), **TUNE** (±24 Halbtöne), **REVERSE**, **LENGTH** (FULL oder % ab START) und
+  **WARP**: *REPITCH* lässt das Sample im Tempo laufen wie ein Band (Tonhöhe geht mit), *TIME*
+  dehnt es granular (WSOLA: zwei 70-ms-Körner mit Hann-Fenster, jedes neue Korn sucht ±8 ms die
+  am besten passende Stelle) — Dauer = **BEATS** im aktuellen Tempo, Tonhöhe nur von Note/TUNE.
+  BEATS AUTO nimmt die nächste Zweierpotenz. Klang-Tests: rückwärts, Oktave, Loop-Ende,
+  Ping-Pong, halbes Tempo ohne Tonhöhenänderung (gemessen 440,0 Hz, Reinheit 99 %).
+- Regler mit festen Stufen (LOOP, REVERSE, WARP, BEATS, FM ALGO, RATIO) öffnen eine Liste.
 - **Filtertyp LADDER 24:** vier TPT-Einpoler mit Rückkopplung und Sättigung im Eingang — der
   analoge 24-dB-Tiefpass, stabil bis zur Selbstoszillation.
 - **Base-Width** auf jeder Spur (Reiter FLTR): BASE = Hochpass, WIDTH = Tiefpass so viele Oktaven

@@ -663,6 +663,7 @@ struct Engine : Sink {
         const int fs = fxStepNow();                   // am Blockanfang - Effekte sind traege genug
         fxStep = fs;
         seq.swing = swingOf(pat) / 100.0;
+        machTempo() = (float)effTempo(pat);            // fuer den Sampler-Warp
         seq.process(P, pat, frames, *this);
         updateLive();
         float master = pLevel(gNow(paramSlot(paramFind("master.vol")), fs));

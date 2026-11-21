@@ -57,6 +57,8 @@ struct Machine {
     virtual int   def(int k) const { (void)k; return 64; }
     // Spielt die Machine ein Sample aus dem Vorrat? Nur dann braucht die Spur trk.smp.
     virtual bool  usesSample() const { return false; }
+    // Hat Regler k feste Stufen (n > 0)? Dann ist Stufe i der Wert i * 128 / n + 64 / n.
+    virtual int   steps(int k) const { (void)k; return 0; }
     const char* labelA() const { return label(0); }
     const char* labelB() const { return label(1); }
     int defA() const { return def(0); }
@@ -177,6 +179,7 @@ struct MachFm : Machine {
         return t[a & 7];
     }
     const char* name() const override { return "FM"; }
+    int steps(int k) const override { return k == 2 ? 8 : (k == 0 || k == 5 ? 16 : 0); }
     const char* label(int k) const override {
         static const char* l[MACH_KNOBS] = {"RATIO A", "LEVEL A", "ALGO", "DETUNE", "LEVEL B", "RATIO B", "FEEDBACK", "MOD DECAY"};
         return l[k & 7];
@@ -291,67 +294,186 @@ struct MachDrum : Machine {
 // --- SMPL: ein Sample abspielen --------------------------------------------------------------
 // Die Tonhoehe entsteht aus der Abspielgeschwindigkeit, wie bei jedem Sampler. Der Platz
 // steht in trk.smp und ist lockbar: jeder Step kann ein anderes Sample anschlagen.
-struct MachSmpl : Machine {
-    struct St { double pos; int32_t at, n, e, la; uint8_t loop, ch; float step; };
-    static_assert(sizeof(St) <= MACH_STATE, "Zustand passt nicht in den Block");
+// Das Tempo, das gerade gilt - fuer Machines, die im Takt laufen (Sampler-Warp). Die Engine
+// setzt es je Block; eine Machine liest es nur.
+inline float& machTempo() { static float t = 120.0f; return t; }
 
-    int def(int k) const override { return k == 0 ? 0 : 64; }    // START am Anfang des Samples
+// --- SMPL: der Sampler -----------------------------------------------------------------------
+// Abspielen mit Loop (wie im Editor, aus, vorwaerts, Ping-Pong), rueckwaerts, mit Laenge und
+// grober Stimmung - und WARP: REPITCH laesst das Sample im Tempo laufen wie ein Band (die
+// Tonhoehe geht mit), TIME dehnt es granular, so dass Tempo und Tonhoehe getrennt sind - die
+// Note stimmt dann nur noch, die Dauer kommt aus BEATS und dem Tempo.
+struct MachSmpl : Machine {
+    struct St {
+        double pos;                 // Lesekopf (Quelle, in Bildern)
+        double gp[2];               // Startpunkt der beiden Koerner (TIME)
+        float gph[2];               // Phase der Koerner 0..1
+        int32_t at, s, e, la;       // Block-Lage, Bereich [s, e), Schleifenanfang
+        int8_t dir;                 // +1 vorwaerts, -1 rueckwaerts
+        uint8_t ch, loop, done;     // loop: 0 aus, 1 vorwaerts, 2 Ping-Pong
+    };
+    static_assert(sizeof(St) <= MACH_STATE, "Zustand passt nicht in den Block");
+    enum { K_START, K_FINE, K_LOOP, K_TUNE, K_REV, K_WARP, K_BEATS, K_LEN };
+
+    // Alle Grundwerte so, dass ein altes Projekt klingt wie vorher.
+    int def(int k) const override { static const int d[MACH_KNOBS] = {0, 64, 0, 64, 0, 0, 0, 0}; return d[k & 7]; }
     const char* name() const override { return "SMPL"; }
     bool usesSample() const override { return true; }
     const char* label(int k) const override {
-        static const char* l[MACH_KNOBS] = {"START", "FINE", "", "", "", "", "", ""};
+        static const char* l[MACH_KNOBS] = {"START", "FINE", "LOOP", "TUNE", "REVERSE", "WARP", "BEATS", "LENGTH"};
         return l[k & 7];
     }
-    void text(int k, float v, char* out, int n) const override {
-        if (k == 0) snprintf(out, n, "%.0f %%", (double)(v * 100.0f / 127.0f));
-        else        snprintf(out, n, "%+.0f ct", (double)(pBip(v) * 100.0f));
+    // Regler mit festen Stufen: die Oberflaeche zeigt sie als Liste.
+    int steps(int k) const override {
+        switch (k) { case K_LOOP: return 4; case K_REV: return 2; case K_WARP: return 3; case K_BEATS: return 10; default: return 0; }
     }
-    static int slotA()  { return knobSlot(0); }
-    static int slotB()  { return knobSlot(1); }
+    static int stufe(float v, int n) { int i = (int)(v * n / 128.0f); return i < 0 ? 0 : (i >= n ? n - 1 : i); }
+    static float beatsOf(int i) { static const float b[10] = {0, 0.5f, 1, 2, 4, 8, 16, 32, 64, 128}; return b[i < 0 ? 0 : (i > 9 ? 9 : i)]; }
+    static int tune(float v) { int t = (int)((v - 64.0f) * 24.0f / 63.0f + (v >= 64 ? 0.5f : -0.5f)); return t < -24 ? -24 : (t > 24 ? 24 : t); }
+    void text(int k, float v, char* out, int n) const override {
+        switch (k) {
+        case K_START: snprintf(out, n, "%.0f %%", (double)(v * 100.0f / 127.0f)); return;
+        case K_FINE:  snprintf(out, n, "%+.0f ct", (double)(pBip(v) * 100.0f)); return;
+        case K_LOOP:  { static const char* t[4] = {"SLOT", "OFF", "FORWARD", "PING-PONG"}; snprintf(out, n, "%s", t[stufe(v, 4)]); return; }
+        case K_TUNE:  snprintf(out, n, "%+d semi", tune(v)); return;
+        case K_REV:   snprintf(out, n, "%s", stufe(v, 2) ? "ON" : "OFF"); return;
+        case K_WARP:  { static const char* t[3] = {"OFF", "REPITCH", "TIME"}; snprintf(out, n, "%s", t[stufe(v, 3)]); return; }
+        case K_BEATS: { int b = stufe(v, 10); if (!b) snprintf(out, n, "AUTO"); else if (b == 1) snprintf(out, n, "1/2 beat");
+                        else snprintf(out, n, "%.0f beat%s", (double)beatsOf(b), b == 2 ? "" : "s"); return; }
+        default:      if (v < 0.5f) snprintf(out, n, "FULL"); else snprintf(out, n, "%.0f %%", (double)(v * 100.0f / 127.0f)); return;
+        }
+    }
     static int slotSmp(){ static const int s = paramSlot(paramFind("trk.smp")); return s; }
+
     void start(MState& m, float hz, float vel, const float* p, float sr,
                const SamplePool& pool) const override {
         St& st = m.as<St>();
         int k = (int)(p[slotSmp()] + 0.5f);
-        if (pool.empty(k)) { st.n = 0; st.pos = 0; return; }
+        st.done = 1;
+        if (pool.empty(k)) return;
         const SamplePool::Slot& sl = pool.s[k];
-        st.at = sl.at; st.n = sl.n; st.loop = sl.loop; st.ch = sl.ch;
-        st.e = sl.end(); st.la = sl.loopStart();
-        // START verschiebt innerhalb des Ausschnitts, nicht im ganzen Sample.
-        st.pos = (double)sl.a + (double)(int)(pUni(p[slotA()]) * (st.e - sl.a - 1));
+        int a = sl.a, e = sl.end();
+        // START verschiebt innerhalb des Ausschnitts, LENGTH kuerzt ab dort (0 = bis zum Ende)
+        int s0 = a + (int)(pUni(knob(p, K_START)) * (e - a - 1));
+        float lv = knob(p, K_LEN);
+        int e0 = lv < 0.5f ? e : s0 + 2 + (int)(pUni(lv) * (e - s0 - 2));
+        if (e0 > e) e0 = e;
+        if (e0 - s0 < 2) return;
+        st.at = sl.at; st.ch = sl.ch; st.s = s0; st.e = e0;
+        int lm = stufe(knob(p, K_LOOP), 4);
+        st.loop = lm == 0 ? (sl.loop ? 1 : 0) : (lm == 1 ? 0 : (lm == 2 ? 1 : 2));
+        int la = sl.loopStart();
+        st.la = (lm == 0 && la >= s0 && la < e0 - 1) ? la : s0;
+        st.dir = stufe(knob(p, K_REV), 2) ? -1 : 1;
+        st.pos = st.dir > 0 ? (double)s0 : (double)(e0 - 1);
+        st.gp[0] = st.gp[1] = st.pos; st.gph[0] = 0.0f; st.gph[1] = 0.5f;
+        st.done = 0;
         (void)vel; (void)hz; (void)sr;
     }
     bool stereo(const float* p, const SamplePool& pool) const override {
         int k = (int)(p[slotSmp()] + 0.5f);
         return !pool.empty(k) && pool.s[k].ch == 2;
     }
+    // Ein Bild an einer gebrochenen Stelle lesen (linear), ausserhalb des Bereichs still.
+    static void lese(const St& st, const SamplePool& pool, double pos, float& l, float& r) {
+        if (pos < (double)st.s || pos > (double)(st.e - 1)) { l = r = 0.0f; return; }
+        int i0 = (int)pos;
+        float f = (float)(pos - (double)i0);
+        int i1 = i0 + 1 < st.e ? i0 + 1 : i0;
+        const int c = st.ch;
+        int j0 = st.at + i0 * c, j1 = st.at + i1 * c;
+        l = pool.data[j0] + (pool.data[j1] - pool.data[j0]) * f;
+        r = c == 2 ? pool.data[j0 + 1] + (pool.data[j1 + 1] - pool.data[j0 + 1]) * f : l;
+    }
+    // WSOLA: ein neues Korn beginnt nicht stur am Lesekopf, sondern dort in seiner Naehe (+-8 ms),
+    // wo das Signal am besten zu dem passt, was das andere Korn als Naechstes spielt. So loeschen
+    // sich die beiden in der Ueberblendung nicht aus, und die Tonhoehe bleibt sauber.
+    static double passend(const St& st, const SamplePool& pool, int g, float gLen, double pstep) {
+        const int h = 1 - g;
+        const double weiterH = st.gp[h] + (double)(st.gph[h] * gLen) * pstep * st.dir;
+        const double rad = 0.008 * 48000.0;
+        double best = st.pos, bestV = -1e30;
+        for (double c = st.pos - rad; c <= st.pos + rad; c += 2.0) {
+            double v = 0.0;
+            for (int j = 0; j < 64; j += 2) {
+                float a, a2, b, b2;
+                lese(st, pool, c + j * pstep * st.dir, a, a2);
+                lese(st, pool, weiterH + j * pstep * st.dir, b, b2);
+                v += (double)(a * b);
+            }
+            if (v > bestV) { bestV = v; best = c; }
+        }
+        return best;
+    }
+    // Den Lesekopf um d weiterschieben - mit Loop, Ping-Pong und Ende.
+    static void weiter(St& st, double d) {
+        st.pos += d * st.dir;
+        const double hi = (double)(st.e - 1), lo = st.dir > 0 || st.loop ? (double)st.la : (double)st.s;
+        if (st.dir > 0 && st.pos >= hi) {
+            if (st.loop == 1) st.pos = (double)st.la + (st.pos - hi);
+            else if (st.loop == 2) { st.pos = hi - (st.pos - hi); st.dir = -1; }
+            else st.done = 1;
+        } else if (st.dir < 0 && st.pos <= lo) {
+            if (st.loop == 1) st.pos = hi - (lo - st.pos);
+            else if (st.loop == 2) { st.pos = lo + (lo - st.pos); st.dir = 1; }
+            else st.done = 1;
+        }
+        if (st.pos < (double)st.s) st.pos = (double)st.s;
+        if (st.pos > hi) st.pos = hi;
+    }
     void render(MState& m, const float* p, float hz, float* buf, float* bufR, int n, float sr,
                 const SamplePool& pool) const override {
         St& st = m.as<St>();
-        if (st.n <= 0) {
+        if (st.done) {
             for (int i = 0; i < n; i++) { buf[i] = 0.0f; if (bufR) bufR[i] = 0.0f; }
             return;
         }
         int k = (int)(p[slotSmp()] + 0.5f);
         float rate = pool.empty(k) ? 48000.0f : pool.s[k].rate;
-        // Note 60 spielt das Sample in seiner Aufnahmegeschwindigkeit ab.
-        float cents = pBip(p[slotB()]) * 100.0f;
-        float step = (hz / noteHz(60.0f)) * (rate / sr) * exp2f(cents / 1200.0f);
-        const int c = st.ch;
-        const double ende = (double)(st.e - 1);
-        for (int i = 0; i < n; i++) {
-            if (st.pos >= ende) {
-                if (!st.loop || st.e - st.la < 2) { buf[i] = 0.0f; if (bufR) bufR[i] = 0.0f; continue; }
-                st.pos = (double)st.la + (st.pos - ende);     // zurueck an den Schleifenanfang
+        // Note 60 spielt das Sample in seiner Aufnahmegeschwindigkeit ab; TUNE und FINE stimmen dazu.
+        float noteR = (hz / noteHz(60.0f)) * exp2f((tune(knob(p, K_TUNE)) * 100.0f + pBip(knob(p, K_FINE)) * 100.0f) / 1200.0f);
+        float base = rate / sr;
+        int warp = stufe(knob(p, K_WARP), 3);
+        double zeit = 1.0;                      // Faktor, damit der Bereich BEATS im Tempo dauert
+        if (warp) {
+            float sek = (float)(st.e - st.s) / rate;
+            float bpm = machTempo() < 20.0f ? 20.0f : machTempo();
+            float beats = beatsOf(stufe(knob(p, K_BEATS), 10));
+            if (beats <= 0.0f) {                // AUTO: die naechste Zweierpotenz an Beats
+                float b = sek * bpm / 60.0f;
+                beats = 0.25f;
+                while (beats * 1.4142f < b && beats < 256.0f) beats *= 2.0f;
             }
-            int i0 = (int)st.pos;
-            float f = (float)(st.pos - (double)i0);
-            int j0 = st.at + i0 * c, j1 = st.at + (i0 + 1 < st.e ? i0 + 1 : i0) * c;
-            buf[i] = pool.data[j0] + (pool.data[j1] - pool.data[j0]) * f;   // lineare Interpolation
-            if (bufR)
-                bufR[i] = c == 2 ? pool.data[j0 + 1] + (pool.data[j1 + 1] - pool.data[j0 + 1]) * f
-                                 : buf[i];
-            st.pos += step;
+            zeit = sek / (beats * 60.0f / bpm);
+        }
+        if (warp != 2) {                        // OFF oder REPITCH: ein Lesekopf, wie ein Band
+            double step = (double)base * noteR * zeit;
+            for (int i = 0; i < n; i++) {
+                if (st.done) { buf[i] = 0.0f; if (bufR) bufR[i] = 0.0f; continue; }
+                float l, r; lese(st, pool, st.pos, l, r);
+                buf[i] = l; if (bufR) bufR[i] = r;
+                weiter(st, step);
+            }
+            return;
+        }
+        // TIME: zwei Koerner zu je 70 ms, um eine halbe Laenge versetzt, mit Hann-Fenster - ihre
+        // Summe ist immer 1. Der Lesekopf wandert im Tempo, jedes Korn liest in der Tonhoehe der Note.
+        const float gLen = 0.07f * sr;
+        const float dph = 1.0f / gLen;
+        const double tstep = (double)base * zeit, pstep = (double)base * noteR;
+        for (int i = 0; i < n; i++) {
+            if (st.done) { buf[i] = 0.0f; if (bufR) bufR[i] = 0.0f; continue; }
+            float l = 0.0f, r = 0.0f;
+            for (int g = 0; g < 2; g++) {
+                float w = 0.5f - 0.5f * cosf(6.2831853f * st.gph[g]);
+                double at = st.gp[g] + (double)(st.gph[g] * gLen) * pstep * st.dir;
+                float gl, gr; lese(st, pool, at, gl, gr);
+                l += w * gl; r += w * gr;
+                st.gph[g] += dph;
+                if (st.gph[g] >= 1.0f) { st.gph[g] -= 1.0f; st.gp[g] = passend(st, pool, g, gLen, pstep); }
+            }
+            buf[i] = l; if (bufR) bufR[i] = r;
+            weiter(st, tstep);
         }
     }
 };

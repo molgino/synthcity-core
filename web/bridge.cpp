@@ -46,6 +46,7 @@ const char* scMachLabel(int m, int which) {
     return machineAt(m)->label(which);
 }
 int scMachCount() { return machineCount(); }
+int scMachSteps(int m, int k) { return machineAt(m)->steps(k); }
 int scMachUsesSmp(int m) { return machineAt(m)->usesSample() ? 1 : 0; }
 
 // Wer in ein Pattern schreibt, macht es zu einem benutzten - sonst fehlt es im Dokument

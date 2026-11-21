@@ -201,7 +201,16 @@ async function R(p, id) {
   await (await R(p, 'trk.machine')).tap(); await p.waitForTimeout(300);
   await p.locator('#pickList button', {hasText: 'SMPL'}).tap(); await p.waitForTimeout(300);
   chk(await p.evaluate(() => !document.querySelector('.row[data-id="trk.smp"]').hidden), 'bei SMPL fehlt SAMPLE');
-  chk(await p.evaluate(() => [...document.querySelectorAll('.row')].filter(r => !r.hidden && /^trk\.src\./.test(r.dataset.id)).length) === 2, 'SMPL zeigt leere Regler');
+  chk(await p.evaluate(() => [...document.querySelectorAll('.row')].filter(r => !r.hidden && /^trk\.src\./.test(r.dataset.id)).length) === 8, 'SMPL zeigt nicht seine acht Regler');
+  chk((await p.locator('.row[data-id="trk.src.f"] .nm').textContent()).startsWith('WARP'), 'der sechste SMPL-Regler heisst nicht WARP');
+  await p.locator('.row[data-id="trk.src.f"]').tap(); await p.waitForTimeout(250);
+  chk((await p.locator('#pickList button').allTextContents()).map(t => t.trim()).join(',') === 'OFF,REPITCH,TIME', 'WARP hat nicht die Liste OFF/REPITCH/TIME');
+  await p.locator('#pickList button', {hasText: 'TIME'}).tap(); await p.waitForTimeout(200);
+  chk((await p.locator('.row[data-id="trk.src.f"] .v').textContent()).trim() === 'TIME', 'WARP TIME laesst sich nicht waehlen');
+  await p.locator('.row[data-id="trk.src.g"]').tap(); await p.waitForTimeout(250);
+  chk(await p.locator('#pickList button').count() === 10, 'BEATS hat keine Liste mit 10 Stufen');
+  await p.locator('#pickList button', {hasText: /^4 beats$/}).tap(); await p.waitForTimeout(200);
+  chk((await p.locator('.row[data-id="trk.src.g"] .v').textContent()).trim() === '4 beats', 'BEATS 4 laesst sich nicht waehlen');
   await (await R(p, 'trk.machine')).tap(); await p.waitForTimeout(300);
   await p.locator('#pickList button', {hasText: 'FM'}).tap(); await p.waitForTimeout(300);
 
