@@ -55,13 +55,15 @@ struct Osc {
 
 // --- Filter: TPT/ZDF-State-Variable (Zavalishin) -----------------------------------------------
 // Bleibt auch bei schneller Modulation der Eckfrequenz stabil und liefert LP/BP/HP gleichzeitig.
-enum FltType : uint8_t { FLT_LP = 0, FLT_BP, FLT_HP, FLT_NOTCH, FLT_N };
+enum FltType : uint8_t { FLT_LP = 0, FLT_BP, FLT_HP, FLT_NOTCH, FLT_LADDER, FLT_N };
 // Die Koeffizienten werden NICHT je Sample berechnet (tanf ist teuer), sondern auf der
 // Steuerrate - set() aufrufen, dann viele Samples lang run().
 struct Svf {
     float ic1 = 0.0f, ic2 = 0.0f;
     float a1 = 0.0f, a2 = 0.0f, a3 = 0.0f, k = 1.0f;
     void reset() { ic1 = ic2 = 0.0f; }
+    // Nur die Koeffizienten uebernehmen, den Zustand des anderen Kanals behalten.
+    Svf coefOnly(const Svf& z) const { Svf r = z; r.a1 = a1; r.a2 = a2; r.a3 = a3; r.k = k; return r; }
     void set(float fc, float q, float sr) {
         if (fc < 20.0f) fc = 20.0f;
         float nyq = sr * 0.49f; if (fc > nyq) fc = nyq;
@@ -112,6 +114,42 @@ struct Env {
         default:  v = 0.0f;
         }
         return v;
+    }
+};
+
+// --- Ladder: der analoge 24-dB-Tiefpass ---------------------------------------------------
+// Vier TPT-Einpoler hintereinander, Rueckkopplung vom Ausgang an den Eingang, und eine weiche
+// Saettigung im Eingang - so wie die Transistorkette im Original. Bei viel Resonanz pfeift er,
+// laut wird er dabei nicht: die Saettigung haelt ihn im Zaum. Bass wird bei Resonanz leiser,
+// auch das wie im Original - ein Teil wird zurueckgegeben (Kompensation).
+struct Ladder {
+    float s[4] = {0, 0, 0, 0};
+    float G = 0.0f, k = 0.0f;
+    void reset() { s[0] = s[1] = s[2] = s[3] = 0.0f; }
+    void set(float fc, float q, float sr) {
+        if (fc < 20.0f) fc = 20.0f;
+        float nyq = sr * 0.45f; if (fc > nyq) fc = nyq;
+        float g = tanf(3.14159265f * fc / sr);
+        G = g / (1.0f + g);
+        k = (q - 0.7f) / 11.0f * 3.9f;                    // RESO 0..127 -> 0 .. knapp Selbstoszillation
+        if (k < 0.0f) k = 0.0f;
+    }
+    static float sat(float x) {
+        if (x > 3.0f) return 1.0f;
+        if (x < -3.0f) return -1.0f;
+        float x2 = x * x;
+        return x * (27.0f + x2) / (27.0f + 9.0f * x2);
+    }
+    float run(float x) {
+        // Rueckkopplung aus dem letzten Zustand (eine Probe Verzoegerung - bei 48 kHz unhoerbar)
+        float u = sat((x * (1.0f + 0.5f * k)) - k * s[3]);
+        for (int i = 0; i < 4; i++) {
+            float v = (u - s[i]) * G;
+            float y = v + s[i];
+            s[i] = undenorm(y + v);
+            u = y;
+        }
+        return u;
     }
 };
 

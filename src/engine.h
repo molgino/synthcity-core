@@ -32,6 +32,9 @@ struct Voice {
     int      nRamp = 0;
     MState   ms;
     Svf      flt, fltR;         // der zweite nur fuer Stereo-Quellen
+    Ladder   lad, ladR;         // Filtertyp LADDER
+    Svf      bwHp, bwLp, bwHpR, bwLpR;   // Base-Width hinter dem Filter
+    bool     bwOn = false;
     Env      env;
     float    panL = 0.7071f, panR = 0.7071f;
     float    base = 1000.0f, q = 0.7f, envAmt = 0.0f, gain = 1.0f;
@@ -77,11 +80,13 @@ struct Voice {
         inf = lenSamples >= 2147483647;
         liveFollow(live);
         const Slots& s = S();
-        flt.reset(); fltR.reset();
+        flt.reset(); fltR.reset(); lad.reset(); ladR.reset();
+        bwHp.reset(); bwLp.reset(); bwHpR.reset(); bwLpR.reset();
         env.setup(pTime(pf[s.atk]), pTime(pf[s.dec]), pLevel(pf[s.sus]), pTime(pf[s.rel]), sr);
         env.kill(); env.gate();
         mod.start(pf, spb, t0, (uint32_t)when);
         ctl(sr, live);
+        ms.seed = (uint32_t)when * 2654435761u + 0x9E3779B9u;   // reproduzierbarer Zufall je Anschlag
         mach->start(ms, hz, vel, pm, sr, *pool);
     }
     void release() { env.release(); left = -1; }
@@ -131,6 +136,17 @@ struct Voice {
         envAmt = pBip(pm[s.fEnv]);
         ft = (FltType)(((int)(pm[s.fType] + 0.5f)) % FLT_N);
         gain = pLevel(pm[s.vol]) * vel;
+        {   // Base-Width: Hochpass bei BASE, Tiefpass WIDTH Oktaven darueber
+            static const int sB = paramSlot(paramFind("trk.bw.base")), sW = paramSlot(paramFind("trk.bw.width"));
+            float bb = pm[sB], bw = pm[sW];
+            bwOn = bb > 0.5f || bw < 126.5f;
+            if (bwOn) {
+                float hp = bb > 0.5f ? pFreq(bb) : 10.0f;
+                float lp = bw < 126.5f ? hp * exp2f(bw * 10.0f / 127.0f) : sr * 0.49f;
+                bwHp.set(hp, 0.707f, sr); bwLp.set(lp, 0.707f, sr);
+                if (true) { bwHpR = bwHp.coefOnly(bwHpR); bwLpR = bwLp.coefOnly(bwLpR); }
+            }
+        }
         float a = 0.7853982f * (pBip(pm[s.pan]) + 1.0f);     // gleiche Leistung links wie rechts
         panL = cosf(a); panR = sinf(a);
     }
@@ -157,14 +173,26 @@ struct Voice {
                 // wie der Host die Bloecke schneidet.
                 if ((age & (CTL - 1)) == 0) {
                     ctl(sr, live);
-                    flt.set(base * exp2f(envAmt * e * 6.0f), q, sr);   // bis zu sechs Oktaven
-                    if (st) { fltR.a1 = flt.a1; fltR.a2 = flt.a2; fltR.a3 = flt.a3; fltR.k = flt.k; }
+                    float fc = base * exp2f(envAmt * e * 6.0f);          // bis zu sechs Oktaven
+                    if (ft == FLT_LADDER) { lad.set(fc, q, sr); ladR.G = lad.G; ladR.k = lad.k; }
+                    else {
+                        flt.set(fc, q, sr);
+                        if (st) { fltR.a1 = flt.a1; fltR.a2 = flt.a2; fltR.a3 = flt.a3; fltR.k = flt.k; }
+                    }
                 }
                 age++;
                 float eg = e * gain;
                 float xl, xr;
-                if (st) { xl = flt.run(buf[i], ft) * eg * panL; xr = fltR.run(bufR[i], ft) * eg * panR; }
-                else    { float x = flt.run(buf[i], ft) * eg; xl = x * panL; xr = x * panR; }
+                if (st) {
+                    float l = ft == FLT_LADDER ? lad.run(buf[i]) : flt.run(buf[i], ft);
+                    float r = ft == FLT_LADDER ? ladR.run(bufR[i]) : fltR.run(bufR[i], ft);
+                    if (bwOn) { l = bwLp.run(bwHp.run(l, FLT_HP), FLT_LP); r = bwLpR.run(bwHpR.run(r, FLT_HP), FLT_LP); }
+                    xl = l * eg * panL; xr = r * eg * panR;
+                } else {
+                    float x = ft == FLT_LADDER ? lad.run(buf[i]) : flt.run(buf[i], ft);
+                    if (bwOn) x = bwLp.run(bwHp.run(x, FLT_HP), FLT_LP);
+                    x *= eg; xl = x * panL; xr = x * panR;
+                }
                 mx.dL[done + i] += xl;        mx.dR[done + i] += xr;
                 mx.aL[done + i] += xl * sa;   mx.aR[done + i] += xr * sa;
                 mx.bL[done + i] += xl * sb;   mx.bR[done + i] += xr * sb;
@@ -239,6 +267,7 @@ struct Engine : Sink {
         patNext = -1; switchAt = -1; songArmed = false;
         recStop();
         for (int i = 0; i < NVOICES; i++) { v[i].used = false; v[i].env.kill(); }
+        clock = 0;                                   // Zufall der Stimmen (Drift) beginnt gleich
         delay.reset(); reverb.reset();
         resetTrackValues();
     }

@@ -55,7 +55,7 @@ inline const char* vmodeName(int v) {
     return n[v < 0 ? 0 : (v > 2 ? 2 : v)];
 }
 inline const char* fltTypeName(int v) {
-    static const char* n[] = {"LOWPASS", "BANDPASS", "HIGHPASS", "NOTCH"};
+    static const char* n[] = {"LOWPASS", "BANDPASS", "HIGHPASS", "NOTCH", "LADDER 24"};
     return n[((v % FLT_N) + FLT_N) % FLT_N];
 }
 
@@ -114,8 +114,9 @@ inline int enumValue(const ParamDef& d, int i) {
 // Regler bedeuten - 64 heisst bei POLY "kein Detune" und bei FM "Verhaeltnis 2.5 : 1".
 inline void paramText(const ParamDef& d, float v, char* out, int n, int mach = -1) {
     if (mach >= 0) {
-        if (!strcmp(d.id, "trk.src.a")) { machineAt(mach)->text(0, v, out, n); return; }
-        if (!strcmp(d.id, "trk.src.b")) { machineAt(mach)->text(1, v, out, n); return; }
+        if (!strncmp(d.id, "trk.src.", 8) && d.id[8] >= 'a' && d.id[8] <= 'h' && !d.id[9]) {
+            machineAt(mach)->text(d.id[8] - 'a', v, out, n); return;
+        }
     }
     if (!strcmp(d.id, "fx.a.div")) {
         int i = (int)(v + 0.5f);
@@ -136,6 +137,13 @@ inline void paramText(const ParamDef& d, float v, char* out, int n, int mach = -
         return;
     }
     if (!strcmp(d.id, "trk.machine"))  { snprintf(out, n, "%s", machineAt((int)(v + 0.5f))->name()); return; }
+    if (!strcmp(d.id, "trk.bw.base")) {
+        if (v < 0.5f) { snprintf(out, n, "OFF"); return; }
+        float hz = pFreq(v); if (hz >= 1000.0f) snprintf(out, n, "%.1f kHz", hz / 1000.0f); else snprintf(out, n, "%.0f Hz", hz); return;
+    }
+    if (!strcmp(d.id, "trk.bw.width")) {
+        if (v > 126.5f) snprintf(out, n, "OPEN"); else snprintf(out, n, "%.1f oct", (double)(v * 10.0f / 127.0f)); return;
+    }
     if (!strcmp(d.id, "trk.flt.type")) { snprintf(out, n, "%s", fltTypeName((int)(v + 0.5f))); return; }
     if (!strncmp(d.id, "trk.nt", 6))    { chordText((int)(v + 0.5f), out, n); return; }
     if (!strcmp(d.id, "trk.vmode"))     { snprintf(out, n, "%s", vmodeName((int)(v + 0.5f))); return; }

@@ -166,6 +166,29 @@ Gerechnet wird je Stimme in der Steuerrate (`src/mod.h`) auf einer Kopie der Wer
 Locks, Scenes und Live-Folgen bleiben unberührt. Klang-Tests: Rechteck auf PITCH springt eine
 Oktave, FREE hängt am Takt, Mod-Hüllkurve auf VOLUME, LFO2 auf CUTOFF; zwei Mutationen werden rot.
 
+## Klangerzeugung: 8 Machine-Regler, analoge POLY, 4-Operator-FM, Ladder, Base-Width
+
+Jede Machine hat jetzt **acht** Regler (`trk.src.a` … `trk.src.h`); was sie bedeuten, sagt die
+Machine, unbenutzte blendet die Oberfläche aus. Belegt so, dass **alte Projekte gleich klingen**
+(die neuen Regler stehen auf Werten, die nichts ändern — die Referenz-Aufnahme stimmt weiter):
+
+- **POLY — eine analoge Stimme:** DETUNE, SHAPE (Säge → Puls), PW (AUTO = folgt SHAPE), OSC2
+  (±24 Halbtöne), SUB (Rechteck eine Oktave tiefer), NOISE, DRIFT (freie Startphasen, langsam
+  wandernde Stimmung bis ±15 Cent, reproduzierbar je Anschlag), DRIVE (Sättigung vor dem Filter).
+- **FM — vier Operatoren** C, A, B1, B2 (B2 = B1 × 2, mit FEEDBACK), **8 Algorithmen** (ALGO),
+  RATIO A/B, LEVEL A/B, DETUNE, **MOD DECAY** (die Modulatoren klingen ab: hell im Anschlag,
+  weich im Ausklang; OFF = wie die alte 2-Operator-FM).
+- **DRUM:** dazu SWEEP T (35–200 ms) und DRIVE.
+- **Filtertyp LADDER 24:** vier TPT-Einpoler mit Rückkopplung und Sättigung im Eingang — der
+  analoge 24-dB-Tiefpass, stabil bis zur Selbstoszillation.
+- **Base-Width** auf jeder Spur (Reiter FLTR): BASE = Hochpass, WIDTH = Tiefpass so viele Oktaven
+  darüber; beides lockbar und modulierbar.
+
+Die Effekte: der **Hall** ist neu (vier Diffusions-Allpässe, acht Leitungen mit Hadamard-Matrix,
+DECAY als RT60 von 0,3 bis 15 s, DAMPING nie ganz zu), beim **Delay** ist TONE jetzt richtig
+herum (127 = hell). Vorher machten DAMP 127 bzw. TONE 127 den Effekt stumm — gemeldet als
+„Effekte klingen abgeschnitten“; Klang-Tests sichern das jetzt.
+
 ## FX-Spur: ein eigener Sequencer für die Effekte
 
 Jedes Pattern hat neben den 8 Spuren eine **FX-Spur** (in der Spurleiste unten: **FX**). Ihre

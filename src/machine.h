@@ -9,19 +9,41 @@
 enum { MACH_STATE = 256, MACH_CHUNK = 32 };
 
 struct MState { alignas(16) unsigned char raw[MACH_STATE];
+    uint32_t seed = 1;          // vom Anschlag gesetzt: Zufall, der trotzdem reproduzierbar ist
     template <class T> T& as() { return *(T*)raw; }
     template <class T> const T& as() const { return *(const T*)raw; }
 };
 
+enum { MACH_KNOBS = 8 };
+// Die acht Machine-Regler trk.src.a .. trk.src.h - ihre Bedeutung sagt die Machine.
+inline int knobSlot(int k) {
+    static int s[MACH_KNOBS] = {-1};
+    if (s[0] < 0) {
+        static const char* ids[MACH_KNOBS] = {"trk.src.a", "trk.src.b", "trk.src.c", "trk.src.d",
+                                              "trk.src.e", "trk.src.f", "trk.src.g", "trk.src.h"};
+        for (int k2 = 0; k2 < MACH_KNOBS; k2++) s[k2] = paramSlot(paramFind(ids[k2]));
+    }
+    return s[k < 0 ? 0 : (k >= MACH_KNOBS ? MACH_KNOBS - 1 : k)];
+}
+inline uint32_t machRng(uint32_t& s) { s ^= s << 13; s ^= s >> 17; s ^= s << 5; return s; }
+inline float machNoise(uint32_t& s) { return (float)(int32_t)machRng(s) * (1.0f / 2147483648.0f); }
+// Weiche Saettigung ohne tanhf: rational, bei |x| > 3 begrenzt.
+inline float softSat(float x) {
+    if (x > 3.0f) return 1.0f;
+    if (x < -3.0f) return -1.0f;
+    float x2 = x * x;
+    return x * (27.0f + x2) / (27.0f + 9.0f * x2);
+}
+
 struct Machine {
     virtual ~Machine() {}
-    virtual const char* name()   const = 0;
-    virtual const char* labelA() const = 0;      // Anzeige fuer trk.src.a
-    virtual const char* labelB() const = 0;      // Anzeige fuer trk.src.b
+    virtual const char* name() const = 0;
+    // Anzeige fuer Regler k (0..7); "" = diese Machine braucht den Regler nicht.
+    virtual const char* label(int k) const = 0;
     // Wie der Wert heisst, weiss nur die Machine: 64 ist bei der einen "kein Detune",
     // bei der anderen "Verhaeltnis 2:1". Vorgabe ist die nackte Zahl.
-    virtual void text(int which, float v, char* out, int n) const {
-        (void)which; snprintf(out, n, "%.0f", (double)v);
+    virtual void text(int k, float v, char* out, int n) const {
+        (void)k; snprintf(out, n, "%.0f", (double)v);
     }
     virtual void  start(MState& m, float hz, float vel, const float* p, float sr,
                         const SamplePool& pool) const = 0;
@@ -31,61 +53,104 @@ struct Machine {
     virtual void  render(MState& m, const float* p, float hz, float* buf, float* bufR, int n,
                          float sr, const SamplePool& pool) const = 0;
     virtual bool  stereo(const float* p, const SamplePool& pool) const { (void)p; (void)pool; return false; }
-    // Grundwerte der beiden eigenen Regler. 64 ist bei POLY "kein Detune", beim Sampler
-    // waere es die Mitte des Samples - jede Machine muss das selbst sagen.
-    virtual int   defA() const { return 64; }
-    virtual int   defB() const { return 64; }
+    // Grundwert von Regler k - jede Machine sagt selbst, wo sie anfaengt.
+    virtual int   def(int k) const { (void)k; return 64; }
     // Spielt die Machine ein Sample aus dem Vorrat? Nur dann braucht die Spur trk.smp.
     virtual bool  usesSample() const { return false; }
+    const char* labelA() const { return label(0); }
+    const char* labelB() const { return label(1); }
+    int defA() const { return def(0); }
+    int defB() const { return def(1); }
 };
+inline float knob(const float* p, int k) { return p[knobSlot(k)]; }
 
-// --- POLY: zwei verstimmte Oszillatoren, stufenlos von Saege nach Rechteck ---------------------
+// --- POLY: eine analoge Stimme ----------------------------------------------------------------
+// Wie eine analoge Schaltung: zwei Oszillatoren (bandbegrenzt, Saege bis Puls), ein Sub eine
+// Oktave tiefer, Rauschen, und dazu das, was echte Schaltungen ausmacht - jede Stimme beginnt
+// mit einer anderen Phase, die Stimmung wandert langsam (DRIFT), und vor dem Filter saettigt
+// die Mischung (DRIVE). Das Filter ist das der Spur; der Typ LADDER ist der analoge 24-dB-Tiefpass.
 struct MachPoly : Machine {
-    struct St { Osc a, b; float width; };
+    struct St { Osc a, b, sub; float dr[2], drz[2]; int drn; uint32_t rng; };
     static_assert(sizeof(St) <= MACH_STATE, "Zustand passt nicht in den Block");
 
-    const char* name()   const override { return "POLY"; }
-    const char* labelA() const override { return "DTUN"; }
-    const char* labelB() const override { return "SHAPE"; }
-    void text(int which, float v, char* out, int n) const override {
-        if (which == 0) snprintf(out, n, "%+.2f semi", (double)(pBip(v) * 0.25f));
-        else            snprintf(out, n, "%.0f %%", (double)(v * 100.0f / 127.0f));
+    const char* name() const override { return "POLY"; }
+    const char* label(int k) const override {
+        static const char* l[MACH_KNOBS] = {"DETUNE", "SHAPE", "PW", "OSC2", "SUB", "NOISE", "DRIFT", "DRIVE"};
+        return l[k & 7];
     }
-
-    static int slotA() { static const int s = paramSlot(paramFind("trk.src.a")); return s; }
-    static int slotB() { static const int s = paramSlot(paramFind("trk.src.b")); return s; }
-
+    int def(int k) const override {
+        static const int d[MACH_KNOBS] = {64, 64, 0, 64, 0, 0, 24, 16};
+        return d[k & 7];
+    }
+    static int osc2Semi(float v) { int s = (int)((v - 64.0f) * 24.0f / 63.0f + (v >= 64 ? 0.5f : -0.5f)); return s < -24 ? -24 : (s > 24 ? 24 : s); }
+    void text(int k, float v, char* out, int n) const override {
+        switch (k) {
+        case 0: snprintf(out, n, "%+.0f ct", (double)(pBip(v) * 25.0f)); return;
+        case 1: snprintf(out, n, v < 1 ? "SAW" : (v > 126 ? "PULSE" : "%.0f %% pulse"), (double)(v * 100.0f / 127.0f)); return;
+        case 2: if (v < 0.5f) snprintf(out, n, "AUTO"); else snprintf(out, n, "%.0f %%", (double)(50.0f - 45.0f * pUni(v))); return;
+        case 3: snprintf(out, n, "%+d semi", osc2Semi(v)); return;
+        default: snprintf(out, n, "%.0f %%", (double)(v * 100.0f / 127.0f));
+        }
+    }
     void start(MState& m, float hz, float vel, const float* p, float sr,
                const SamplePool& pool) const override {
         St& s = m.as<St>();
-        s.a.reset(0.0f);
-        s.b.reset(0.25f);           // feste Phasenlage: gleicher Anschlag klingt immer gleich.
-                                    // NICHT 0.5: bei gleicher Frequenz loeschte das die Grundwelle aus.
-        s.width = 0.5f;
-        (void)vel; (void)p; (void)hz; (void)sr;
+        s.rng = m.seed | 1u;
+        float drift = pUni(knob(p, 6));
+        // Freie Phasen wie bei analogen Oszillatoren - ohne DRIFT bleibt es reproduzierbar.
+        s.a.reset(drift > 0 ? (machRng(s.rng) >> 8) * (1.0f / 16777216.0f) : 0.0f);
+        s.b.reset(drift > 0 ? (machRng(s.rng) >> 8) * (1.0f / 16777216.0f) : 0.25f);
+        s.sub.reset(s.a.ph * 0.5f);
+        for (int i = 0; i < 2; i++) { s.dr[i] = machNoise(s.rng) * drift; s.drz[i] = s.dr[i]; }
+        s.drn = 0;
+        (void)vel; (void)sr; (void)pool;
     }
     void render(MState& m, const float* p, float hz, float* buf, float* bufR, int n, float sr,
                 const SamplePool& pool) const override {
         St& s = m.as<St>();
-        float dt = pBip(p[slotA()]) * 0.25f;          // bis zu einem Viertelton Verstimmung
-        float shape = pUni(p[slotB()]);               // 0 = Saege, 1 = schmaler Puls
-        float w = 0.5f - 0.45f * shape;
+        float dtCt = pBip(knob(p, 0)) * 25.0f;            // bis +-25 Cent zwischen den Oszillatoren
+        float shape = pUni(knob(p, 1));                    // 0 = Saege, 1 = Puls
+        // Pulsbreite 50 % .. 5 %; PW 0 = AUTO: die Breite folgt SHAPE (so klang POLY immer)
+        float pw = knob(p, 2);
+        float w = 0.5f - 0.45f * (pw < 0.5f ? shape : pUni(pw));
+        int semi2 = osc2Semi(knob(p, 3));
+        float subL = pUni(knob(p, 4)), noise = pUni(knob(p, 5));
+        float drift = pUni(knob(p, 6)), drive = pUni(knob(p, 7));
+        // DRIFT: alle ~40 ms ein neues Ziel, langsam angesteuert - bis +-15 Cent je Oszillator.
+        // Gezaehlt wird je Sample: so klingt es bei jeder Blockgroesse gleich.
+        const int periode = (int)(sr * 0.04f);
+        const float glatt = 1.0f / (sr * 0.03f);
+        s.sub.setHz(hz * 0.5f, sr);
         s.a.setHz(hz, sr);
-        s.b.setHz(hz * powf(2.0f, dt / 12.0f), sr);
+        s.b.setHz(hz * exp2f((dtCt + 100.0f * semi2) / 1200.0f), sr);
+        const float incA = s.a.inc, incB = s.b.inc, incS = s.sub.inc;
+        float g = 1.0f + drive * 5.0f, norm = 1.0f / (1.0f + 0.6f * drive);
+        float mixN = 0.5f / (1.0f + 0.5f * subL + 0.4f * noise);
         for (int i = 0; i < n; i++) {
+            if (drift > 0.0f) {
+                if (++s.drn >= periode) { s.drn = 0; for (int k = 0; k < 2; k++) s.drz[k] = machNoise(s.rng) * drift; }
+                for (int k = 0; k < 2; k++) s.dr[k] += (s.drz[k] - s.dr[k]) * glatt;
+                float fa = 1.0f + s.dr[0] * 0.00867f, fb = 1.0f + s.dr[1] * 0.00867f;   // 15 Cent
+                s.a.inc = incA * fa; s.b.inc = incB * fb; s.sub.inc = incS * fa;
+            }
             float x = (1.0f - shape) * s.a.saw() + shape * s.a.pulse(w);
             float y = (1.0f - shape) * s.b.saw() + shape * s.b.pulse(w);
-            buf[i] = 0.5f * (x + y);
-            s.a.advance(); s.b.advance();
+            float sb = s.sub.pulse(0.5f);
+            float v = (x + y + subL * sb + noise * 0.8f * machNoise(s.rng)) * mixN;
+            buf[i] = drive > 0.001f ? softSat(v * g) * norm : v;
+            s.a.advance(); s.b.advance(); s.sub.advance();
         }
+        (void)bufR; (void)pool;
     }
 };
 
-// --- FM: zwei Operatoren, Phasenmodulation ----------------------------------------------------
-// Phasenmodulation statt echter Frequenzmodulation - die Tonhoehe bleibt dabei stehen.
-// Ganzzahlige Verhaeltnisse klingen harmonisch, krumme glockig und metallisch.
+// --- FM: vier Operatoren, acht Algorithmen ---------------------------------------------------
+// Operatoren C (Traeger, Verhaeltnis 1), A, B1 und B2 (B2 = B1 eine Oktave hoeher, mit
+// Feedback). Phasenmodulation - die Tonhoehe bleibt stehen. Die Modulatoren klingen mit einer
+// eigenen Huellkurve ab (MOD DECAY): hell im Anschlag, weich im Ausklang - das, was FM lebendig
+// macht. Gerechnet wird in der Reihenfolge B2, B1, A, C: jeder kann nur von frueheren moduliert werden.
 struct MachFm : Machine {
-    struct St { Osc car, mod; float z; };
+    struct St { float ph[4]; float out[4]; float fb; float menv; };
     static_assert(sizeof(St) <= MACH_STATE, "Zustand passt nicht in den Block");
     static const float* ratios() {
         static const float r[16] = {0.5f, 1.0f, 1.5f, 2.0f, 2.5f, 3.0f, 3.5f, 4.0f,
@@ -93,42 +158,86 @@ struct MachFm : Machine {
         return r;
     }
     static int ratioIdx(float v) { int i = (int)(v * 16.0f / 128.0f); return i < 0 ? 0 : (i > 15 ? 15 : i); }
-
-    int defA() const override { return 24; }     // Verhaeltnis 2:1
-    int defB() const override { return 40; }
-    const char* name()   const override { return "FM"; }
-    const char* labelA() const override { return "RATIO"; }
-    const char* labelB() const override { return "INDEX"; }
-    void text(int which, float v, char* out, int n) const override {
-        if (which == 0) {
-            float r = ratios()[ratioIdx(v)];
-            snprintf(out, n, "%.2f : 1", (double)r);
-        } else snprintf(out, n, "%.0f %%", (double)(v * 100.0f / 127.0f));
+    // MOD DECAY: 0 = aus (Modulation bleibt stehen, wie frueher), sonst 10 ms .. 5 s
+    static float modDecay(float v) { return 0.01f * powf(500.0f, (v - 1.0f) / 126.0f); }
+    static int algo(float v) { int a = (int)(v * 8.0f / 128.0f); return a < 0 ? 0 : (a > 7 ? 7 : a); }
+    enum { OC = 0, OA = 1, OB1 = 2, OB2 = 3 };
+    // je Algorithmus: wer moduliert wen (Bitmaske der Quellen je Ziel) und wer klingt
+    struct Algo { uint8_t mod[4]; uint8_t car; const char* bild; };
+    static const Algo& alg(int a) {
+        static const Algo t[8] = {
+            {{1 << OA, 1 << OB1, 1 << OB2, 0}, 1 << OC,                         "B2>B1>A>C"},
+            {{(1 << OB1) | (1 << OA), 0, 1 << OB2, 0}, 1 << OC,                "B2>B1, B1+A>C"},
+            {{1 << OA, 0, 1 << OB2, 0}, (1 << OC) | (1 << OB1),                "A>C + B2>B1"},
+            {{1 << OA, (1 << OB1) | (1 << OB2), 0, 0}, 1 << OC,                "B1+B2>A>C"},
+            {{1 << OA, 1 << OB1, 1 << OB2, 0}, (1 << OC) | (1 << OA),          "B2>B1>A>C, A out"},
+            {{1 << OB1, 1 << OB2, 0, 0}, (1 << OC) | (1 << OA),                "B1>C + B2>A"},
+            {{1 << OB2, 1 << OB2, 1 << OB2, 0}, (1 << OC) | (1 << OA) | (1 << OB1), "B2>C,A,B1"},
+            {{0, 0, 0, 0}, 0x0F,                                               "C+A+B1+B2"}};
+        return t[a & 7];
     }
-    static int slotA() { static const int s = paramSlot(paramFind("trk.src.a")); return s; }
-    static int slotB() { static const int s = paramSlot(paramFind("trk.src.b")); return s; }
-
+    const char* name() const override { return "FM"; }
+    const char* label(int k) const override {
+        static const char* l[MACH_KNOBS] = {"RATIO A", "LEVEL A", "ALGO", "DETUNE", "LEVEL B", "RATIO B", "FEEDBACK", "MOD DECAY"};
+        return l[k & 7];
+    }
+    int def(int k) const override {
+        static const int d[MACH_KNOBS] = {24, 40, 0, 64, 40, 24, 0, 60};
+        return d[k & 7];
+    }
+    void text(int k, float v, char* out, int n) const override {
+        switch (k) {
+        case 2: snprintf(out, n, "%d  %s", algo(v) + 1, alg(algo(v)).bild); return;
+        case 0: case 5: snprintf(out, n, "%.2f : 1", (double)ratios()[ratioIdx(v)]); return;
+        case 7: if (v < 0.5f) snprintf(out, n, "OFF"); else snprintf(out, n, "%.2f s", (double)modDecay(v)); return;
+        case 3: snprintf(out, n, "%+.0f ct", (double)(pBip(v) * 30.0f)); return;
+        default: snprintf(out, n, "%.0f %%", (double)(v * 100.0f / 127.0f));
+        }
+    }
     void start(MState& m, float hz, float vel, const float* p, float sr,
                const SamplePool& pool) const override {
         St& s = m.as<St>();
-        s.car.reset(0.0f); s.mod.reset(0.0f); s.z = 0.0f;
-        (void)hz; (void)vel; (void)p; (void)sr;
+        for (int i = 0; i < 4; i++) { s.ph[i] = 0.0f; s.out[i] = 0.0f; }
+        s.fb = 0.0f; s.menv = 1.0f;
+        (void)hz; (void)vel; (void)p; (void)sr; (void)pool;
     }
     void render(MState& m, const float* p, float hz, float* buf, float* bufR, int n, float sr,
                 const SamplePool& pool) const override {
         St& s = m.as<St>();
-        float r = ratios()[ratioIdx(p[slotA()])];
-        float idx = pUni(p[slotB()]) * 8.0f;
-        s.car.setHz(hz, sr);
-        s.mod.setHz(hz * r, sr);
+        const Algo& a = alg(algo(knob(p, 2)));
+        float rA = ratios()[ratioIdx(knob(p, 0))], rB = ratios()[ratioIdx(knob(p, 5))];
+        float lA = pUni(knob(p, 1)), lB = pUni(knob(p, 4));
+        float fbk = pUni(knob(p, 6)) * 0.35f;
+        float dv = knob(p, 7);
+        float mc = dv < 0.5f ? 1.0f : expf(-1.0f / (modDecay(dv) * sr));
+        float det = exp2f(pBip(knob(p, 3)) * 30.0f / 1200.0f);
+        float inc[4] = {hz / sr, hz * rA * det / sr, hz * rB / det / sr, hz * rB * 2.0f * det / sr};
+        // Index als Modulator: bis ~3,5 Umdrehungen (unten wie die alte 2-Operator-FM); als Traeger: Lautstaerke
+        float idx[4] = {1.0f, lA * 1.2f + lA * lA * lA * 2.3f, lB * 1.2f + lB * lB * lB * 2.3f, lB * 1.2f + lB * lB * lB * 2.3f};
+        float vol[4] = {1.0f, lA, lB, lB};
+        int nCar = 0; for (int o = 0; o < 4; o++) if (a.car & (1 << o)) nCar++;
+        float norm = 1.0f / (float)(nCar ? nCar : 1);
+        static const int folge[4] = {OB2, OB1, OA, OC};
         for (int i = 0; i < n; i++) {
-            float mo = s.mod.sine();
-            float ph = s.car.ph + idx * mo * 0.15f;
-            ph -= (float)(int)ph;
-            if (ph < 0.0f) ph += 1.0f;
-            buf[i] = sinf(6.2831853f * ph);
-            s.car.advance(); s.mod.advance();
+            s.menv *= mc;
+            float me = dv < 0.5f ? 1.0f : 0.15f + 0.85f * s.menv;   // nie ganz weg: FM bleibt FM
+            float mix = 0.0f;
+            for (int f = 0; f < 4; f++) {
+                int o = folge[f];
+                float pm = 0.0f;
+                for (int q = 0; q < 4; q++) if (a.mod[o] & (1 << q)) pm += s.out[q] * idx[q] * me;
+                if (o == OB2) pm += s.fb * fbk;
+                float ph = s.ph[o] + pm;
+                ph -= floorf(ph);
+                float y = sinf(6.2831853f * ph);
+                s.out[o] = y;
+                if (o == OB2) s.fb = 0.5f * (s.fb + y);
+                if (a.car & (1 << o)) mix += y * vol[o];
+                s.ph[o] += inc[o]; if (s.ph[o] >= 1.0f) s.ph[o] -= 1.0f;
+            }
+            buf[i] = mix * norm;
         }
+        (void)bufR; (void)pool;
     }
 };
 
@@ -136,43 +245,46 @@ struct MachFm : Machine {
 // Das Grundrezept jeder Drum-Maschine: ein schneller Tonhoehenfall macht den Anschlag,
 // Rauschen macht Snare und Hi-Hat. Die Huellkurve kommt wie ueberall von der Spur.
 struct MachDrum : Machine {
-    struct St { Osc osc; float env; uint32_t rng; };
+    struct St { Osc osc; float env; uint32_t rng; float hp; };
     static_assert(sizeof(St) <= MACH_STATE, "Zustand passt nicht in den Block");
 
-    int defA() const override { return 96; }     // kraeftiger Sweep
-    int defB() const override { return 0; }
-    const char* name()   const override { return "DRUM"; }
-    const char* labelA() const override { return "SWEEP"; }
-    const char* labelB() const override { return "NOISE"; }
-    void text(int which, float v, char* out, int n) const override {
-        if (which == 0) snprintf(out, n, "%.0f semi", (double)(pUni(v) * 48.0f));
-        else            snprintf(out, n, "%.0f %%", (double)(v * 100.0f / 127.0f));
+    int def(int k) const override { static const int d[MACH_KNOBS] = {96, 0, 0, 64, 0, 0, 0, 0}; return d[k & 7]; }
+    // SWEEP T: 0 = 35 ms (so war es immer), hinauf bis 200 ms
+    static float sweepT(float v) { return 0.035f * exp2f(pUni(v) * 2.5f); }
+    const char* name() const override { return "DRUM"; }
+    const char* label(int k) const override {
+        static const char* l[MACH_KNOBS] = {"SWEEP", "NOISE", "SWEEP T", "", "DRIVE", "", "", ""};
+        return l[k & 7];
     }
-    static int slotA() { static const int s = paramSlot(paramFind("trk.src.a")); return s; }
-    static int slotB() { static const int s = paramSlot(paramFind("trk.src.b")); return s; }
-
+    void text(int k, float v, char* out, int n) const override {
+        if (k == 0) snprintf(out, n, "%.0f semi", (double)(pUni(v) * 48.0f));
+        else if (k == 2) snprintf(out, n, "%.0f ms", (double)(sweepT(v) * 1000.0f));
+        else snprintf(out, n, "%.0f %%", (double)(v * 100.0f / 127.0f));
+    }
     void start(MState& m, float hz, float vel, const float* p, float sr,
                const SamplePool& pool) const override {
         St& s = m.as<St>();
         s.osc.reset(0.0f);
-        s.env = 1.0f;
+        s.env = 1.0f; s.hp = 0.0f;
         s.rng = 0x1234567u + (uint32_t)(hz * 7.0f);
-        (void)vel; (void)p; (void)sr;
+        (void)vel; (void)p; (void)sr; (void)pool;
     }
     void render(MState& m, const float* p, float hz, float* buf, float* bufR, int n, float sr,
                 const SamplePool& pool) const override {
         St& s = m.as<St>();
-        float sweep = pUni(p[slotA()]) * 48.0f;        // Halbtoene nach oben beim Anschlag
-        float mix = pUni(p[slotB()]);
-        float c = expf(-1.0f / (0.035f * sr));         // Fall in rund 35 ms
+        float sweep = pUni(knob(p, 0)) * 48.0f;        // Halbtoene nach oben beim Anschlag
+        float mix = pUni(knob(p, 1));
+        float c = expf(-1.0f / (sweepT(knob(p, 2)) * sr));
+        float drive = pUni(knob(p, 4)), g = 1.0f + drive * 6.0f, norm = 1.0f / (1.0f + 0.5f * drive);
         for (int i = 0; i < n; i++) {
             s.env *= c;
             s.osc.setHz(hz * exp2f(sweep * s.env / 12.0f), sr);
-            s.rng ^= s.rng << 13; s.rng ^= s.rng >> 17; s.rng ^= s.rng << 5;
-            float nz = (float)(int32_t)s.rng * (1.0f / 2147483648.0f);
-            buf[i] = (1.0f - mix) * s.osc.sine() + mix * nz * 0.7f;
+            float nz = machNoise(s.rng);
+            float x = (1.0f - mix) * s.osc.sine() + mix * nz * 0.7f;
+            buf[i] = drive > 0.001f ? softSat(x * g) * norm : x;
             s.osc.advance();
         }
+        (void)bufR; (void)pool;
     }
 };
 
@@ -183,20 +295,20 @@ struct MachSmpl : Machine {
     struct St { double pos; int32_t at, n, e, la; uint8_t loop, ch; float step; };
     static_assert(sizeof(St) <= MACH_STATE, "Zustand passt nicht in den Block");
 
-    int defA() const override { return 0; }      // am Anfang des Samples
-    int defB() const override { return 64; }
-    const char* name()   const override { return "SMPL"; }
+    int def(int k) const override { return k == 0 ? 0 : 64; }    // START am Anfang des Samples
+    const char* name() const override { return "SMPL"; }
     bool usesSample() const override { return true; }
-    const char* labelA() const override { return "START"; }
-    const char* labelB() const override { return "FINE"; }
-    void text(int which, float v, char* out, int n) const override {
-        if (which == 0) snprintf(out, n, "%.0f %%", (double)(v * 100.0f / 127.0f));
-        else            snprintf(out, n, "%+.0f ct", (double)(pBip(v) * 100.0f));
+    const char* label(int k) const override {
+        static const char* l[MACH_KNOBS] = {"START", "FINE", "", "", "", "", "", ""};
+        return l[k & 7];
     }
-    static int slotA()  { static const int s = paramSlot(paramFind("trk.src.a")); return s; }
-    static int slotB()  { static const int s = paramSlot(paramFind("trk.src.b")); return s; }
+    void text(int k, float v, char* out, int n) const override {
+        if (k == 0) snprintf(out, n, "%.0f %%", (double)(v * 100.0f / 127.0f));
+        else        snprintf(out, n, "%+.0f ct", (double)(pBip(v) * 100.0f));
+    }
+    static int slotA()  { return knobSlot(0); }
+    static int slotB()  { return knobSlot(1); }
     static int slotSmp(){ static const int s = paramSlot(paramFind("trk.smp")); return s; }
-
     void start(MState& m, float hz, float vel, const float* p, float sr,
                const SamplePool& pool) const override {
         St& st = m.as<St>();
@@ -261,10 +373,7 @@ inline int machineCount() { return 4; }
 // Sonst steht der Sampler beim Umschalten mitten im Sample.
 inline void machineSelect(int16_t* trackParams, int mach) {
     static const int sM = paramSlot(paramFind("trk.machine"));
-    static const int sA = paramSlot(paramFind("trk.src.a"));
-    static const int sB = paramSlot(paramFind("trk.src.b"));
     const Machine* m = machineAt(mach);
     trackParams[sM] = (int16_t)mach;
-    trackParams[sA] = (int16_t)m->defA();
-    trackParams[sB] = (int16_t)m->defB();
+    for (int k = 0; k < MACH_KNOBS; k++) trackParams[knobSlot(k)] = (int16_t)m->def(k);
 }

@@ -43,7 +43,7 @@ const char* scParamText(int i, float v, int mach) {
 }
 const char* scMachName(int m)  { return machineAt(m)->name(); }
 const char* scMachLabel(int m, int which) {
-    return which ? machineAt(m)->labelB() : machineAt(m)->labelA();
+    return machineAt(m)->label(which);
 }
 int scMachCount() { return machineCount(); }
 int scMachUsesSmp(int m) { return machineAt(m)->usesSample() ? 1 : 0; }

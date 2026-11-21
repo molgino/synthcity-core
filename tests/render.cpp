@@ -5,6 +5,8 @@
 #include "../src/wav.h"
 #include <stdio.h>
 #include <math.h>
+#include <initializer_list>
+#include <utility>
 
 static int fails = 0, checks = 0;
 static void chk(bool ok, const char* what) {
@@ -1220,6 +1222,70 @@ int main() {
         patternClear(e.P, 7);
         chk(e.P.pat[7].fx.s[6].nLock == 0 && e.P.pat[7].fx.len == 16, "Pattern leeren laesst die FX-Spur stehen");
         e.P.pat[0].fx.len = 16;
+    }
+
+    grp("Machines mit acht Reglern, Ladder, Base-Width");
+    {
+        static float a[24000 * 2], b2[24000 * 2];
+        const int N = 24000;
+        auto ton = [&](int mach, int note, std::initializer_list<std::pair<const char*, int>> werte, float* out) {
+            e.prepare(48000.0f); setupBeat(e, note);
+            Track& t = e.P.pat[0].t[0];
+            machineSelect(t.p, mach);
+            for (int k = 0; k < MACH_KNOBS; k++) t.p[knobSlot(k)] = (int16_t)PARAMS[paramOfSlot(PS_TRACK, knobSlot(k))].def;
+            t.p[SL("trk.flt.freq")] = 127; t.p[SL("trk.amp.sus")] = 100; t.p[SL("trk.amp.dec")] = 127; t.p[SL("trk.len")] = 98;
+            for (auto& w : werte) t.p[SL(w.first)] = (int16_t)w.second;
+            e.start(); e.render(out, N);
+        };
+        // POLY: SUB legt eine Oktave darunter, OSC2 +12 eine darueber
+        ton(0, 57, {}, a); ton(0, 57, {{"trk.src.e", 127}}, b2);
+        chk(bin(b2, N, 110.0f, 48000.0f) > bin(a, N, 110.0f, 48000.0f) * 8.0f + 0.005f, "POLY SUB bringt keine Unteroktave");
+        ton(0, 57, {{"trk.src.d", 64 + 32}}, b2);
+        chk(bin(b2, N, 440.0f, 48000.0f) > bin(a, N, 440.0f, 48000.0f) * 1.5f, "POLY OSC2 +12 bringt keine Oktave darueber");
+        // NOISE: breites Rauschen zwischen den Obertoenen
+        ton(0, 57, {{"trk.src.f", 127}}, b2);
+        chk(bin(b2, N, 5115.0f, 48000.0f) > bin(a, N, 5115.0f, 48000.0f) * 3.0f, "POLY NOISE rauscht nicht");
+        // DRIFT ist Zufall - aber reproduzierbar: zweimal gleich, bei jeder Blockgroesse
+        {
+            ton(0, 57, {{"trk.src.g", 127}, {"trk.src.h", 90}}, a);
+            e.prepare(48000.0f); setupBeat(e, 57);
+            Track& t = e.P.pat[0].t[0];
+            t.p[SL("trk.flt.freq")] = 127; t.p[SL("trk.amp.sus")] = 100; t.p[SL("trk.amp.dec")] = 127; t.p[SL("trk.len")] = 98;
+            t.p[SL("trk.src.g")] = 127; t.p[SL("trk.src.h")] = 90;
+            for (int k = 2; k < MACH_KNOBS; k++) if (k != 6 && k != 7) t.p[knobSlot(k)] = (int16_t)PARAMS[paramOfSlot(PS_TRACK, knobSlot(k))].def;
+            e.start();
+            int done = 0; while (done < N) { int n = N - done < 333 ? N - done : 333; e.render(b2 + done * 2, n); done += n; }
+            int bad = 0; for (int i = 0; i < N * 2; i++) if (a[i] != b2[i]) bad++;
+            chk(bad == 0, "DRIFT/DRIVE haengen von der Blockgroesse oder vom Zufall ab");
+            chk(sane(a, N * 2), "DRIVE laeuft aus dem Ruder");
+        }
+        // FM: Algorithmus 8 ist additiv - LEVEL B laesst B1 (RATIO B 3:1) direkt klingen
+        ton(1, 57, {{"trk.src.c", 7 * 16 + 1}, {"trk.src.e", 0}, {"trk.src.f", 5 * 8}}, a);
+        ton(1, 57, {{"trk.src.c", 7 * 16 + 1}, {"trk.src.e", 127}, {"trk.src.f", 5 * 8}}, b2);
+        chk(bin(b2, N, 660.0f, 48000.0f) > bin(a, N, 660.0f, 48000.0f) * 8.0f + 0.01f, "FM Algorithmus 8: B1 klingt nicht");
+        // MOD DECAY: der Anschlag ist heller als der Ausklang - spaeter steckt mehr im Grundton
+        ton(1, 45, {{"trk.src.a", 24}, {"trk.src.b", 100}, {"trk.src.h", 40}}, a);
+        {
+            float frueh = bin(a + 500 * 2, 3000, 110.0f, 48000.0f) / (rms(a + 500 * 2, 3000) + 1e-9f);
+            float spaet = bin(a + 18000 * 2, 3000, 110.0f, 48000.0f) / (rms(a + 18000 * 2, 3000) + 1e-9f);
+            chk(spaet > frueh * 1.5f, "FM MOD DECAY: der Anschlag ist nicht heller als der Ausklang");
+        }
+        // FEEDBACK bringt Obertoene in B2 (Algorithmus 8, nur B2 hoerbar ueber LEVEL B)
+        ton(1, 45, {{"trk.src.c", 7 * 16 + 1}, {"trk.src.e", 127}, {"trk.src.g", 0}}, a);
+        ton(1, 45, {{"trk.src.c", 7 * 16 + 1}, {"trk.src.e", 127}, {"trk.src.g", 127}}, b2);
+        chk(bin(b2, N, 220.0f * 3, 48000.0f) > bin(a, N, 220.0f * 3, 48000.0f) * 3.0f + 0.002f, "FM FEEDBACK bringt keine Obertoene");
+        // LADDER: zu ist dunkler als offen, und stabil auch mit voller Resonanz
+        ton(0, 45, {{"trk.flt.type", FLT_LADDER}, {"trk.flt.freq", 127}}, a);
+        ton(0, 45, {{"trk.flt.type", FLT_LADDER}, {"trk.flt.freq", 40}}, b2);
+        chk(bin(b2, N, 2970.0f, 48000.0f) * 10.0f < bin(a, N, 2970.0f, 48000.0f), "LADDER filtert nicht");
+        ton(0, 45, {{"trk.flt.type", FLT_LADDER}, {"trk.flt.freq", 70}, {"trk.flt.reso", 127}}, b2);
+        chk(sane(b2, N * 2) && rms(b2, N) > 0.005f, "LADDER mit voller Resonanz ist kaputt oder stumm");
+        // BASE-WIDTH: BASE nimmt den Grundton weg, WIDTH die Hoehen
+        ton(0, 45, {}, a);
+        ton(0, 45, {{"trk.bw.base", 60}}, b2);
+        chk(bin(b2, N, 110.0f, 48000.0f) * 8.0f < bin(a, N, 110.0f, 48000.0f), "BASE schneidet den Bass nicht");
+        ton(0, 45, {{"trk.bw.base", 20}, {"trk.bw.width", 30}}, b2);
+        chk(bin(b2, N, 4070.0f, 48000.0f) * 8.0f < bin(a, N, 4070.0f, 48000.0f) + 1e-6f, "WIDTH schneidet die Hoehen nicht");
     }
 
     grp("Referenz-Aufnahme");

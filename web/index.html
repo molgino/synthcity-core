@@ -540,7 +540,7 @@ const spurName = t => t === FXT ? 'FX' : 'Track ' + (t + 1);
 const GROUP = {note: 'Anschlag', vel: 'Anschlag', len: 'Anschlag', prob: 'Anschlag',
                cond: 'Anschlag', micro: 'Anschlag', ratchet: 'Anschlag', quant: 'Anschlag',
                nt2: 'Akkord', nt3: 'Akkord', nt4: 'Akkord', vmode: 'Akkord',
-               machine: 'Quelle', smp: 'Quelle', src: 'Quelle', flt: 'Filter',
+               machine: 'Quelle', smp: 'Quelle', src: 'Quelle', flt: 'Filter', bw: 'Filter',
                amp: 'Huellkurve', vol: 'Ausgang', pan: 'Ausgang', send: 'Ausgang',
                lfo1: 'Mod', lfo2: 'Mod', menv: 'Mod'};
 
@@ -592,8 +592,8 @@ const FXNAME = {'fx.a.div': 'TIME', 'fx.a.fb': 'FEEDBACK', 'fx.a.tone': 'TONE', 
 const rowName = p => {
   if (FXNAME[p.id]) return FXNAME[p.id];
   if (/^trk\.(lfo[12]|menv)\./.test(p.id)) return p.name.replace(/^(LFO[12]|MENV) /, '');
-  if (p.id === 'trk.src.a') return str(X.scMachLabel(machOf(sel), 0));
-  if (p.id === 'trk.src.b') return str(X.scMachLabel(machOf(sel), 1));
+  const kn = /^trk\.src\.([a-h])$/.exec(p.id);
+  if (kn) return str(X.scMachLabel(machOf(sel), kn[1].charCodeAt(0) - 97));
   return p.name;
 };
 
@@ -1025,7 +1025,8 @@ function zeigeGruppe() {
   const welche = sel === FXT ? 'FX' : grpSel;
   for (const e of box.querySelectorAll('[data-g]'))
     if (!e.classList.contains('ptab'))
-      e.hidden = e.dataset.g !== welche || (e.dataset.id === 'trk.smp' && !mitSample);
+      e.hidden = e.dataset.g !== welche || (e.dataset.id === 'trk.smp' && !mitSample)
+                 || (/^trk\.src\.[a-h]$/.test(e.dataset.id || '') && !rowName(P[+e.dataset.p]));
   for (const t of box.querySelectorAll('.ptab')) t.classList.toggle('cur', t.dataset.g === grpSel);
 }
 const valueOf = p => {

@@ -84,7 +84,7 @@ async function R(p, id) {
   chk(modIds.length === 14 && modIds[0] === 'trk.lfo1.wave', 'der MOD-Reiter zeigt nicht die 14 Regler: ' + modIds.join(','));
   chk((await p.locator('.row[data-id="trk.lfo1.dest"] .nm').textContent()).startsWith('DEST'), 'die Zeile heisst nicht DEST');
   await p.locator('.row[data-id="trk.lfo1.dest"]').click(); await p.waitForTimeout(200);
-  chk(await p.locator('#pickList button').count() === 26, 'die Zielliste hat nicht 26 Eintraege');
+  chk(await p.locator('#pickList button').count() === 34, 'die Zielliste hat nicht 34 Eintraege');
   chk((await p.locator('#pickList').textContent()).includes('At trig'), 'die Zielliste ist nicht gruppiert');
   await p.locator('#pickList button', {hasText: 'CUTOFF'}).click(); await p.waitForTimeout(150);
   chk((await p.locator('.row[data-id="trk.lfo1.dest"] .v').textContent()).trim() === 'CUTOFF', 'das LFO-Ziel laesst sich nicht waehlen');
@@ -117,7 +117,7 @@ async function R(p, id) {
   await p.locator('.trk').nth(0).locator('.nm').click(); await p.waitForTimeout(150);
   await p.locator('.ptab', {hasText: 'FLTR'}).click(); await p.waitForTimeout(100);
   const sichtbar = await p.evaluate(() => [...document.querySelectorAll('.row')].filter(r => !r.hidden).map(r => r.querySelector('small').textContent));
-  chk(sichtbar.length > 0 && sichtbar.every(id => id.startsWith('trk.flt.')), 'der Reiter FILTER zeigt nicht nur Filter: ' + sichtbar.join(','));
+  chk(sichtbar.length > 0 && sichtbar.every(id => id.startsWith('trk.flt.') || id.startsWith('trk.bw.')), 'der Reiter FILTER zeigt nicht nur Filter: ' + sichtbar.join(','));
   chk(await p.locator('.ptab', {hasText: 'FLTR'}).evaluate(e => e.classList.contains('cur')), 'der gewaehlte Reiter ist nicht markiert');
   chk((await p.evaluate(() => [...document.querySelectorAll('.row')].filter(r => !r.hidden && r.dataset.g === 'Quelle').length)) === 0, 'QUELLE ist trotzdem zu sehen');
   // SAMPLE steht bei QUELLE, nicht als eigene Gruppe
@@ -195,9 +195,13 @@ async function R(p, id) {
   chk((await a.locator('.nm').textContent()).includes('RATIO'), 'der Regler heisst nicht wie die Machine');
   chk((await a.locator('.v').textContent()).includes(':'), 'FM zeigt kein Verhaeltnis');
   chk(await p.evaluate(() => document.querySelector('.row[data-id="trk.smp"]').hidden), 'bei FM steht SAMPLE noch da');
+  // FM hat acht Regler (4 Operatoren): ALGO steht da und nennt den Algorithmus
+  chk(await p.evaluate(() => [...document.querySelectorAll('.row')].filter(r => !r.hidden && /^trk\.src\./.test(r.dataset.id)).length) === 8, 'FM zeigt nicht acht Regler');
+  chk((await p.locator('.row[data-id="trk.src.c"] .nm').textContent()).startsWith('ALGO'), 'der dritte FM-Regler heisst nicht ALGO');
   await (await R(p, 'trk.machine')).tap(); await p.waitForTimeout(300);
   await p.locator('#pickList button', {hasText: 'SMPL'}).tap(); await p.waitForTimeout(300);
   chk(await p.evaluate(() => !document.querySelector('.row[data-id="trk.smp"]').hidden), 'bei SMPL fehlt SAMPLE');
+  chk(await p.evaluate(() => [...document.querySelectorAll('.row')].filter(r => !r.hidden && /^trk\.src\./.test(r.dataset.id)).length) === 2, 'SMPL zeigt leere Regler');
   await (await R(p, 'trk.machine')).tap(); await p.waitForTimeout(300);
   await p.locator('#pickList button', {hasText: 'FM'}).tap(); await p.waitForTimeout(300);
 

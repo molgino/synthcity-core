@@ -60,10 +60,10 @@ const grp = n => console.log('- ' + n);
   chk(str(x.scParamText(idxOf('trk.machine'), 2, -1)) === 'DRUM', 'Machine 2 heisst nicht DRUM');
   // Dieselbe Zahl heisst je Machine etwas anderes - das ist der Sinn des Machine-Prinzips.
   chk(str(x.scParamText(idxOf('trk.src.a'), 24, 1)) === '2.00 : 1', 'FM zeigt kein Verhaeltnis');
-  chk(str(x.scParamText(idxOf('trk.src.a'), 64, 0)) === '+0.00 semi', 'POLY zeigt kein Detune');
+  chk(str(x.scParamText(idxOf('trk.src.a'), 64, 0)) === '+0 ct', 'POLY zeigt kein Detune');
   chk(str(x.scParamText(idxOf('trk.src.a'), 64, -1)) === '+0', 'ohne Machine fehlt die nackte Zahl');
   chk(str(x.scParamText(idxOf('trk.src.a'), 64, 2)).includes('semi'), 'DRUM zeigt keinen Sweep');
-  chk(str(x.scMachLabel(0, 0)) === 'DTUN' && str(x.scMachLabel(1, 0)) === 'RATIO'
+  chk(str(x.scMachLabel(0, 0)) === 'DETUNE' && str(x.scMachLabel(1, 0)) === 'RATIO A' && str(x.scMachLabel(1, 2)) === 'ALGO' && str(x.scMachLabel(3, 2)) === ''
       && str(x.scMachLabel(2, 0)) === 'SWEEP', 'Reglernamen je Machine falsch');
   chk(str(x.scParamText(idxOf('fx.a.div'), 4, -1)) === '1/8', 'Echo-Zeit zeigt keinen Notenwert');
   chk(x.scEnumCount(idxOf('fx.a.div')) === 9, 'Echo-Zeiten falsch viele');

@@ -60,11 +60,20 @@ static const ParamDef PARAMS[] = {
     {"trk.smp",      "SAMPLE", PS_TRACK,  PK_ENUM,    0,  63,   0, "",    PF_LOCK},
     {"trk.src.a",    "SRC A", PS_TRACK, PK_BIP,    0, 127,  64, "",    PF_LOCK | PF_MOD},
     {"trk.src.b",    "SRC B", PS_TRACK, PK_NUM,    0, 127,  64, "",    PF_LOCK | PF_MOD},
+    {"trk.src.c",    "SRC C",  PS_TRACK,  PK_NUM,     0, 127,    0, "",    PF_LOCK | PF_MOD},
+    {"trk.src.d",    "SRC D",  PS_TRACK,  PK_NUM,     0, 127,   64, "",    PF_LOCK | PF_MOD},
+    {"trk.src.e",    "SRC E",  PS_TRACK,  PK_NUM,     0, 127,    0, "",    PF_LOCK | PF_MOD},
+    {"trk.src.f",    "SRC F",  PS_TRACK,  PK_NUM,     0, 127,    0, "",    PF_LOCK | PF_MOD},
+    {"trk.src.g",    "SRC G",  PS_TRACK,  PK_NUM,     0, 127,    0, "",    PF_LOCK | PF_MOD},
+    {"trk.src.h",    "SRC H",  PS_TRACK,  PK_NUM,     0, 127,    0, "",    PF_LOCK | PF_MOD},
     // --- Spur: Filter ---
     {"trk.flt.freq", "FREQ",   PS_TRACK,  PK_NUM,     0, 127, 127, "Hz",  PF_LOCK | PF_MOD},
     {"trk.flt.reso", "RESO",   PS_TRACK,  PK_NUM,     0, 127,   0, "",    PF_LOCK | PF_MOD},
     {"trk.flt.type", "TYPE",   PS_TRACK,  PK_ENUM,    0,  10,   0, "",    PF_LOCK},
     {"trk.flt.env",  "ENV",    PS_TRACK,  PK_BIP,     0, 127,  64, "",    PF_LOCK | PF_MOD},
+    // Base-Width: ein Hochpass (BASE) und ein Tiefpass WIDTH Oktaven darueber, hinter dem Filter.
+    {"trk.bw.base",  "BASE",   PS_TRACK,  PK_NUM,     0, 127,   0, "Hz",  PF_LOCK | PF_MOD},
+    {"trk.bw.width", "WIDTH",  PS_TRACK,  PK_NUM,     0, 127, 127, "",    PF_LOCK | PF_MOD},
     // --- Spur: Huellkurve und Ausgang ---
     {"trk.amp.atk",  "ATK",    PS_TRACK,  PK_TIME,    0, 127,   0, "s",   PF_LOCK | PF_MOD},
     {"trk.amp.dec",  "DEC",    PS_TRACK,  PK_TIME,    0, 127,  71, "s",   PF_LOCK | PF_MOD},
@@ -78,17 +87,17 @@ static const ParamDef PARAMS[] = {
     {"trk.lfo1.wave",  "LFO1 WAVE",  PS_TRACK, PK_ENUM,    0,   4,   0, "",    PF_LOCK},
     {"trk.lfo1.rate",  "LFO1 RATE",  PS_TRACK, PK_ENUM,    0,  14,   7, "",    PF_LOCK | PF_MOD},
     {"trk.lfo1.depth", "LFO1 DEPTH", PS_TRACK, PK_BIP,     0, 127,  64, "",    PF_LOCK | PF_MOD},
-    {"trk.lfo1.dest",  "LFO1 DEST",  PS_TRACK, PK_ENUM,    0,  25,   0, "",    PF_LOCK},
+    {"trk.lfo1.dest",  "LFO1 DEST",  PS_TRACK, PK_ENUM,    0,  33,   0, "",    PF_LOCK},
     {"trk.lfo1.mode",  "LFO1 MODE",  PS_TRACK, PK_ENUM,    0,   2,   0, "",    0},
     {"trk.lfo2.wave",  "LFO2 WAVE",  PS_TRACK, PK_ENUM,    0,   4,   1, "",    PF_LOCK},
     {"trk.lfo2.rate",  "LFO2 RATE",  PS_TRACK, PK_ENUM,    0,  14,   4, "",    PF_LOCK | PF_MOD},
     {"trk.lfo2.depth", "LFO2 DEPTH", PS_TRACK, PK_BIP,     0, 127,  64, "",    PF_LOCK | PF_MOD},
-    {"trk.lfo2.dest",  "LFO2 DEST",  PS_TRACK, PK_ENUM,    0,  25,   0, "",    PF_LOCK},
+    {"trk.lfo2.dest",  "LFO2 DEST",  PS_TRACK, PK_ENUM,    0,  33,   0, "",    PF_LOCK},
     {"trk.lfo2.mode",  "LFO2 MODE",  PS_TRACK, PK_ENUM,    0,   2,   0, "",    0},
     {"trk.menv.atk",   "MENV ATK",   PS_TRACK, PK_TIME,    0, 127,   0, "s",   PF_LOCK},
     {"trk.menv.dec",   "MENV DEC",   PS_TRACK, PK_TIME,    0, 127,  60, "s",   PF_LOCK},
     {"trk.menv.depth", "MENV DEPTH", PS_TRACK, PK_BIP,     0, 127,  64, "",    PF_LOCK | PF_MOD},
-    {"trk.menv.dest",  "MENV DEST",  PS_TRACK, PK_ENUM,    0,  25,   0, "",    PF_LOCK},
+    {"trk.menv.dest",  "MENV DEST",  PS_TRACK, PK_ENUM,    0,  33,   0, "",    PF_LOCK},
 };
 enum { NPARAMS = (int)(sizeof PARAMS / sizeof *PARAMS) };
 

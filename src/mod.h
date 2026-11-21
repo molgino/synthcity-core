@@ -41,7 +41,10 @@ static const ModDest MOD_DESTS[] = {
     {"VELOCITY", "trk.vel", 127, true}, {"LENGTH", "trk.len", 126, true}, {"PROB", "trk.prob", 100, true},
     {"MICRO", "trk.micro", 48, true}, {"RETRIG", "trk.ratchet", 7, true}, {"KEY", "trk.quant", 1, true},
     {"NT2", "trk.nt2", 49, true}, {"NT3", "trk.nt3", 49, true}, {"NT4", "trk.nt4", 49, true},
-    {"SAMPLE", "trk.smp", 63, true}};
+    {"SAMPLE", "trk.smp", 63, true},
+    {"SRC C", "trk.src.c", 127, false}, {"SRC D", "trk.src.d", 127, false}, {"SRC E", "trk.src.e", 127, false},
+    {"SRC F", "trk.src.f", 127, false}, {"SRC G", "trk.src.g", 127, false}, {"SRC H", "trk.src.h", 127, false},
+    {"BW BASE", "trk.bw.base", 127, false}, {"BW WIDTH", "trk.bw.width", 127, false}};
 enum { MOD_NDEST = (int)(sizeof MOD_DESTS / sizeof *MOD_DESTS) };
 inline int modDestSlot(int d) {
     static int s[MOD_NDEST] = {-2};
