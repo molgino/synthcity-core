@@ -2,3 +2,5 @@ tests/unit
 *.o
 demo.wav
 build/
+dist/
+.sysroot/

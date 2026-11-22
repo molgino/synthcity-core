@@ -549,9 +549,67 @@ läuft dabei ungerührt weiter.
 Last (x86, ein Kern): 580× Echtzeit mit einer Spur, 33× im schlimmsten Fall mit allen
 32 Stimmen und 32stel-Noten auf acht Spuren — die Effekte laufen dabei mit.
 
+## Das Gerät: R36S
+
+Die dritte Hülle liegt in `device/`. Sie bindet die Brücke (`web/bridge.cpp`) direkt ein und
+spricht nur über deren `sc*`-Funktionen mit dem Kern: **dieselben** Machines, Locks, Scenes,
+Song-Zeilen und dasselbe Projektformat wie im Browser. Eine Projektdatei vom Handy läuft auf dem
+Gerät und umgekehrt.
+
+| Datei | Aufgabe |
+|---|---|
+| `device/main.cpp` | Oberfläche 640×480, Ton (SDL/ALSA), Dateien, Export, Selbsttest |
+| `device/drm.cpp` | Bild direkt per DRM (Groovebox-OS), **ohne libdrm**: nur Kernel-ioctls, mit dem Panel-Versatz aus SYNTH CITY |
+| `device/input.cpp` | Gamepad, übernommen aus SYNTH CITY (gleiche `input.cfg`, Lernmodus) |
+| `device/font.h` | Bitmap-Schrift 8×16 aus SYNTH CITY |
+
+**Bedienung** (SELECT halten zeigt sie auf dem Gerät):
+
+| Taste | Wirkung |
+|---|---|
+| L1 / R1 | Spur 1–8, FX-Spur |
+| L2 / R2 | Ansicht TRACK / SONG / PROJECT |
+| ▲▼ | Regler · ◀▶ Step-Cursor · B + ◀▶ Reiter (TRIG CHRD SRC FLTR AMP MIX MOD) |
+| X / Y | Wert hoch / runter (B gehalten = grob, lange halten = schneller) |
+| A antippen | Trig an/aus |
+| A halten + X/Y | Lock auf dem Step (auf leerem Step: trigless) · A halten + B: Locks des Steps löschen |
+| B + A | Spur stumm · B + ▲▼ Pattern wechseln (läuft es, wird es vorgemerkt) |
+| START | Play/Stop (in SONG: Song) · B + START: FILL, solange gehalten |
+| SELECT | Menü: kopieren/einfügen (Pattern, Spur, Step), Sample laden, Scene A/B bearbeiten |
+| rechter Stick ◀▶ | Scene-Crossfader A ↔ B |
+
+Dateien liegen neben dem Programm: `projects/<name>.sc` (das Dokument als Text, wie die
+Web-Sicherung), `samples/` (WAV 8–32 Bit, mono/stereo, mit Unterordnern). Ein Projekt merkt
+sich seine Samples per Name; beim Laden sucht jeder Slot seine Datei selbst. Gesichert wird
+automatisch 4 s nach der letzten Änderung (erst in eine Zwischendatei, dann umbenannt). Der
+Song-Export schreibt **24-Bit-WAV** nach `samples/export/` — auf dem Groovebox-OS also direkt
+aufs USB-Laufwerk.
+
+**Bauen**
+
+```
+make device && make devtest          # Desktop-Build + Selbsttest mit Bildschirmfotos (build/shots)
+./tools/r36s-build.sh                # aarch64, gegen Ubuntu-18.04-Sysroot (glibc 2.27, SDL 2.0.8)
+./tools/r36s-package.sh              # dist/synthcity-os-update.tgz + dist/synthcity-arkos.zip
+```
+
+Der Cross-Build linkt **ohne libstdc++** (nur SDL2, libm, libc) und läuft so unverändert auf
+ArkOS und auf dem Groovebox-OS. Der Selbsttest besteht auch als aarch64-Programm (unter
+qemu, mit einer SDL-Attrappe): 50 Prüfungen von Trig/Lock/Scene über Song, Speichern/Laden,
+Samples bis zum Export.
+
+* **Groovebox-OS:** `synthcity-os-update.tgz` wie ein SYNTH-CITY-Update aufspielen (Upload-Seite
+  oder Laufwerk `GROOVEBOX/update/`). Es ersetzt das Programm; die alte Version bleibt als
+  `groovebox.bak` und kommt automatisch zurück, wenn die neue dreimal beim Start abstürzt.
+* **ArkOS:** Inhalt von `synthcity-arkos.zip` nach `/roms/ports/` — im Ports-Menü erscheint
+  „SYNTH CITY CORE“. Beenden: PROJECT → QUIT oder SELECT + START 2 s.
+
+`--bench` misst, wie schnell der Kern auf dem Gerät rechnet; die Kopfzeile zeigt die
+Audio-Last laufend (CPU %). Unter PROJECT: DISPLAY SHIFT (Panel-Versatz), LEARN BUTTONS.
+
 ## Als Nächstes
 
-12. Gerät: R36S-Build, echter Eingang, Gamepad-Bedienung.
+12. Gerät: echter Eingang (Sampling), MIDI, Web-Upload auf dem Gerät.
 13. Modulation: LFOs und Hüllkurven als Ziele aus der Parametertabelle.
 
 Offen aus Meilenstein 2: das DSP ist **neu geschrieben**, nicht aus SYNTH CITY portiert — ein

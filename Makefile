@@ -54,3 +54,19 @@ clean:
 	rm -f $(BINS)
 
 .PHONY: test uitest bench demo plugin web clean
+
+# --- Geraet (R36S-Huelle): SDL2, Bild per Fenster oder DRM, Ton per SDL/ALSA ---------------
+DEVSRC = device/main.cpp device/input.cpp device/drm.cpp
+SDL_CFLAGS ?= $(shell sdl2-config --cflags 2>/dev/null)
+SDL_LIBS   ?= $(shell sdl2-config --libs 2>/dev/null)
+device: build/synthcity-device
+build/synthcity-device: $(DEVSRC) device/*.h web/bridge.cpp $(HDRS)
+	@mkdir -p build
+	$(CXX) $(CXXFLAGS) -fno-exceptions -fno-rtti -Wno-missing-field-initializers -Wno-format-truncation $(SDL_CFLAGS) -o $@ $(DEVSRC) $(SDL_LIBS) $(LDLIBS)
+devtest: build/synthcity-device
+	@mkdir -p build/shots
+	SC_HOME=build/devhome ./build/synthcity-device --shots build/shots
+# Cross-Build fuer den R36S (aarch64, ohne libstdc++): siehe tools/r36s-build.sh
+r36s:
+	./tools/r36s-build.sh
+.PHONY: device devtest r36s
