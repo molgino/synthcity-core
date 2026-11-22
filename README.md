@@ -595,7 +595,7 @@ make device && make devtest          # Desktop-Build + Selbsttest mit Bildschirm
 
 Der Cross-Build linkt **ohne libstdc++** (nur SDL2, libm, libc) und läuft so unverändert auf
 ArkOS und auf dem Groovebox-OS. Der Selbsttest besteht auch als aarch64-Programm (unter
-qemu, mit einer SDL-Attrappe): 50 Prüfungen von Trig/Lock/Scene über Song, Speichern/Laden,
+qemu, mit einer SDL-Attrappe): 45 Prüfungen von Trig/Lock/Scene über Song, Speichern/Laden,
 Samples bis zum Export.
 
 * **Groovebox-OS:** `synthcity-os-update.tgz` wie ein SYNTH-CITY-Update aufspielen (Upload-Seite
