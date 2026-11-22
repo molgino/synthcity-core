@@ -221,7 +221,11 @@ Oberfläche — von Zeile FROM bis zum Ende von Zeile TO (samplegenau, auch wenn
 selbst folgt), dann TAIL Sekunden Ausklang für Hall und Delay; schneller als Echtzeit, in
 30-ms-Häppchen, damit die Seite bedienbar bleibt. **REC LIVE** nimmt auf, was gerade aus dem
 Klang-Kern kommt (Mutes, Morph, Pattern-Wechsel von Hand), bis man stoppt (höchstens 15 min).
-Beides wird als 24-Bit-Stereo-WAV gespeichert — über den Knopf SAVE WAV, denn iOS und die Claude-App lassen eine Download-Abfrage nur direkt aus einem Tipp zu (vorher ging sie nach dem Rechnen still verloren; dasselbe galt für SAVE FILE beim Projekt). Ohne Download-Weg nimmt die Seite das Teilen-Menü des Geräts. Tests: Länge des Exports auf ±2 Samples
+Beides wird als 24-Bit-Stereo-WAV gespeichert — über den Knopf SAVE WAV, denn iOS und die Claude-App lassen eine Download-Abfrage nur direkt aus einem Tipp zu (vorher ging sie nach dem Rechnen still verloren; dasselbe galt für SAVE FILE beim Projekt). Die Download-Funktion der Claude-Seite erlaubt nur bestimmte Endungen (zip, txt, pdf, Bilder …,
+**kein .wav**) — darum kommt die WAV unkomprimiert in einer **ZIP** (24 Bit bleiben 24 Bit;
+`tests/konto.js` prüft ZIP-Kopf, CRC-32 und die WAV darin gegen eine nachgebaute
+Download-Funktion mit derselben Liste). Wo das Gerät es zulässt, gibt es zusätzlich **SHARE WAV**
+über das Teilen-Menü, direkt als WAV. Tests: Länge des Exports auf ±2 Samples
 (wasm), WAV-Kopf und Download im Browser, Live-Aufnahme.
 
 ## FX-Spur: ein eigener Sequencer für die Effekte
