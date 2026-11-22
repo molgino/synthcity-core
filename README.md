@@ -588,9 +588,16 @@ Gerät und umgekehrt.
   `projects/`, A öffnet. SAVE AS und NEW PROJECT fragen den Namen über eine Bildschirmtastatur
   (A tippt, B löscht, X Leerzeichen, Y Groß/Klein, START fertig). Der Name steht oben links,
   ein `*` heißt: noch nicht gesichert.
-* **SYSTEM:** USB-Modus (HOST · PC mit MIDI + Netz · PC + Audio-Interface; X/Y wählt, A wendet an,
+* **SYSTEM:** AUDIO OUT (Ausgang wählen, „not open!“ heißt: kein Ton-Gerät), VOLUME (Codec-Lautstärke,
+  auch per Lautstärketasten; zeigt Lautsprecher/Kopfhörer — der Pfad wird wie im alten SYNTH CITY
+  beim Einstecken umgeschaltet), TEST TONE (2 s 440 Hz auf jeden Ausgang, auch USB), USB-Modus (HOST · PC mit MIDI + Netz · PC + Audio-Interface; X/Y wählt, A wendet an,
   bleibt über Neustarts), Web-Adresse, USB-Audio-Status und -Lautstärke, PC-Ton mischen, MIDI IN,
   CLOCK IN, CLOCK OUT, NOTES OUT, verbundene MIDI-Geräte, Panel-Versatz, Tasten lernen, Beenden.
+
+Beim ersten Start (und beim Umstieg von Version 1 der Einstellungsdatei) übernimmt das Gerät
+USB-Modus, Lautstärke und Ausgang aus der `settings.cfg` des alten SYNTH CITY. Ohne gespeicherten
+Modus bleibt der USB-Modus, wie er gerade läuft — früher schaltete der Start ihn auf HOST und damit
+USB-Audio ab.
 
 **MIDI** (USB-MIDI am PC, Geräte am Host-Port, Netzwerk-MIDI):
 * MIDI IN: Noten auf Kanal 1–8 spielen Spur 1–8, Program Change wählt das Pattern (vorgemerkt,

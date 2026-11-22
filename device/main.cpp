@@ -140,27 +140,59 @@ struct DevCfg {
     int clockIn = 0;        // externe MIDI-Clock fuehrt Tempo und Start/Stop
     int clockOut = 1;       // MIDI-Clock + Start/Stop senden
     int notesOut = 0;       // Trigs als Noten senden (Spur n = Kanal n)
+    int hwVol = 85;         // Codec-Lautstaerke (Groovebox-OS, Lautstaerketasten)
+    char audioDev[128] = "";// SDL-Ausgang, leer = Standard
+    bool haveUsbMode = false;   // usb_mode stand in einer Datei (sonst: was gerade aktiv ist, nicht umschalten)
 } gCfg;
 
 static void lockA();
 static bool gLearnReq = false;
+static int gJack = -1;                    // -1 unbekannt, 0 Lautsprecher, 1 Kopfhoerer
 static void unlockA();
 static void pathOf(char* out, size_t n, const char* rel) { snprintf(out, n, "%s%s", gBase, rel); }
 static void mkdirs() {
     const char* d[] = {"projects", "samples", "samples/export"};
     for (const char* s : d) { char p[700]; pathOf(p, sizeof p, s); mkdir(p, 0755); }
 }
-static void settingsLoad() {
-    char p[700]; pathOf(p, sizeof p, "synthcity.cfg");
+// Einstellungen des alten SYNTH CITY (gleicher Ordner, settings.cfg): USB-Modus, Lautstaerke, Ausgang
+static void importOldSettings(bool all) {
+    char p[700]; pathOf(p, sizeof p, "settings.cfg");
     FILE* f = fopen(p, "r");
     if (!f) return;
     char line[256];
     while (fgets(line, sizeof line, f)) {
+        line[strcspn(line, "\r\n")] = 0;
+        char* sp = strchr(line, ' ');
+        if (!sp || line[0] == '#') continue;
+        *sp = 0;
+        const char* v = sp + 1; int n = atoi(v);
+        if (!strcmp(line, "usb_mode")) { gCfg.usbMode = n < 0 ? 0 : n > 2 ? 2 : n; gCfg.haveUsbMode = true; }
+        else if (!strcmp(line, "hw_volume")) gCfg.hwVol = n < 0 ? 0 : n > 100 ? 100 : n;
+        else if (!strcmp(line, "audio_device")) snprintf(gCfg.audioDev, sizeof gCfg.audioDev, "%s", v);
+        else if (!all) continue;
+        else if (!strcmp(line, "usb_volume")) gCfg.usbVol = n < 0 ? 0 : n > 100 ? 100 : n;
+        else if (!strcmp(line, "pc_in")) gCfg.pcIn = n != 0;
+        else if (!strcmp(line, "midi_in")) gCfg.midiIn = n != 0;
+        else if (!strcmp(line, "display_offset")) gDispOff = n;
+    }
+    fclose(f);
+    printf("Einstellungen aus SYNTH CITY uebernommen (usb_mode %d, hw_volume %d, Ausgang '%s')\n", gCfg.usbMode, gCfg.hwVol, gCfg.audioDev);
+}
+static void settingsLoad() {
+    char p[700]; pathOf(p, sizeof p, "synthcity.cfg");
+    FILE* f = fopen(p, "r");
+    if (!f) { importOldSettings(true); return; }   // erster Start
+    int ver = 1;
+    char line[256];
+    while (fgets(line, sizeof line, f)) {
         char k[64], v[128];
         if (sscanf(line, "%63s %127[^\n]", k, v) != 2) continue;
-        if (!strcmp(k, "project")) snprintf(gPrjName, sizeof gPrjName, "%s", v);
+        if (!strcmp(k, "cfg_version")) ver = atoi(v);
+        else if (!strcmp(k, "project")) snprintf(gPrjName, sizeof gPrjName, "%s", v);
         else if (!strcmp(k, "display_offset")) gDispOff = atoi(v);
-        else if (!strcmp(k, "usb_mode")) gCfg.usbMode = atoi(v) < 0 ? 0 : atoi(v) > 2 ? 2 : atoi(v);
+        else if (!strcmp(k, "usb_mode")) { gCfg.usbMode = atoi(v) < 0 ? 0 : atoi(v) > 2 ? 2 : atoi(v); gCfg.haveUsbMode = true; }
+        else if (!strcmp(k, "hw_volume")) gCfg.hwVol = atoi(v) < 0 ? 0 : atoi(v) > 100 ? 100 : atoi(v);
+        else if (!strcmp(k, "audio_device")) snprintf(gCfg.audioDev, sizeof gCfg.audioDev, "%s", strcmp(v, "-") ? v : "");
         else if (!strcmp(k, "usb_volume")) gCfg.usbVol = atoi(v);
         else if (!strcmp(k, "pc_in")) gCfg.pcIn = atoi(v) != 0;
         else if (!strcmp(k, "midi_in")) gCfg.midiIn = atoi(v) != 0;
@@ -169,13 +201,17 @@ static void settingsLoad() {
         else if (!strcmp(k, "notes_out")) gCfg.notesOut = atoi(v) != 0;
     }
     fclose(f);
+    // Version 1 schrieb usb_mode 0 auch, wenn nie jemand gewaehlt hatte - das schaltete den PC-Modus
+    // des alten SYNTH CITY ab. Darum: alten Wert verwerfen und neu uebernehmen.
+    if (ver < 2) { gCfg.haveUsbMode = false; gCfg.usbMode = 0; importOldSettings(false); }
 }
 static void settingsSave() {
     char p[700]; pathOf(p, sizeof p, "synthcity.cfg");
     FILE* f = fopen(p, "w");
     if (!f) return;
-    fprintf(f, "project %s\ndisplay_offset %d\nusb_mode %d\nusb_volume %d\npc_in %d\nmidi_in %d\nclock_in %d\nclock_out %d\nnotes_out %d\n",
-            gPrjName, gDispOff, gCfg.usbMode, gCfg.usbVol, gCfg.pcIn, gCfg.midiIn, gCfg.clockIn, gCfg.clockOut, gCfg.notesOut);
+    fprintf(f, "cfg_version 2\nproject %s\ndisplay_offset %d\nusb_volume %d\npc_in %d\nmidi_in %d\nclock_in %d\nclock_out %d\nnotes_out %d\nhw_volume %d\naudio_device %s\n",
+            gPrjName, gDispOff, gCfg.usbVol, gCfg.pcIn, gCfg.midiIn, gCfg.clockIn, gCfg.clockOut, gCfg.notesOut, gCfg.hwVol, gCfg.audioDev[0] ? gCfg.audioDev : "-");
+    if (gCfg.haveUsbMode) fprintf(f, "usb_mode %d\n", gCfg.usbMode);
     fclose(f);
 }
 
@@ -450,6 +486,8 @@ static void midiBlock(int frames) {
     gWasRunning = run;
 }
 
+static volatile int gToneLeft = 0;        // Testton: verbleibende Frames
+static double gTonePh = 0;
 static void audioCb(void*, Uint8* stream, int len) {
     float* out = (float*)stream;
     int frames = len / (int)(2 * sizeof(float));
@@ -460,6 +498,14 @@ static void audioCb(void*, Uint8* stream, int len) {
     scRender(out, frames);
     flushOffs(gClock + frames);
     gClock += frames;
+    if (gToneLeft > 0) {   // 440 Hz, -12 dB - zeigt, ob der Weg zum Ohr ueberhaupt offen ist
+        for (int i = 0; i < frames; i++) {
+            float v = 0.25f * sinf((float)gTonePh); gTonePh += 2.0 * M_PI * 440.0 / gRate;
+            if (gTonePh > 2.0 * M_PI) gTonePh -= 2.0 * M_PI;
+            out[i * 2] += v; out[i * 2 + 1] += v;
+        }
+        gToneLeft -= frames;
+    }
     usbAudioPush(out, frames);                                 // parallel an den PC (falls aktiv)
     pcInMix(out, frames, gCfg.pcIn ? 1.0f : 0.0f);             // PC-Ton dazu (nach dem Senden: kein Echo)
     double used = (double)(SDL_GetPerformanceCounter() - t0) / SDL_GetPerformanceFrequency();
@@ -469,16 +515,49 @@ static void audioCb(void*, Uint8* stream, int len) {
     for (int i = 0; i < frames * 2; i++) { float a = fabsf(out[i]); if (a > pk) pk = a; }
     if (pk > gPeak) gPeak = pk;
 }
+// Ausgaenge, die SDL kennt - ohne die USB-Gadget-Karte (die bekommt den Ton ueber usbaudio.cpp)
+static bool isUsbGadgetDev(const char* n) { return strcasestr(n, "uac") || strcasestr(n, "gadget"); }
+static int  gNDevs = 0;
+static char gDevs[16][128];
+static void listAudioDevs() {
+    gNDevs = 0;
+    int n = SDL_GetNumAudioDevices(0);
+    for (int i = 0; i < n && gNDevs < 16; i++) {
+        const char* nm = SDL_GetAudioDeviceName(i, 0);
+        if (nm && !isUsbGadgetDev(nm)) snprintf(gDevs[gNDevs++], 128, "%s", nm);
+    }
+}
+static char gAudioName[128] = "";
+static int  gAudioBuf = 256;
 static bool openAudio(int bufFrames) {
+    gAudioBuf = bufFrames;
     SDL_AudioSpec want, have;
     SDL_zero(want);
     want.freq = 48000; want.format = AUDIO_F32SYS; want.channels = 2;
     want.samples = (Uint16)bufFrames; want.callback = audioCb;
-    gAudio = SDL_OpenAudioDevice(nullptr, 0, &want, &have, SDL_AUDIO_ALLOW_FREQUENCY_CHANGE);
-    if (!gAudio) { printf("Audio: %s\n", SDL_GetError()); return false; }
+    listAudioDevs();
+    for (int i = 0; i < gNDevs; i++) printf("Audio-Ausgang #%d: %s\n", i + 1, gDevs[i]);
+    const char* name = gCfg.audioDev[0] && !isUsbGadgetDev(gCfg.audioDev) ? gCfg.audioDev : nullptr;
+    gAudio = SDL_OpenAudioDevice(name, 0, &want, &have, SDL_AUDIO_ALLOW_FREQUENCY_CHANGE);
+    if (!gAudio && name) {
+        printf("Audio: '%s' nicht verfuegbar (%s) - nehme den Standardausgang\n", name, SDL_GetError());
+        name = nullptr;
+        gAudio = SDL_OpenAudioDevice(nullptr, 0, &want, &have, SDL_AUDIO_ALLOW_FREQUENCY_CHANGE);
+    }
+    if (!gAudio) { printf("Audio: %s\n", SDL_GetError()); snprintf(gAudioName, sizeof gAudioName, "NONE: %s", SDL_GetError()); return false; }
+    snprintf(gAudioName, sizeof gAudioName, "%s", name ? name : "default");
     gRate = have.freq;
-    printf("Audio: %d Hz, Puffer %d Frames (%.1f ms)\n", have.freq, have.samples, have.samples * 1000.0 / have.freq);
+    printf("Audio: %s, %d Hz, Puffer %d Frames (%.1f ms)\n", gAudioName, have.freq, have.samples, have.samples * 1000.0 / have.freq);
     return true;
+}
+static void reopenAudio() {   // anderer Ausgang gewaehlt
+    if (gAudio) { SDL_CloseAudioDevice(gAudio); gAudio = 0; }
+    int was = gRate;
+    if (openAudio(gAudioBuf)) {
+        if (gRate != was) scInit((float)gRate);
+        usbAudioSetEngineRate(gRate);
+        SDL_PauseAudioDevice(gAudio, 0);
+    }
 }
 // Sperre um alles, was das Modell aendert. Ohne Ton (Tests, Bilder) geht es ohne.
 static void lockA()   { if (gAudio) SDL_LockAudioDevice(gAudio); }
@@ -1092,15 +1171,23 @@ static void deviceAddr(char* out, int n) {
 }
 
 // --- SYSTEM-Ansicht ------------------------------------------------------------------------------
-enum { SY_USB, SY_ADDR, SY_USBAUD, SY_USBVOL, SY_PCIN, SY_MIDIIN, SY_CLKIN, SY_CLKOUT, SY_NOTESOUT, SY_MIDIDEV,
-       SY_DISP, SY_LEARN, SY_QUIT, SY_N };
-static const char* SYNAME[SY_N] = {"USB MODE", "WEB ADDRESS", "USB AUDIO", "USB VOLUME", "PC AUDIO IN", "MIDI IN",
-    "CLOCK IN", "CLOCK OUT", "NOTES OUT", "MIDI DEVICES", "DISPLAY SHIFT", "LEARN BUTTONS", "QUIT"};
-static bool syDivider(int r) { return r == SY_MIDIIN || r == SY_DISP; }
+enum { SY_OUT, SY_VOL, SY_TONE, SY_USB, SY_ADDR, SY_USBAUD, SY_USBVOL, SY_PCIN, SY_MIDIIN, SY_CLKIN, SY_CLKOUT,
+       SY_NOTESOUT, SY_MIDIDEV, SY_DISP, SY_LEARN, SY_QUIT, SY_N };
+static const char* SYNAME[SY_N] = {"AUDIO OUT", "VOLUME", "TEST TONE", "USB MODE", "WEB ADDRESS", "USB AUDIO", "USB VOLUME",
+    "PC AUDIO IN", "MIDI IN", "CLOCK IN", "CLOCK OUT", "NOTES OUT", "MIDI DEVICES", "DISPLAY SHIFT", "LEARN BUTTONS", "QUIT"};
+static bool syDivider(int r) { return r == SY_USB || r == SY_MIDIIN || r == SY_DISP; }
+static int gOutWant = -2;                   // AUDIO OUT: -2 = nichts gewaehlt, -1 = Standard, sonst Index in gDevs
 static int gUsbWant = -1;                   // in der Liste gewaehlt, noch nicht angewendet
 static void syEdit(int dir, bool coarse) {
     switch (U.sysRow) {
     case SY_USB: if (gUsbWant < 0) gUsbWant = gCfg.usbMode; gUsbWant = clampi(gUsbWant + dir, 0, 2); return;
+    case SY_OUT: {
+        listAudioDevs();
+        if (gOutWant == -2) { gOutWant = -1; for (int i = 0; i < gNDevs; i++) if (!strcmp(gDevs[i], gCfg.audioDev)) gOutWant = i; }
+        gOutWant = clampi(gOutWant + dir, -1, gNDevs - 1);
+        return;
+    }
+    case SY_VOL: gCfg.hwVol = clampi(gCfg.hwVol + dir * (coarse ? 10 : 5), 0, 100); if (hwVolumeSet(gCfg.hwVol) < 0) toast("No codec volume here"); break;
     case SY_USBVOL: gCfg.usbVol = clampi(gCfg.usbVol + dir * (coarse ? 10 : 5), 0, 100); usbAudioSetGain(gCfg.usbVol / 100.f); break;
     case SY_PCIN: gCfg.pcIn = dir > 0; break;
     case SY_MIDIIN: gCfg.midiIn = dir > 0; break;
@@ -1117,10 +1204,20 @@ static void syAction() {
     case SY_USB:
         if (!haveUsbScript()) { toast("USB modes need Groovebox-OS"); break; }
         if (gUsbWant >= 0) gCfg.usbMode = gUsbWant;
+        gCfg.haveUsbMode = true;
         gUsbWant = -1;
         settingsSave();
         applyUsbMode();
         break;
+    case SY_OUT:
+        if (gOutWant != -2) snprintf(gCfg.audioDev, sizeof gCfg.audioDev, "%s", gOutWant >= 0 && gOutWant < gNDevs ? gDevs[gOutWant] : "");
+        gOutWant = -2;
+        settingsSave();
+        reopenAudio();
+        toast("Audio out: %s", gAudioName);
+        gToneLeft = gRate;
+        break;
+    case SY_TONE: gToneLeft = gRate * 2; toast("Test tone 2 s (internal and USB)"); break;
     case SY_LEARN: gLearnReq = true; break;
     case SY_QUIT: U.quit = true; break;
     case SY_DISP: if (!drmActive()) toast("Only on the built-in display (DRM)"); break;
@@ -1588,6 +1685,12 @@ static void drawSystem() {
         uint32_t c = s ? C_TXT : C_DIM;
         static const char* UM[3] = {"HOST (devices on R36S)", "PC (MIDI + network)", "PC + AUDIO INTERFACE"};
         switch (r) {
+        case SY_OUT:
+            if (gOutWant != -2) { snprintf(b, sizeof b, "%s  A = use", gOutWant >= 0 && gOutWant < gNDevs ? gDevs[gOutWant] : "default"); c = C_LOCK; }
+            else snprintf(b, sizeof b, "%s%s", gAudioName[0] ? gAudioName : "-", gAudio ? "" : "  (not open!)");
+            break;
+        case SY_VOL: snprintf(b, sizeof b, "%d %%%s", gCfg.hwVol, gJack == 1 ? "  (headphones)" : gJack == 0 ? "  (speaker)" : ""); break;
+        case SY_TONE: snprintf(b, sizeof b, "%s", gToneLeft > 0 ? "playing ..." : "A = 2 s 440 Hz on every output"); break;
         case SY_USB:
             if (!os) snprintf(b, sizeof b, "Groovebox-OS only");
             else if (gUsbJob) snprintf(b, sizeof b, "switching ...");
@@ -1778,7 +1881,7 @@ static void drawAll() {
 // ============================================================================================
 // Power-Taste (Groovebox-OS): kurz = Bild aus/an, lang = sichern und ausschalten
 // ============================================================================================
-static int gPwrFd = -2;
+static int gPwrFd = -2, gVolFd = -1;
 static uint32_t gPwrDown = 0;
 static bool gScreenOff = false;
 static void setBacklight(bool on) {
@@ -1797,18 +1900,36 @@ static void pollPower() {
     if (gPwrFd == -2) {
         gPwrFd = -1;
         struct stat st;
-        if (stat("/etc/groovebox-os", &st) != 0) return;   // ArkOS regelt Power selbst
-        for (int i = 0; i < 16 && gPwrFd < 0; i++) {
+        if (stat("/etc/groovebox-os", &st) != 0) return;   // ArkOS regelt Power und Lautstaerke selbst
+        gPwrFd = -3;
+        for (int i = 0; i < 16; i++) {
             char p[32]; snprintf(p, sizeof p, "/dev/input/event%d", i);
             int fd = open(p, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
             if (fd < 0) continue;
             char nm[64] = "";
             ioctl(fd, EVIOCGNAME(sizeof nm), nm);
-            if (strstr(nm, "pwrkey")) { gPwrFd = fd; printf("Power-Taste: %s\n", nm); } else close(fd);
+            if (strstr(nm, "pwrkey") && gPwrFd < 0 && gPwrFd != -2) { gPwrFd = fd; printf("Power-Taste: %s\n", nm); }
+            else if (strstr(nm, "vol") && gVolFd < 0) { gVolFd = fd; printf("Lautstaerketasten: %s\n", nm); }
+            else close(fd);
+        }
+        if (gPwrFd < 0) gPwrFd = -1;
+    }
+    struct input_event ev;
+    if (gVolFd >= 0) {   // Lautstaerketasten: Codec direkt (wie im alten SYNTH CITY)
+        int step = 0;
+        while (read(gVolFd, &ev, sizeof ev) == (ssize_t)sizeof ev)
+            if (ev.type == EV_KEY && ev.value != 0) {
+                if (ev.code == KEY_VOLUMEUP) step += 5;
+                if (ev.code == KEY_VOLUMEDOWN) step -= 5;
+            }
+        if (step) {
+            gCfg.hwVol = clampi(gCfg.hwVol + step, 0, 100);
+            hwVolumeSet(gCfg.hwVol);
+            toast("Volume %d %%", gCfg.hwVol);
+            settingsSave();
         }
     }
     if (gPwrFd < 0) return;
-    struct input_event ev;
     while (read(gPwrFd, &ev, sizeof ev) == (ssize_t)sizeof ev) {
         if (ev.type != EV_KEY || ev.code != KEY_POWER) continue;
         if (ev.value == 1) gPwrDown = U.now ? U.now : 1;
@@ -2279,7 +2400,10 @@ int main(int argc, char** argv) {
     usbAudioSetGain(gCfg.usbVol / 100.f);
     webStart(gBase, 80);
     gUsbNow = detectUsbMode();
-    if (haveUsbScript() && gCfg.usbMode != gUsbNow) applyUsbMode();   // PC-Modus ueber Neustarts merken
+    // Nur umschalten, wenn ein Modus gespeichert ist - sonst bleibt, was laeuft (z. B. vom alten SYNTH CITY)
+    if (!gCfg.haveUsbMode) gCfg.usbMode = gUsbNow;
+    else if (haveUsbScript() && gCfg.usbMode != gUsbNow) applyUsbMode();
+    if (isGrooveboxOS()) { hwVolumeSet(gCfg.hwVol); gJack = audioJackPoll(); }
 
     uint32_t lastSave = 0, usbAt = 0, smpChangedAt = 0, updAt = 0;
     int smpSeq = webSampleSeq(), prjSeqSeen = webProjectSeq(), evSeen = 0;
@@ -2310,6 +2434,13 @@ int main(int argc, char** argv) {
             gUsbNow = detectUsbMode();
             if (gUsbNow != gCfg.usbMode) toast("USB mode failed - see pc-modus.log");
             else toast(gUsbNow ? "PC mode on - browser: http://192.168.77.1" : "Host mode on");
+        }
+        static uint32_t jackAt = 0;
+        if (isGrooveboxOS() && U.now - jackAt > 500) {   // Kopfhoerer rein/raus: Codec-Pfad umschalten
+            jackAt = U.now;
+            int j = audioJackPoll();
+            if (j != gJack && gJack >= 0 && j >= 0) toast(j ? "Headphones" : "Speaker");
+            gJack = j;
         }
         if (U.now - usbAt > 1500 && !gUsbJob) {
             usbAt = U.now;
