@@ -483,6 +483,7 @@ textarea {
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       <button id="songExport">EXPORT WAV</button>
       <button id="songLive">REC LIVE</button>
+      <button id="songSave" hidden>SAVE WAV</button>
       <span class="hint" id="recState" style="align-self:center"></span>
     </div>
   </div>
@@ -674,6 +675,7 @@ async function boot() {
     }
     buildRail(); buildPats(); buildPads(); buildParams(); tick();
     prjRestore();
+    dlHolen();
   } catch (e) {
     document.getElementById('app').innerHTML =
       '<div class="err">The engine failed to load: ' + e.message + '</div>';
@@ -2046,34 +2048,57 @@ function songEditPaint() {
 // EXPORT WAV rechnet den Song offline im Kern der Oberflaeche (genau, schneller als Echtzeit);
 // REC LIVE nimmt auf, was gerade aus dem Klang-Kern kommt - mit allem, was man dabei tut.
 const rec = {von: 0, bis: -1, tail: 4, live: null, laeuft: false};
+// WAV in 24 Bit (PCM, stereo). Die Stuecke kommen schon als 24-Bit-Bytes.
 function wavBlob(chunks, frames, sr) {
-  const buf = new ArrayBuffer(44 + frames * 4), d = new DataView(buf);
+  const head = new ArrayBuffer(44), d = new DataView(head);
   const txt = (o, t) => { for (let i = 0; i < t.length; i++) d.setUint8(o + i, t.charCodeAt(i)); };
-  txt(0, 'RIFF'); d.setUint32(4, 36 + frames * 4, true); txt(8, 'WAVE'); txt(12, 'fmt ');
+  txt(0, 'RIFF'); d.setUint32(4, 36 + frames * 6, true); txt(8, 'WAVE'); txt(12, 'fmt ');
   d.setUint32(16, 16, true); d.setUint16(20, 1, true); d.setUint16(22, 2, true); d.setUint32(24, sr, true);
-  d.setUint32(28, sr * 4, true); d.setUint16(32, 4, true); d.setUint16(34, 16, true); txt(36, 'data');
-  d.setUint32(40, frames * 4, true);
-  let o = 44;
-  for (const c of chunks) { new Int16Array(buf, o, c.length).set(c); o += c.length * 2; }
-  return new Blob([buf], {type: 'audio/wav'});
+  d.setUint32(28, sr * 6, true); d.setUint16(32, 6, true); d.setUint16(34, 24, true); txt(36, 'data');
+  d.setUint32(40, frames * 6, true);
+  return new Blob([head, ...chunks], {type: 'audio/wav'});
 }
-const zuInt16 = (L, R, n) => {             // stereo verschraenkt, mit weicher Grenze
-  const o = new Int16Array(n * 2);
-  for (let i = 0; i < n; i++) {
-    const l = Math.max(-1, Math.min(1, L[i])), r = Math.max(-1, Math.min(1, R[i]));
-    o[i * 2] = l * 32767; o[i * 2 + 1] = r * 32767;
+// Fliesskomma -> 24-Bit-Bytes (stereo verschraenkt), mit harter Grenze bei +-1
+function zu24(get, n) {
+  const o = new Uint8Array(n * 6);
+  for (let i = 0, k = 0; i < n * 2; i++, k += 3) {
+    let v = get(i); v = v > 1 ? 1 : (v < -1 ? -1 : v);
+    const x = Math.round(v * 8388607);
+    o[k] = x & 255; o[k + 1] = (x >> 8) & 255; o[k + 2] = (x >> 16) & 255;
   }
   return o;
-};
-async function blobSpeichern(name, blob) {
+}
+// Speichern muss im Tipp selbst beginnen: iOS und die Claude-App lassen eine Download-Abfrage
+// nur aus einer Geste zu. Darum wird die Faehigkeit beim Start geholt (nicht erst im Tipp).
+let dlCap = null, dlGeholt = false;
+async function dlHolen() {
+  if (dlGeholt) return dlCap;
+  try { dlCap = window.claude && window.claude.use ? await window.claude.use('downloads') : null; } catch (e) { dlCap = null; }
+  dlGeholt = true;
+  return dlCap;
+}
+function speichern(name, blob, melde) {
+  melde = melde || (() => {});
+  if (dlCap) {
+    dlCap.save({filename: name, data: blob})
+      .then(() => melde('Saved ' + name))
+      .catch(e => melde(e && (e.code === 'declined' || e.code === 'dismissed') ? 'Not saved (declined).'
+                        : 'Save failed: ' + ((e && (e.code || e.message)) || e)));
+    return;
+  }
+  // Kein Download-Weg der Seite: Teilen-Menue des Geraets (iPhone: "In Dateien sichern")
   try {
-    const dl = window.claude && window.claude.use ? await window.claude.use('downloads') : null;
-    if (dl) { await dl.save({filename: name, data: blob}); return true; }
-  } catch (e) { if (e && (e.code === 'dismissed' || e.code === 'declined')) return false; }
+    const f = new File([blob], name, {type: blob.type || 'application/octet-stream'});
+    if (navigator.canShare && navigator.canShare({files: [f]})) {
+      navigator.share({files: [f]}).then(() => melde('Shared ' + name))
+        .catch(e => melde(e && e.name === 'AbortError' ? 'Not saved.' : 'Share failed: ' + (e && e.message || e)));
+      return;
+    }
+  } catch (e) {}
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob); a.download = name;
   document.body.appendChild(a); a.click(); a.remove();
-  return true;
+  melde('Download started: ' + name + ' (if nothing appears, this view cannot save files)');
 }
 const zeitName = () => new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
 function recPaint() {
@@ -2102,21 +2127,19 @@ el('songExport').onclick = () => {
     let k = 1;
     while (performance.now() - t0 < 30 && (k = X.scExportRender(buf, 8192)) > 0) {   // je 30 ms, die Seite bleibt bedienbar
       const f = new Float32Array(X.memory.buffer, buf, k * 2);
-      const o = new Int16Array(k * 2);
-      for (let i = 0; i < k * 2; i++) { const v = f[i] > 1 ? 1 : (f[i] < -1 ? -1 : f[i]); o[i] = v * 32767; }
-      chunks.push(o); frames += k;
+      chunks.push(zu24(i => f[i], k)); frames += k;
     }
     el('recState').textContent = 'rendering \u2026 ' + (frames / 48000).toFixed(1) + ' s';
     if (k > 0) { setTimeout(schritt, 0); return; }
     X.scExportEnd();
-    rec.laeuft = false; recPaint();
-    const name = 'synthcity-song-' + zeitName() + '.wav';
-    el('recState').textContent = 'Song: ' + (frames / 48000).toFixed(1) + ' s \u00b7 saving \u2026';
-    blobSpeichern(name, wavBlob(chunks, frames, 48000)).then(ok => {
-      el('recState').textContent = ok ? 'Saved ' + name : 'Not saved.';
-    });
+    rec.laeuft = false;
+    bereitZumSpeichern('synthcity-song-' + zeitName() + '.wav', wavBlob(chunks, frames, 48000), frames / 48000);
   };
   schritt();
+};
+el('songSave').onclick = () => {
+  if (!rec.fertig) return;
+  speichern(rec.fertig.name, rec.fertig.blob, t => { el('recState').textContent = t; });
 };
 el('songLive').onclick = async () => {
   if (!rec.live) {
@@ -2130,17 +2153,22 @@ el('songLive').onclick = async () => {
 function liveNachricht(m) {
   if (!rec.live) return;
   if (m.type === 'liveChunk') {
-    rec.live.chunks.push(zuInt16(m.L, m.R, m.L.length)); rec.live.frames += m.L.length;
+    rec.live.chunks.push(zu24(i => (i & 1 ? m.R : m.L)[i >> 1], m.L.length)); rec.live.frames += m.L.length;
     el('recState').textContent = 'recording \u2026 ' + (rec.live.frames / 48000).toFixed(0) + ' s';
     if (rec.live.frames > 48000 * 900) node.port.postMessage({fn: 'liveRec', on: false});   // hoechstens 15 min
   } else if (m.type === 'liveEnd') {
     const l = rec.live; rec.live = null;
     el('songLive').classList.remove('on'); el('songLive').textContent = 'REC LIVE';
-    const name = 'synthcity-live-' + zeitName() + '.wav';
-    blobSpeichern(name, wavBlob(l.chunks, l.frames, sampleRateNow())).then(ok => {
-      el('recState').textContent = ok ? 'Saved ' + name + ' (' + (l.frames / sampleRateNow()).toFixed(1) + ' s)' : 'Not saved.';
-    });
+    bereitZumSpeichern('synthcity-live-' + zeitName() + '.wav', wavBlob(l.chunks, l.frames, sampleRateNow()), l.frames / sampleRateNow());
   }
+}
+// Fertig gerechnet/aufgenommen: der Knopf SAVE WAV speichert - im Tipp, wie iOS es verlangt.
+function bereitZumSpeichern(name, blob, sek) {
+  rec.fertig = {name, blob};
+  el('songSave').hidden = false;
+  el('songSave').textContent = 'SAVE WAV (' + sek.toFixed(1) + ' s)';
+  el('recState').textContent = 'Ready \u00b7 24-bit WAV \u00b7 tap SAVE WAV';
+  recPaint();
 }
 const sampleRateNow = () => (ctx ? ctx.sampleRate : 48000);
 el('songBtn').onclick = () => { songPaint(); recPaint(); el('song').showModal(); };
@@ -2383,16 +2411,8 @@ document.addEventListener('visibilitychange', () => { if (document.hidden) prjSa
 window.addEventListener('pagehide', () => prjSave(false));
 el('docSave').onclick = () => { prjSave(true); el('docSave').textContent = 'SAVED'; setTimeout(() => el('docSave').textContent = 'SAVE NOW', 1500); };
 // Als Datei: der sicherste Weg, ein Projekt aufzuheben oder auf ein anderes Geraet zu bringen.
-el('docFile').onclick = async () => {
-  const text = str(X.scSave());
-  const name = 'synthcity-' + new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-') + '.txt';
-  try {
-    const dl = window.claude && window.claude.use ? await window.claude.use('downloads') : null;
-    if (dl) { await dl.save({filename: name, data: new Blob([text], {type: 'text/plain'})}); return; }
-  } catch (e) { if (e && (e.code === 'dismissed' || e.code === 'declined')) return; }
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([text], {type: 'text/plain'}));
-  a.download = name; document.body.appendChild(a); a.click(); a.remove();
+el('docFile').onclick = () => {
+  speichern('synthcity-' + zeitName() + '.txt', new Blob([str(X.scSave())], {type: 'text/plain'}), t => saveInfo(t));
 };
 el('docOpen').onclick = () => el('docOpenIn').click();
 el('docOpenIn').onchange = async () => {
