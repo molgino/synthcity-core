@@ -562,6 +562,10 @@ Gerät und umgekehrt.
 | `device/drm.cpp` | Bild direkt per DRM (Groovebox-OS), **ohne libdrm**: nur Kernel-ioctls, mit dem Panel-Versatz aus SYNTH CITY |
 | `device/input.cpp` | Gamepad, übernommen aus SYNTH CITY (gleiche `input.cfg`, Lernmodus) |
 | `device/font.h` | Bitmap-Schrift 8×16 aus SYNTH CITY |
+| `device/midi.cpp` | MIDI über ALSA (Sequencer, sonst rawmidi) plus Netzwerk-MIDI, aus SYNTH CITY |
+| `device/usbaudio.cpp` | R36S als USB-Audio-Interface am PC (UAC2-Gadget, Taktausgleich), aus SYNTH CITY |
+| `device/web.cpp`, `webpage.cpp` | Webserver: Samples/Projekte hoch- und herunterladen, App-Update — neu, schlank |
+| `device/dhcpd.cpp` | Mini-DHCP für den PC-Modus (`groovebox --dhcpd usb0`, startet `pc-modus.sh`) |
 
 **Bedienung** (SELECT halten zeigt sie auf dem Gerät):
 
@@ -578,6 +582,31 @@ Gerät und umgekehrt.
 | SELECT | Menü: kopieren/einfügen (Pattern, Spur, Step), Sample laden, Scene A/B bearbeiten |
 | rechter Stick ◀▶ | Scene-Crossfader A ↔ B |
 
+**Ansichten** (L2/R2): TRACK, SONG, PROJ, SYSTEM.
+
+* **PROJ:** Projekte haben **freie Namen**. OPEN PROJECT blättert mit X/Y durch alle Dateien in
+  `projects/`, A öffnet. SAVE AS und NEW PROJECT fragen den Namen über eine Bildschirmtastatur
+  (A tippt, B löscht, X Leerzeichen, Y Groß/Klein, START fertig). Der Name steht oben links,
+  ein `*` heißt: noch nicht gesichert.
+* **SYSTEM:** USB-Modus (HOST · PC mit MIDI + Netz · PC + Audio-Interface; X/Y wählt, A wendet an,
+  bleibt über Neustarts), Web-Adresse, USB-Audio-Status und -Lautstärke, PC-Ton mischen, MIDI IN,
+  CLOCK IN, CLOCK OUT, NOTES OUT, verbundene MIDI-Geräte, Panel-Versatz, Tasten lernen, Beenden.
+
+**MIDI** (USB-MIDI am PC, Geräte am Host-Port, Netzwerk-MIDI):
+* MIDI IN: Noten auf Kanal 1–8 spielen Spur 1–8, Program Change wählt das Pattern (vorgemerkt,
+  wenn es läuft). Ein grüner Punkt in der Kopfzeile blinkt bei jeder eingehenden Nachricht.
+* CLOCK IN: externe Clock führt das Tempo (orange in der Kopfzeile) und Start/Continue/Stop; nach
+  2 s ohne Clock gilt wieder das eigene Tempo. Dafür hat die Engine `extBpm` bekommen.
+* CLOCK OUT: 24 ppq plus Start/Stop, zeitgestempelt mit einem Puffer Vorlauf.
+* NOTES OUT: jeder Trig (auch Akkordnoten) als Note auf Kanal = Spur; das Note-Off folgt nach der
+  Notenlänge. Dafür gibt es den Haken `Engine::noteOut`; Browser und Plugin lassen ihn leer.
+
+**Web-Upload:** Browser auf die Adresse aus SYSTEM (PC-Modus: `http://192.168.77.1`, sonst die
+WLAN-IP, Port 80 bzw. 8080). Samples (auch in Ordner, per Ziehen), Projekte (`.sc`, auch die
+`.txt`-Sicherung der Handy-App), Herunterladen, Löschen, Song-Exporte unter `export/`, im
+Groovebox-OS das App-Update (`.tgz`). Hochgeladene Samples, die ein Projekt vermisst, lädt das
+Gerät sofort nach. Pfade mit `..`, versteckte Dateien und fremde Endungen lehnt der Server ab.
+
 Dateien liegen neben dem Programm: `projects/<name>.sc` (das Dokument als Text, wie die
 Web-Sicherung), `samples/` (WAV 8–32 Bit, mono/stereo, mit Unterordnern). Ein Projekt merkt
 sich seine Samples per Name; beim Laden sucht jeder Slot seine Datei selbst. Gesichert wird
@@ -593,10 +622,11 @@ make device && make devtest          # Desktop-Build + Selbsttest mit Bildschirm
 ./tools/r36s-package.sh              # dist/synthcity-os-update.tgz + dist/synthcity-arkos.zip
 ```
 
-Der Cross-Build linkt **ohne libstdc++** (nur SDL2, libm, libc) und läuft so unverändert auf
+Der Cross-Build linkt **ohne libstdc++** (nur SDL2, ALSA, libm, libc) und läuft so unverändert auf
 ArkOS und auf dem Groovebox-OS. Der Selbsttest besteht auch als aarch64-Programm (unter
-qemu, mit einer SDL-Attrappe): 45 Prüfungen von Trig/Lock/Scene über Song, Speichern/Laden,
-Samples bis zum Export.
+qemu, mit einer SDL-Attrappe): 67 Prüfungen von Trig/Lock/Scene über Song, Speichern/Laden,
+Samples und Export bis zu Bildschirmtastatur, MIDI-Clock/Program Change/Noten und dem
+Webserver über echtes HTTP.
 
 * **Groovebox-OS:** `synthcity-os-update.tgz` wie ein SYNTH-CITY-Update aufspielen (Upload-Seite
   oder Laufwerk `GROOVEBOX/update/`). Es ersetzt das Programm; die alte Version bleibt als
@@ -605,11 +635,11 @@ Samples bis zum Export.
   „SYNTH CITY CORE“. Beenden: PROJECT → QUIT oder SELECT + START 2 s.
 
 `--bench` misst, wie schnell der Kern auf dem Gerät rechnet; die Kopfzeile zeigt die
-Audio-Last laufend (CPU %). Unter PROJECT: DISPLAY SHIFT (Panel-Versatz), LEARN BUTTONS.
+Audio-Last laufend (CPU %).
 
 ## Als Nächstes
 
-12. Gerät: echter Eingang (Sampling), MIDI, Web-Upload auf dem Gerät.
+12. Gerät: Sampling vom Eingang/PC, MIDI-CC auf Regler, Mehrkanal-USB-Audio.
 13. Modulation: LFOs und Hüllkurven als Ziele aus der Parametertabelle.
 
 Offen aus Meilenstein 2: das DSP ist **neu geschrieben**, nicht aus SYNTH CITY portiert — ein

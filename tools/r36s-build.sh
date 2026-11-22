@@ -15,6 +15,8 @@ PKGS=(
   pool/main/l/linux/linux-libc-dev_4.15.0-213.224_arm64.deb
   pool/universe/libs/libsdl2/libsdl2-dev_2.0.8+dfsg1-1ubuntu1.18.04.4_arm64.deb
   pool/universe/libs/libsdl2/libsdl2-2.0-0_2.0.8+dfsg1-1ubuntu1.18.04.4_arm64.deb
+  pool/main/a/alsa-lib/libasound2_1.1.3-5ubuntu0.6_arm64.deb
+  pool/main/a/alsa-lib/libasound2-dev_1.1.3-5ubuntu0.6_arm64.deb
 )
 if [ ! -f "$SYSROOT/.done2" ]; then
   echo ">> Sysroot anlegen in $SYSROOT"
@@ -43,16 +45,17 @@ ${CROSS}g++ --sysroot="$SYSROOT" -std=c++17 -O2 -mcpu=cortex-a35 -fno-math-errno
   -isystem "$SYSROOT/usr/include/aarch64-linux-gnu" -isystem "$SYSROOT/usr/include" \
   -I"$SYSROOT/usr/include/SDL2" -D_REENTRANT \
   -c device/main.cpp -o build/r36s-main.o
-for f in input drm; do
+for f in input drm midi usbaudio web webpage dhcpd; do
   ${CROSS}g++ --sysroot="$SYSROOT" -std=c++17 -O2 -mcpu=cortex-a35 -fno-exceptions -fno-rtti \
-    -fno-threadsafe-statics -nostdinc -isystem "$(${CROSS}gcc -print-file-name=include)" \
+    -fno-threadsafe-statics -fno-asynchronous-unwind-tables -Wno-format-truncation -DWITH_MIDI -nostdinc \
+    -isystem "$(${CROSS}gcc -print-file-name=include)" \
     -isystem "$SYSROOT/usr/include/aarch64-linux-gnu" -isystem "$SYSROOT/usr/include" \
     -I"$SYSROOT/usr/include/SDL2" -D_REENTRANT -c device/$f.cpp -o build/r36s-$f.o
 done
 ${CROSS}gcc --sysroot="$SYSROOT" -B"$SYSROOT/usr/lib/aarch64-linux-gnu" \
   -L"$SYSROOT/lib/aarch64-linux-gnu" -L"$SYSROOT/usr/lib/aarch64-linux-gnu" \
   -Wl,-rpath-link,"$SYSROOT/lib/aarch64-linux-gnu" -Wl,--allow-shlib-undefined \
-  -o build/synthcity-aarch64 build/r36s-main.o build/r36s-input.o build/r36s-drm.o -lSDL2 -lm -lpthread -ldl
+  -o build/synthcity-aarch64 build/r36s-*.o -lSDL2 -lasound -lm -lpthread -ldl
 ${CROSS}strip build/synthcity-aarch64
 rm -f build/r36s-*.o
 echo ">> fertig: build/synthcity-aarch64 ($(du -h build/synthcity-aarch64 | cut -f1))"

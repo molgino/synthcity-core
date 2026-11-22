@@ -56,13 +56,13 @@ clean:
 .PHONY: test uitest bench demo plugin web clean
 
 # --- Geraet (R36S-Huelle): SDL2, Bild per Fenster oder DRM, Ton per SDL/ALSA ---------------
-DEVSRC = device/main.cpp device/input.cpp device/drm.cpp
+DEVSRC = device/main.cpp device/input.cpp device/drm.cpp device/midi.cpp device/usbaudio.cpp device/web.cpp device/webpage.cpp device/dhcpd.cpp
 SDL_CFLAGS ?= $(shell sdl2-config --cflags 2>/dev/null)
 SDL_LIBS   ?= $(shell sdl2-config --libs 2>/dev/null)
 device: build/synthcity-device
 build/synthcity-device: $(DEVSRC) device/*.h web/bridge.cpp $(HDRS)
 	@mkdir -p build
-	$(CXX) $(CXXFLAGS) -fno-exceptions -fno-rtti -Wno-missing-field-initializers -Wno-format-truncation $(SDL_CFLAGS) -o $@ $(DEVSRC) $(SDL_LIBS) $(LDLIBS)
+	$(CXX) $(CXXFLAGS) -fno-exceptions -fno-rtti -Wno-missing-field-initializers -Wno-format-truncation -DWITH_MIDI $(SDL_CFLAGS) -o $@ $(DEVSRC) $(SDL_LIBS) -lasound -lpthread $(LDLIBS)
 devtest: build/synthcity-device
 	@mkdir -p build/shots
 	SC_HOME=build/devhome ./build/synthcity-device --shots build/shots

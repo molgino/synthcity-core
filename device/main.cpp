@@ -12,6 +12,14 @@
 #include "font.h"
 #include "input.h"
 #include "drm.h"
+#include "midi.h"
+#include "usbaudio.h"
+#include "web.h"
+#include <ifaddrs.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+int runDhcpd(const char* ifname);   // dhcpd.cpp: Helfer fuer den PC-Modus (pc-modus.sh startet "groovebox --dhcpd usb0")
 #include <SDL.h>
 #include <dirent.h>
 #include <sys/stat.h>
@@ -21,6 +29,7 @@
 #include <linux/input.h>
 #include <math.h>
 #include <stdarg.h>
+#include <ctype.h>
 
 #ifdef SC_NO_LIBSTDCXX
 // Ohne libstdc++ gebaut (R36S-Cross-Build): die zwei Dinge, die der Compiler trotzdem erwartet.
@@ -122,6 +131,16 @@ static bool saveBmp(const char* path) {
 static char gBase[512] = "./";
 static char gPrjName[64] = "song01";
 static int  gDispOff = 0;                 // Byte-Versatz fuers DRM-Panel (wie im alten SYNTH CITY)
+// Geraete-Einstellungen (SYSTEM-Ansicht), in synthcity.cfg
+struct DevCfg {
+    int usbMode = 0;        // 0 HOST (Geraete am R36S), 1 PC (MIDI + Netz), 2 PC + Audio-Interface
+    int usbVol = 100;       // Lautstaerke zum PC in %
+    int pcIn = 0;           // was der PC abspielt, in den Ausgang mischen
+    int midiIn = 1;         // Noten Kanal 1-8 spielen Spur 1-8, Program Change waehlt das Pattern
+    int clockIn = 0;        // externe MIDI-Clock fuehrt Tempo und Start/Stop
+    int clockOut = 1;       // MIDI-Clock + Start/Stop senden
+    int notesOut = 0;       // Trigs als Noten senden (Spur n = Kanal n)
+} gCfg;
 
 static void lockA();
 static bool gLearnReq = false;
@@ -138,9 +157,16 @@ static void settingsLoad() {
     char line[256];
     while (fgets(line, sizeof line, f)) {
         char k[64], v[128];
-        if (sscanf(line, "%63s %127s", k, v) != 2) continue;
+        if (sscanf(line, "%63s %127[^\n]", k, v) != 2) continue;
         if (!strcmp(k, "project")) snprintf(gPrjName, sizeof gPrjName, "%s", v);
         else if (!strcmp(k, "display_offset")) gDispOff = atoi(v);
+        else if (!strcmp(k, "usb_mode")) gCfg.usbMode = atoi(v) < 0 ? 0 : atoi(v) > 2 ? 2 : atoi(v);
+        else if (!strcmp(k, "usb_volume")) gCfg.usbVol = atoi(v);
+        else if (!strcmp(k, "pc_in")) gCfg.pcIn = atoi(v) != 0;
+        else if (!strcmp(k, "midi_in")) gCfg.midiIn = atoi(v) != 0;
+        else if (!strcmp(k, "clock_in")) gCfg.clockIn = atoi(v) != 0;
+        else if (!strcmp(k, "clock_out")) gCfg.clockOut = atoi(v) != 0;
+        else if (!strcmp(k, "notes_out")) gCfg.notesOut = atoi(v) != 0;
     }
     fclose(f);
 }
@@ -148,7 +174,8 @@ static void settingsSave() {
     char p[700]; pathOf(p, sizeof p, "synthcity.cfg");
     FILE* f = fopen(p, "w");
     if (!f) return;
-    fprintf(f, "project %s\ndisplay_offset %d\n", gPrjName, gDispOff);
+    fprintf(f, "project %s\ndisplay_offset %d\nusb_mode %d\nusb_volume %d\npc_in %d\nmidi_in %d\nclock_in %d\nclock_out %d\nnotes_out %d\n",
+            gPrjName, gDispOff, gCfg.usbMode, gCfg.usbVol, gCfg.pcIn, gCfg.midiIn, gCfg.clockIn, gCfg.clockOut, gCfg.notesOut);
     fclose(f);
 }
 
@@ -340,12 +367,101 @@ static int  gRate = 48000;
 static volatile bool gExporting = false;
 static volatile float gPeak = 0;
 static volatile float gCpu = 0;           // Anteil der Pufferzeit, den der Kern zum Rechnen braucht
+
+// --- MIDI im Audio-Faden: was hereinkommt, wirkt vor dem naechsten Block; was hinausgeht, bekommt
+// eine Uhrzeit (Blockbeginn + ein Puffer Vorlauf), der MIDI-Faden schickt es dann puenktlich.
+static double  gCbTime = 0;               // midiNow() zu Beginn des Blocks
+static int     gCbFrames = 256;
+static int64_t gBlockPos = 0;             // Sequencer-Position zu Beginn des Blocks
+static int64_t gClock = 0;                // eigene Sample-Uhr (laeuft auch im Stand)
+static bool    gFromMidi = false;         // Noten von aussen nicht wieder hinausschicken
+static volatile int gMidiInSeen = 0;      // fuer die Anzeige
+struct PendOff { int64_t at; uint8_t st, note; };
+static PendOff gOffs[128]; static int gNOffs = 0;
+static double dueAt(int64_t clockSample) { return gCbTime + (double)(gCbFrames + (clockSample - gClock)) / gRate; }
+static void noteOutCb(void*, int track, int note, int vel, int64_t at, int32_t len) {
+    if (!gCfg.notesOut || gFromMidi || note < 0 || note > 127) return;
+    int64_t c = gClock + (at - gBlockPos > 0 ? at - gBlockPos : 0);
+    MidiMsg on = {(uint8_t)(0x90 | track), (uint8_t)note, (uint8_t)(vel < 1 ? 1 : vel > 127 ? 127 : vel), 0, dueAt(c)};
+    midiOutPush(on);
+    if (gNOffs < 128) gOffs[gNOffs++] = {c + (len >= 2147483647 || len <= 0 ? gRate / 2 : len), (uint8_t)(0x80 | track), (uint8_t)note};
+}
+static void flushOffs(int64_t until) {   // faellige Note-Offs senden (alle, wenn until < 0)
+    for (int i = 0; i < gNOffs;) {
+        if (until >= 0 && gOffs[i].at >= until) { i++; continue; }
+        MidiMsg m = {gOffs[i].st, gOffs[i].note, 0, 0, until < 0 ? midiNow() : dueAt(gOffs[i].at)};
+        midiOutPush(m);
+        gOffs[i] = gOffs[--gNOffs];
+    }
+}
+static double gClkPhase = 0;              // MIDI-Clock-Ausgang: Samples bis zum naechsten Tick
+static bool   gWasRunning = false;
+static double gInLast = 0, gInSum = 0; static int gInN = 0;   // MIDI-Clock-Eingang: Abstand der Ticks
+static void midiInHandle(const MidiMsg& m) {
+    uint8_t st = m.st, ty = st & 0xF0, ch = st & 0x0F;
+    gMidiInSeen++;
+    if (gCfg.clockIn) {
+        if (st == 0xF8) {
+            double t = m.due > 0 ? m.due : midiNow();
+            if (gInLast > 0) {
+                double d = t - gInLast;
+                if (d > 0.004 && d < 0.2) { gInSum += d; gInN++; }
+                if (gInN >= 24) {   // ein Viertel gemessen: Tempo glatt nachfuehren
+                    double bpm = 60.0 / (gInSum / gInN * 24.0);
+                    gEng.extBpm = gEng.extBpm > 0 ? gEng.extBpm * 0.5 + bpm * 0.5 : bpm;
+                    gEng.setTempo(gEng.effTempo(gEng.pat));
+                    gInSum = 0; gInN = 0;
+                }
+            }
+            gInLast = t;
+            return;
+        }
+        if (st == 0xFA) { gInLast = 0; gInSum = 0; gInN = 0; gEng.start(); return; }
+        if (st == 0xFB) { gEng.start(); return; }
+        if (st == 0xFC) { gEng.stop(); return; }
+    }
+    if (!gCfg.midiIn) return;
+    if (ty == 0x90 && m.d2 > 0 && ch < NTRACKS) { gFromMidi = true; scPlayNote(ch, m.d1, m.d2); gFromMidi = false; }
+    else if (ty == 0xC0) { int p = m.d1 % NPATTERNS; if (gEng.seq.running) gEng.queuePattern(p); else scSetPattern(p); }
+}
+static void midiBlock(int frames) {
+    MidiMsg mm;
+    while (midiInPop(mm)) midiInHandle(mm);
+    if (gCfg.clockIn && gEng.extBpm > 0 && gInLast > 0 && midiNow() - gInLast > 2.0) {   // Clock weg: eigenes Tempo
+        gEng.extBpm = 0; gEng.setTempo(gEng.effTempo(gEng.pat)); gInLast = 0;
+    }
+    if (!gCfg.clockIn && gEng.extBpm > 0) { gEng.extBpm = 0; gEng.setTempo(gEng.effTempo(gEng.pat)); }
+    bool run = gEng.seq.running;
+    if (gCfg.clockOut) {
+        if (run && !gWasRunning) { MidiMsg s = {0xFA, 0, 0, 0, dueAt(gClock)}; midiOutPush(s); gClkPhase = 0; }
+        if (!run && gWasRunning) { MidiMsg s = {0xFC, 0, 0, 0, dueAt(gClock)}; midiOutPush(s); }
+        if (run) {
+            double bpm = gEng.tempoOf(gEng.pat);
+            double per = gRate * 60.0 / ((bpm > 1 ? bpm : 120.0) * 24.0);
+            while (gClkPhase < frames) {
+                MidiMsg c = {0xF8, 0, 0, 0, dueAt(gClock + (int64_t)gClkPhase)};
+                midiOutPush(c);
+                gClkPhase += per;
+            }
+            gClkPhase -= frames;
+        }
+    }
+    if (!run && gWasRunning) flushOffs(-1);
+    gWasRunning = run;
+}
+
 static void audioCb(void*, Uint8* stream, int len) {
     float* out = (float*)stream;
     int frames = len / (int)(2 * sizeof(float));
     if (gExporting) { memset(stream, 0, (size_t)len); return; }
     uint64_t t0 = SDL_GetPerformanceCounter();
+    gCbTime = midiNow(); gCbFrames = frames; gBlockPos = gEng.seq.pos;
+    midiBlock(frames);
     scRender(out, frames);
+    flushOffs(gClock + frames);
+    gClock += frames;
+    usbAudioPush(out, frames);                                 // parallel an den PC (falls aktiv)
+    pcInMix(out, frames, gCfg.pcIn ? 1.0f : 0.0f);             // PC-Ton dazu (nach dem Senden: kein Echo)
     double used = (double)(SDL_GetPerformanceCounter() - t0) / SDL_GetPerformanceFrequency();
     float load = (float)(used * gRate / frames);
     gCpu = load > gCpu ? load : gCpu * 0.98f + load * 0.02f;
@@ -371,11 +487,11 @@ static void unlockA() { if (gAudio) SDL_UnlockAudioDevice(gAudio); }
 // ============================================================================================
 // Oberflaeche: Zustand
 // ============================================================================================
-enum { V_TRACK, V_SONG, V_PROJECT, V_N };
-static const char* VIEWNAME[V_N] = {"TRACK", "SONG", "PROJECT"};
+enum { V_TRACK, V_SONG, V_PROJECT, V_SYSTEM, V_N };
+static const char* VIEWNAME[V_N] = {"TRACK", "SONG", "PROJ", "SYSTEM"};
 enum { TAB_TRIG, TAB_CHRD, TAB_SRC, TAB_FLTR, TAB_AMP, TAB_MIX, TAB_MOD, TAB_N };
 static const char* TABNAME[TAB_N] = {"TRIG", "CHRD", "SRC", "FLTR", "AMP", "MIX", "MOD"};
-enum { M_NONE, M_MENU, M_SAMPLES, M_HELP };
+enum { M_NONE, M_MENU, M_SAMPLES, M_HELP, M_KEYS };
 static const int FXT = NTRACKS;   // die FX-Spur des Patterns
 
 struct UI {
@@ -385,7 +501,8 @@ struct UI {
     bool aHeld = false, aEdited = false;
     int modal = M_NONE, menuSel = 0, smpSel = 0, smpScroll = 0;
     int songRow = 0, songField = 0;
-    int prjRow = 0;
+    int prjRow = 0, sysRow = 0;
+    int keyRow = 0, keyCol = 0, keyMode = 0; char keyBuf[32] = "";   // Bildschirmtastatur
     char toast[96] = ""; uint32_t toastUntil = 0;
     bool dirty = false; uint32_t editAt = 0;
     bool quit = false;
@@ -755,17 +872,77 @@ static void exportStep(int budget) {   // budget: Frames je Aufruf
 }
 
 // --- Projekt-Ansicht --------------------------------------------------------------------------
+// Projekte haben freie Namen: X/Y blaettert durch die Dateien in projects/, A oeffnet das gezeigte.
+// SAVE AS und NEW fragen den Namen ueber die Bildschirmtastatur.
 enum { PR_PATTERN, PR_PBPM, PR_PSWING, PR_PMULT, PR_PCHG, PR_ROOT, PR_SCALE, PR_TEMPO, PR_SWING, PR_MASTER,
-       PR_MORPH, PR_NAME, PR_LOAD, PR_SAVE, PR_NEW, PR_DEMO, PR_EXPORT, PR_DISP, PR_LEARN, PR_QUIT, PR_N };
+       PR_MORPH, PR_OPEN, PR_SAVE, PR_SAVEAS, PR_NEW, PR_DEMO, PR_EXPORT, PR_N };
 static const char* PRNAME[PR_N] = {"PATTERN", "PAT TEMPO", "PAT SWING", "PAT SPEED", "PAT CHANGE", "KEY ROOT", "KEY SCALE",
-    "PROJECT TEMPO", "PROJECT SWING", "MASTER", "SCENE MORPH", "PROJECT", "LOAD", "SAVE", "NEW (EMPTY)", "LOAD DEMO",
-    "EXPORT SONG WAV", "DISPLAY SHIFT", "LEARN BUTTONS", "QUIT"};
-static bool prDivider(int r) { return r == PR_TEMPO || r == PR_NAME || r == PR_EXPORT; }
-static void prNameStep(int dir) {   // song01 .. song99
-    int n = 1;
-    if (!strncmp(gPrjName, "song", 4)) n = atoi(gPrjName + 4);
-    n = clampi(n + dir, 1, 99);
-    snprintf(gPrjName, sizeof gPrjName, "song%02d", n);
+    "PROJECT TEMPO", "PROJECT SWING", "MASTER", "SCENE MORPH", "OPEN PROJECT", "SAVE", "SAVE AS...", "NEW PROJECT...",
+    "LOAD DEMO", "EXPORT SONG WAV"};
+static bool prDivider(int r) { return r == PR_TEMPO || r == PR_OPEN || r == PR_EXPORT; }
+
+enum { MAX_PRJ = 256 };
+static char gPrjList[MAX_PRJ][48];
+static int  gNPrj = 0, gPrjBrowse = -1;   // -1 = das aktuelle Projekt
+static int cmpStr(const void* a, const void* b) { return strcasecmp((const char*)a, (const char*)b); }
+static void scanProjects() {
+    gNPrj = 0;
+    char d[700]; pathOf(d, sizeof d, "projects");
+    DIR* dir = opendir(d);
+    if (!dir) return;
+    struct dirent* e;
+    while ((e = readdir(dir)) && gNPrj < MAX_PRJ) {
+        size_t l = strlen(e->d_name);
+        if (e->d_name[0] == '.' || l < 4 || l - 3 >= sizeof gPrjList[0] || strcasecmp(e->d_name + l - 3, ".sc")) continue;
+        snprintf(gPrjList[gNPrj], sizeof gPrjList[0], "%.*s", (int)(l - 3), e->d_name);
+        gNPrj++;
+    }
+    closedir(dir);
+    qsort(gPrjList, gNPrj, sizeof gPrjList[0], cmpStr);
+}
+static const char* browseName() { return gPrjBrowse >= 0 && gPrjBrowse < gNPrj ? gPrjList[gPrjBrowse] : gPrjName; }
+static void browseStep(int dir) {
+    scanProjects();
+    if (!gNPrj) return;
+    int cur = gPrjBrowse;
+    if (cur < 0) {   // vom aktuellen Projekt aus weiterblaettern
+        int k = -1;
+        for (int i = 0; i < gNPrj; i++) if (!strcasecmp(gPrjList[i], gPrjName)) k = i;
+        if (k >= 0) cur = k + dir;
+        else { int ins = 0; while (ins < gNPrj && strcasecmp(gPrjList[ins], gPrjName) < 0) ins++; cur = dir > 0 ? ins : ins - 1; }
+    } else cur += dir;
+    gPrjBrowse = clampi(cur, 0, gNPrj - 1);
+}
+// Erlaubte Zeichen fuer Namen: Buchstaben, Ziffern, Leerzeichen, - und _ (passt auf jedes Dateisystem)
+static bool nameOk(const char* n) {
+    if (!n[0] || n[0] == ' ' || n[0] == '.') return false;
+    for (const char* c = n; *c; c++) if (!isalnum((unsigned char)*c) && !strchr(" -_", *c)) return false;
+    return true;
+}
+enum { KM_SAVEAS = 1, KM_NEW };
+static void openKeys(int mode, const char* start) {
+    U.modal = M_KEYS; U.keyMode = mode; U.keyRow = 0; U.keyCol = 0;
+    snprintf(U.keyBuf, sizeof U.keyBuf, "%s", start);
+}
+static void keysDone() {
+    char n[32]; snprintf(n, sizeof n, "%s", U.keyBuf);
+    int l = (int)strlen(n); while (l > 0 && n[l - 1] == ' ') n[--l] = 0;
+    if (!nameOk(n)) { toast("Name: letters, digits, space, - and _"); return; }
+    U.modal = M_NONE;
+    if (U.keyMode == KM_SAVEAS) {
+        snprintf(gPrjName, sizeof gPrjName, "%s", n);
+        toast(prjSave() ? "Saved as %s" : "Could not save %s", gPrjName);
+        U.dirty = false;
+    } else {
+        if (U.dirty) prjSave();
+        if (prjExists(n)) { toast("%s exists - open it with OPEN PROJECT", n); return; }
+        lockA(); scStop(); scSmpClear(); scLoad(""); unlockA();
+        snprintf(gPrjName, sizeof gPrjName, "%s", n);
+        prjSave();
+        U.dirty = false;
+        toast("New project %s", gPrjName);
+    }
+    gPrjBrowse = -1;
     settingsSave();
 }
 static void prEdit(int dir, bool coarse) {
@@ -784,29 +961,111 @@ static void prEdit(int dir, bool coarse) {
     case PR_SWING: { int s = slotOf(pIndex("swing")); scSet(-1, s, clampi(scGet(-1, s) + dir, 50, 80)); break; }
     case PR_MASTER: { int s = slotOf(pIndex("master.vol")); scSet(-1, s, clampi(scGet(-1, s) + dir * (coarse ? 8 : 1), 0, 127)); break; }
     case PR_MORPH: { float v = scGetMorph() + dir * (coarse ? 0.1f : 0.02f); scSetMorph(v < 0 ? 0 : v > 1 ? 1 : v); return; }
-    case PR_NAME: prNameStep(dir * m); return;
-    case PR_DISP: gDispOff += dir * (coarse ? 30 : 3); drmSetByteOffset(gDispOff); settingsSave(); return;
+    case PR_OPEN: browseStep(dir * (coarse ? 10 : 1)); return;
     default: return;
     }
     touched();
 }
 static void prAction() {
     switch (U.prjRow) {
-    case PR_LOAD:
+    case PR_OPEN: {
+        char n[48]; snprintf(n, sizeof n, "%s", browseName());
+        if (!strcmp(n, gPrjName) && !prjExists(n)) { toast("%s is not saved yet", n); break; }
         if (U.dirty) prjSave();
-        if (prjLoad(gPrjName)) { toast("Loaded %s", gPrjName); U.dirty = false; settingsSave(); }
-        else toast("%s does not exist yet", gPrjName);
+        if (prjLoad(n)) { snprintf(gPrjName, sizeof gPrjName, "%s", n); toast("Opened %s", gPrjName); U.dirty = false; settingsSave(); }
+        else toast("Could not open %s", n);
+        gPrjBrowse = -1;
         break;
+    }
     case PR_SAVE: toast(prjSave() ? "Saved %s" : "Could not save %s", gPrjName); U.dirty = false; settingsSave(); break;
-    case PR_NEW:
-        lockA(); scStop(); scSmpClear(); scLoad(""); unlockA();
-        toast("New empty project (%s)", gPrjName); touched(); break;
+    case PR_SAVEAS: openKeys(KM_SAVEAS, gPrjName); break;
+    case PR_NEW: openKeys(KM_NEW, ""); break;
     case PR_DEMO:
         lockA(); scStop(); scDemo(); unlockA();
-        toast("Demo loaded"); touched(); break;
+        toast("Demo loaded into %s", gPrjName); touched(); break;
     case PR_EXPORT: exportBegin(); break;
-    case PR_QUIT: U.quit = true; break;
-    case PR_LEARN: gLearnReq = true; break;
+    default: break;
+    }
+}
+
+// --- USB-Modus (Groovebox-OS): pc-modus.sh baut das USB-Geraet um ------------------------------
+static bool isGrooveboxOS() { struct stat st; return stat("/etc/groovebox-os", &st) == 0; }
+static bool haveUsbScript() { char p[700]; pathOf(p, sizeof p, "pc-modus.sh"); struct stat st; return isGrooveboxOS() && stat(p, &st) == 0; }
+static int  gUsbNow = 0;                    // was gerade aktiv ist
+static volatile int gUsbJob = 0;            // 0 frei, 1 laeuft, 2 fertig
+static char gUsbCmd[900];
+static int usbJobThread(void*) { if (system(gUsbCmd) != 0) printf("pc-modus.sh meldet einen Fehler\n"); gUsbJob = 2; return 0; }
+static int detectUsbMode() {
+    FILE* f = fopen("/sys/kernel/config/usb_gadget/groovebox/UDC", "r");
+    if (!f) return 0;
+    char b[64] = "";
+    bool on = fgets(b, sizeof b, f) && b[0] > ' ';
+    fclose(f);
+    if (!on) return 0;
+    struct stat st;
+    bool aud = stat("/sys/kernel/config/usb_gadget/groovebox/configs/c.1/uac2.usb0", &st) == 0 ||
+               stat("/sys/kernel/config/usb_gadget/groovebox/configs/c.1/uac1.usb0", &st) == 0;
+    return aud ? 2 : 1;
+}
+static void applyUsbMode() {
+    if (!haveUsbScript() || gUsbJob) return;
+    usbAudioStop();
+    pcInStop();
+    static const char* args[3] = {"aus", "an", "an audio"};
+    snprintf(gUsbCmd, sizeof gUsbCmd, "GB_USB_NET=ncm GB_UAC=2 GB_UAC_IN=1 GB_UAC_CH=2 bash '%spc-modus.sh' %s nosleep", gBase, args[gCfg.usbMode % 3]);
+    gUsbJob = 1;
+    toast(gCfg.usbMode ? "Switching to PC mode ..." : "Switching to host mode ...");
+    SDL_Thread* t = SDL_CreateThread(usbJobThread, "usbmode", nullptr);
+    if (t) SDL_DetachThread(t); else usbJobThread(nullptr);
+}
+// Adresse fuer den Browser: im PC-Modus 192.168.77.1, sonst die erste IPv4 (WLAN/LAN)
+static void deviceAddr(char* out, int n) {
+    out[0] = 0;
+    struct ifaddrs* ifa = nullptr;
+    if (getifaddrs(&ifa) != 0) return;
+    for (struct ifaddrs* i = ifa; i; i = i->ifa_next) {
+        if (!i->ifa_addr || i->ifa_addr->sa_family != AF_INET || !strcmp(i->ifa_name, "lo")) continue;
+        char ip[32]; inet_ntop(AF_INET, &((struct sockaddr_in*)i->ifa_addr)->sin_addr, ip, sizeof ip);
+        bool usb = !strncmp(i->ifa_name, "usb", 3);
+        if (!out[0] || usb) snprintf(out, n, "%s", ip);
+        if (usb) break;
+    }
+    freeifaddrs(ifa);
+}
+
+// --- SYSTEM-Ansicht ------------------------------------------------------------------------------
+enum { SY_USB, SY_ADDR, SY_USBAUD, SY_USBVOL, SY_PCIN, SY_MIDIIN, SY_CLKIN, SY_CLKOUT, SY_NOTESOUT, SY_MIDIDEV,
+       SY_DISP, SY_LEARN, SY_QUIT, SY_N };
+static const char* SYNAME[SY_N] = {"USB MODE", "WEB ADDRESS", "USB AUDIO", "USB VOLUME", "PC AUDIO IN", "MIDI IN",
+    "CLOCK IN", "CLOCK OUT", "NOTES OUT", "MIDI DEVICES", "DISPLAY SHIFT", "LEARN BUTTONS", "QUIT"};
+static bool syDivider(int r) { return r == SY_MIDIIN || r == SY_DISP; }
+static int gUsbWant = -1;                   // in der Liste gewaehlt, noch nicht angewendet
+static void syEdit(int dir, bool coarse) {
+    switch (U.sysRow) {
+    case SY_USB: if (gUsbWant < 0) gUsbWant = gCfg.usbMode; gUsbWant = clampi(gUsbWant + dir, 0, 2); return;
+    case SY_USBVOL: gCfg.usbVol = clampi(gCfg.usbVol + dir * (coarse ? 10 : 5), 0, 100); usbAudioSetGain(gCfg.usbVol / 100.f); break;
+    case SY_PCIN: gCfg.pcIn = dir > 0; break;
+    case SY_MIDIIN: gCfg.midiIn = dir > 0; break;
+    case SY_CLKIN: gCfg.clockIn = dir > 0; break;
+    case SY_CLKOUT: gCfg.clockOut = dir > 0; break;
+    case SY_NOTESOUT: gCfg.notesOut = dir > 0; break;
+    case SY_DISP: gDispOff += dir * (coarse ? 30 : 3); drmSetByteOffset(gDispOff); break;
+    default: return;
+    }
+    settingsSave();
+}
+static void syAction() {
+    switch (U.sysRow) {
+    case SY_USB:
+        if (!haveUsbScript()) { toast("USB modes need Groovebox-OS"); break; }
+        if (gUsbWant >= 0) gCfg.usbMode = gUsbWant;
+        gUsbWant = -1;
+        settingsSave();
+        applyUsbMode();
+        break;
+    case SY_LEARN: gLearnReq = true; break;
+    case SY_QUIT: U.quit = true; break;
+    case SY_DISP: if (!drmActive()) toast("Only on the built-in display (DRM)"); break;
     default: break;
     }
 }
@@ -874,13 +1133,49 @@ static void handleSong() {
 static void handleProject() {
     if (IN.repeat(BT_UP, U.now) && U.prjRow > 0) U.prjRow--;
     if (IN.repeat(BT_DOWN, U.now) && U.prjRow < PR_N - 1) U.prjRow++;
-    if (U.prjRow == PR_DISP && !drmActive() && IN.pressed(BT_A)) toast("Only on the built-in display (DRM)");
     if (IN.pressed(BT_A)) prAction();
     bool coarse;
     int d = valueDir(&coarse);
     if (d) prEdit(d, coarse);
 }
+static void handleSystem() {
+    if (IN.repeat(BT_UP, U.now) && U.sysRow > 0) U.sysRow--;
+    if (IN.repeat(BT_DOWN, U.now) && U.sysRow < SY_N - 1) U.sysRow++;
+    if (IN.pressed(BT_A)) syAction();
+    bool coarse;
+    int d = valueDir(&coarse);
+    if (d) syEdit(d, coarse);
+}
+// Bildschirmtastatur: Steuerkreuz waehlt, A tippt, B loescht, Y gross/klein, START fertig, SELECT bricht ab
+static const char* KEYROWS[2][4] = {
+    {"ABCDEFGHIJKLM", "NOPQRSTUVWXYZ", "0123456789-_ ", "<>"},
+    {"abcdefghijklm", "nopqrstuvwxyz", "0123456789-_ ", "<>"}};
+static int gKeyCase = 1;
+static void keyType(char c) {
+    size_t l = strlen(U.keyBuf);
+    if (l < 24) { U.keyBuf[l] = c; U.keyBuf[l + 1] = 0; }
+}
+static void handleKeys() {
+    int rows = 4;
+    int cols = (int)strlen(KEYROWS[gKeyCase][U.keyRow]);
+    if (IN.repeat(BT_UP, U.now)) U.keyRow = (U.keyRow + rows - 1) % rows;
+    if (IN.repeat(BT_DOWN, U.now)) U.keyRow = (U.keyRow + 1) % rows;
+    cols = (int)strlen(KEYROWS[gKeyCase][U.keyRow]);
+    if (U.keyCol >= cols) U.keyCol = cols - 1;
+    if (IN.repeat(BT_LEFT, U.now)) U.keyCol = (U.keyCol + cols - 1) % cols;
+    if (IN.repeat(BT_RIGHT, U.now)) U.keyCol = (U.keyCol + 1) % cols;
+    if (IN.pressed(BT_Y)) gKeyCase ^= 1;
+    if (IN.repeat(BT_B, U.now)) { size_t l = strlen(U.keyBuf); if (l) U.keyBuf[l - 1] = 0; }
+    if (IN.repeat(BT_A, U.now)) {
+        if (U.keyRow == 3) { if (U.keyCol == 0) { size_t l = strlen(U.keyBuf); if (l) U.keyBuf[l - 1] = 0; } else keysDone(); }
+        else keyType(KEYROWS[gKeyCase][U.keyRow][U.keyCol]);
+    }
+    if (IN.pressed(BT_X)) keyType(' ');
+    if (IN.pressed(BT_START)) keysDone();
+    if (IN.pressed(BT_SELECT)) U.modal = M_NONE;
+}
 static void handleModal() {
+    if (U.modal == M_KEYS) { handleKeys(); return; }
     if (U.modal == M_HELP) {
         if (IN.pressed(BT_B) || IN.pressed(BT_A) || IN.pressed(BT_SELECT)) U.modal = M_NONE;
         return;
@@ -940,7 +1235,8 @@ static void handleInput() {
     buildRows();
     if (U.view == V_TRACK) handleTrack();
     else if (U.view == V_SONG) handleSong();
-    else handleProject();
+    else if (U.view == V_PROJECT) handleProject();
+    else handleSystem();
     // rechter Stick waagerecht: Scene-Crossfader (A <-> B), wie am Octatrack
     if (fabsf(IN.rx) > 0.2f) {
         float m = scGetMorph() + IN.rx * 0.03f;
@@ -955,24 +1251,29 @@ enum { HEAD_H = 26, RAIL_W = 118, LIST_X = 124, STEPS_Y = 340, HELP_Y = 458 };
 static void drawHeader() {
     fill(0, 0, SW, HEAD_H, C_PANEL);
     for (int x = 0; x < SW; x++) FB[(HEAD_H - 1) * SW + x] = mix(0xff4d9d, 0x5ec8ff, x * 256 / SW);
-    text(8, 5, "SYNTH CITY", C_TXT);
     char b[64];
+    snprintf(b, sizeof b, "%s%s", gPrjName, U.dirty ? "*" : "");
+    text(8, 5, b, C_TXT, 10);
     int p = scPattern(), q = scPatNext();
     if (q >= 0 && q != p) snprintf(b, sizeof b, "P%02d>%02d", p + 1, q + 1); else snprintf(b, sizeof b, "P%02d", p + 1);
-    text(100, 5, b, q >= 0 && q != p ? C_LOCK : C_TXT);
-    snprintf(b, sizeof b, "%d BPM", scTempoNow());
-    text(172, 5, b, C_TXT);
-    if (scSongOn()) { snprintf(b, sizeof b, "SONG %d", scSongPos() + 1); text(252, 5, b, C_PLAY); }
-    if (scIsRunning()) triRight(330, 6, 13, C_PLAY); else fill(330, 7, 11, 11, C_DIM);
-    if (scIsFill()) text(346, 5, "FILL", C_LOCK);
+    text(96, 5, b, q >= 0 && q != p ? C_LOCK : C_TXT);
+    snprintf(b, sizeof b, "%d", scTempoNow());
+    text(152, 5, b, gEng.extBpm > 0 ? C_LOCK : C_TXT);   // externe Clock: Tempo in Orange
+    text(152 + ((int)strlen(b) + 1) * FONT_W, 5, "BPM", C_FAINT);
+    if (scIsRunning()) triRight(222, 6, 13, C_PLAY); else fill(222, 7, 11, 11, C_DIM);
+    if (scSongOn()) { snprintf(b, sizeof b, "S%d", scSongPos() + 1); text(238, 5, b, C_PLAY); }
+    else if (scIsFill()) text(238, 5, "FILL", C_LOCK);
     // Scene-Crossfader
     float m = scGetMorph();
-    fill(388, 11, 60, 3, C_LINE);
-    fill(388 + (int)(m * 56), 7, 4, 11, C_SCENE);
+    fill(278, 11, 44, 3, C_LINE);
+    fill(278 + (int)(m * 40), 7, 4, 11, C_SCENE);
     if (gAudio) {
-        snprintf(b, sizeof b, "CPU %d%%", (int)(gCpu * 100 + 0.5f));
-        text(456, 5, b, gCpu > 0.8f ? C_REC : C_FAINT);
+        snprintf(b, sizeof b, "%d%%", (int)(gCpu * 100 + 0.5f));
+        text(330, 5, "CPU", C_FAINT); text(356, 5, b, gCpu > 0.8f ? C_REC : C_DIM);
     }
+    static int lastMidi = 0; static uint32_t midiAt = 0;
+    if (gMidiInSeen != lastMidi) { lastMidi = gMidiInSeen; midiAt = U.now; }
+    if (U.now - midiAt < 150) fill(396, 9, 6, 6, C_PLAY);   // MIDI kommt an
     // Ansichten
     int x = SW - 8;
     for (int v = V_N - 1; v >= 0; v--) {
@@ -1195,24 +1496,109 @@ static void drawProject() {
         case PR_SWING: snprintf(b, sizeof b, "%d%%", scGet(-1, slotOf(pIndex("swing")))); break;
         case PR_MASTER: snprintf(b, sizeof b, "%s", scParamText(pIndex("master.vol"), (float)scGet(-1, slotOf(pIndex("master.vol"))), -1)); break;
         case PR_MORPH: snprintf(b, sizeof b, "%d%%  (A %s / B %s)", (int)lrintf(scGetMorph() * 100), scSceneCount(0, U.sel < FXT ? U.sel : 0) ? "set" : "-", scSceneCount(1, U.sel < FXT ? U.sel : 0) ? "set" : "-"); break;
-        case PR_NAME: snprintf(b, sizeof b, "%s%s%s", gPrjName, prjExists(gPrjName) ? "" : " (new)", U.dirty ? "  *" : ""); break;
-        case PR_LOAD: snprintf(b, sizeof b, "A = load %s", gPrjName); break;
-        case PR_SAVE: snprintf(b, sizeof b, "A = save as %s", gPrjName); break;
-        case PR_NEW: case PR_DEMO: snprintf(b, sizeof b, "A"); break;
+        case PR_OPEN:
+            if (gPrjBrowse < 0) snprintf(b, sizeof b, "%s  (current%s)", gPrjName, prjExists(gPrjName) ? "" : ", not saved");
+            else snprintf(b, sizeof b, "< %s >  A = open", browseName());
+            break;
+        case PR_SAVE: snprintf(b, sizeof b, "A = save %s%s", gPrjName, U.dirty ? "  (changed)" : ""); break;
+        case PR_SAVEAS: snprintf(b, sizeof b, "A = new name"); break;
+        case PR_NEW: snprintf(b, sizeof b, "A = name it, starts empty"); break;
+        case PR_DEMO: snprintf(b, sizeof b, "A"); break;
         case PR_EXPORT: snprintf(b, sizeof b, "A = %d rows > samples/export/", scSongN()); break;
-        case PR_DISP: snprintf(b, sizeof b, drmActive() ? "%d px (%d)" : "-", gDispOff / 3, gDispOff); break;
-        case PR_QUIT: snprintf(b, sizeof b, "A"); break;
-        case PR_LEARN: snprintf(b, sizeof b, "A = press every button once"); break;
         }
         text(x0 + 150, y + 1, b, s ? C_TXT : C_DIM, 44);
     }
 }
+static void box(int x, int y, int w, int h, const char* title);
+static void drawSystem() {
+    int x0 = LIST_X, y = HEAD_H + 4, w = SW - x0 - 4;
+    fill(x0 - 2, HEAD_H, SW - x0 + 2, STEPS_Y - HEAD_H - 4, C_BG);
+    int rowH = 19;
+    bool os = haveUsbScript();
+    for (int r = 0; r < SY_N && y < STEPS_Y - rowH; r++, y += rowH) {
+        if (syDivider(r)) { fill(x0 + 4, y + 1, w - 8, 1, C_LINE); y += 4; }
+        bool s = r == U.sysRow;
+        fill(x0, y, w, rowH - 2, s ? C_SEL : C_PANEL);
+        if (s) fill(x0, y, 3, rowH - 2, C_PLAY);
+        text(x0 + 8, y + 1, SYNAME[r], s ? C_TXT : C_DIM);
+        char b[96] = "";
+        uint32_t c = s ? C_TXT : C_DIM;
+        static const char* UM[3] = {"HOST (devices on R36S)", "PC (MIDI + network)", "PC + AUDIO INTERFACE"};
+        switch (r) {
+        case SY_USB:
+            if (!os) snprintf(b, sizeof b, "Groovebox-OS only");
+            else if (gUsbJob) snprintf(b, sizeof b, "switching ...");
+            else if (gUsbWant >= 0 && gUsbWant != gUsbNow) { snprintf(b, sizeof b, "%s  A = apply", UM[gUsbWant]); c = C_LOCK; }
+            else snprintf(b, sizeof b, "%s", UM[gUsbNow]);
+            break;
+        case SY_ADDR: {
+            char ip[40]; deviceAddr(ip, sizeof ip);
+            if (!webPort()) snprintf(b, sizeof b, "web server off");
+            else if (!ip[0]) snprintf(b, sizeof b, "no network (PC mode or WLAN)");
+            else if (webPort() == 80) snprintf(b, sizeof b, "http://%s", ip);
+            else snprintf(b, sizeof b, "http://%s:%d", ip, webPort());
+            break;
+        }
+        case SY_USBAUD: {
+            int st = usbAudioStatus();
+            snprintf(b, sizeof b, "%s", !usbAudioActive() ? "off" : st == 2 ? "PC is listening" : "waiting for PC");
+            if (usbAudioActive() && usbAudioRate() > 0) { size_t l = strlen(b); snprintf(b + l, sizeof b - l, " (%d Hz)", usbAudioRate()); }
+            break;
+        }
+        case SY_USBVOL: snprintf(b, sizeof b, "%d %%", gCfg.usbVol); break;
+        case SY_PCIN: snprintf(b, sizeof b, "%s", gCfg.pcIn ? "ON - PC playback is mixed in" : "OFF"); break;
+        case SY_MIDIIN: snprintf(b, sizeof b, "%s", gCfg.midiIn ? "ON - ch 1-8 play tracks, PC = pattern" : "OFF"); break;
+        case SY_CLKIN: snprintf(b, sizeof b, gCfg.clockIn ? (gEng.extBpm > 0 ? "FOLLOW - %.1f BPM" : "FOLLOW - no clock") : "OFF", gEng.extBpm); break;
+        case SY_CLKOUT: snprintf(b, sizeof b, "%s", gCfg.clockOut ? "ON - clock + start/stop" : "OFF"); break;
+        case SY_NOTESOUT: snprintf(b, sizeof b, "%s", gCfg.notesOut ? "ON - track n = channel n" : "OFF"); break;
+        case SY_MIDIDEV: {
+            char d[256] = ""; int n = midiPortInfo(d, sizeof d);
+            for (char* q = d; *q; q++) if (*q == '\n') *q = ',';
+            unsigned in = 0, out = 0; midiCounts(&in, &out);
+            if (n <= 0) snprintf(b, sizeof b, "none connected%s", strcmp(midiBackend(), "AUS") ? "" : " (no ALSA MIDI)");
+            else snprintf(b, sizeof b, "%s", d);
+            (void)in; (void)out;
+            break;
+        }
+        case SY_DISP: snprintf(b, sizeof b, drmActive() ? "%d px (%d)" : "only on the built-in display", gDispOff / 3, gDispOff); break;
+        case SY_LEARN: snprintf(b, sizeof b, "A = press every button once"); break;
+        case SY_QUIT: snprintf(b, sizeof b, "A (saves first)"); break;
+        }
+        text(x0 + 130, y + 1, b, c, 46);
+    }
+}
+static void drawKeys() {
+    int w = 500, h = 250, x = (SW - w) / 2, y = 90;
+    box(x, y, w, h, U.keyMode == KM_NEW ? "NEW PROJECT - NAME" : "SAVE AS - NAME");
+    fill(x + 16, y + 34, w - 32, 26, C_BG);
+    frame(x + 16, y + 34, w - 32, 26, C_LINE);
+    text(x + 24, y + 39, U.keyBuf, C_TXT);
+    if ((U.now / 400) % 2 == 0) fill(x + 24 + (int)strlen(U.keyBuf) * FONT_W, y + 40, 2, 15, C_PLAY);
+    for (int r = 0; r < 4; r++) {
+        const char* row = KEYROWS[gKeyCase][r];
+        int n = (int)strlen(row);
+        for (int c = 0; c < n; c++) {
+            int kw = r == 3 ? 120 : 30, kx = x + 22 + c * (r == 3 ? 140 : 35), ky = y + 74 + r * 36;
+            bool sel = r == U.keyRow && c == U.keyCol;
+            fill(kx, ky, kw, 30, sel ? C_PLAY : C_SEL);
+            char lab[16];
+            if (r == 3) snprintf(lab, sizeof lab, "%s", c == 0 ? "DELETE" : "DONE");
+            else if (row[c] == ' ') snprintf(lab, sizeof lab, "_");
+            else snprintf(lab, sizeof lab, "%c", row[c]);
+            if (r < 3 && row[c] == ' ') { fill(kx + 8, ky + 20, kw - 16, 2, sel ? C_BG : C_DIM); continue; }
+            textC(kx + kw / 2, ky + 7, lab, sel ? C_BG : C_TXT);
+        }
+    }
+    text(x + 16, y + h - 22, "A type  B delete  X space  Y abc/ABC  START done", C_FAINT);
+}
 static const char* helpLine() {
+    if (U.modal == M_KEYS) return "D-pad choose  A type  B delete  START done  SELECT cancel";
     if (U.modal == M_MENU) return "UP/DOWN choose   A do it   B close";
     if (U.modal == M_SAMPLES) return "UP/DOWN file   LEFT/RIGHT page   A load+hear   X hear   B close";
     if (U.modal == M_HELP) return "any of A / B / SELECT closes";
     if (U.view == V_SONG) return "X/Y value  A dup row  B+A delete  B+UP/DN move  START play song";
-    if (U.view == V_PROJECT) return "UP/DOWN item   X/Y value (B = coarse)   A action";
+    if (U.view == V_PROJECT) return "UP/DOWN item   X/Y value / browse projects   A action";
+    if (U.view == V_SYSTEM) return "UP/DOWN item   X/Y change   A apply / action";
     if (U.aHeld) return "A held: X/Y lock value on this step   B clear locks";
     return "A trig  hold A+X/Y lock  X/Y value  B+L/R tab  B+UP/DN pattern";
 }
@@ -1256,7 +1642,7 @@ static void drawSamples() {
 static void drawHelp() {
     box(30, 34, SW - 60, SH - 68, "CONTROLS");
     static const char* L[] = {
-        "L1 / R1        track (1-8, FX)",          "L2 / R2        view: TRACK / SONG / PROJECT",
+        "L1 / R1        track (1-8, FX)",          "L2 / R2        view: TRACK / SONG / PROJ / SYSTEM",
         "UP / DOWN      parameter",                 "LEFT / RIGHT   step cursor",
         "X / Y          value up / down",           "B held         coarse  (+L/R tab, +UP/DN pattern)",
         "A tap          trig on / off",             "A hold + X/Y   lock value on the step (trigless)",
@@ -1278,12 +1664,14 @@ static void drawAll() {
     drawRail();
     if (U.view == V_TRACK) drawList();
     else if (U.view == V_SONG) drawSong();
-    else drawProject();
+    else if (U.view == V_PROJECT) drawProject();
+    else drawSystem();
     drawSteps();
     drawHelpLine();
     if (U.modal == M_MENU) drawMenu();
     else if (U.modal == M_SAMPLES) drawSamples();
     else if (U.modal == M_HELP) drawHelp();
+    else if (U.modal == M_KEYS) drawKeys();
     if (gExp.on) {
         box(120, 180, 400, 110, "EXPORTING SONG");
         char b[96]; snprintf(b, sizeof b, "%s", gExp.rel);
@@ -1600,6 +1988,87 @@ static int selfTest(const char* shotDir) {
         prjPath("selftest", p, sizeof p); remove(p);
         remove(sp);
     }
+    // Projektnamen: SAVE AS ueber die Bildschirmtastatur
+    U.modal = M_NONE; U.view = V_PROJECT; U.prjRow = PR_SAVEAS;
+    snprintf(gPrjName, sizeof gPrjName, "old");
+    tap(BT_A); CHECK(U.modal == M_KEYS, "SAVE AS: Tastatur offen");
+    for (int i = 0; i < 5; i++) tap(BT_B);   // "old" loeschen
+    gKeyCase = 0;
+    tap(BT_RIGHT); tap(BT_A);                // B
+    tap(BT_A, 0); tap(BT_DOWN); tap(BT_DOWN); tap(BT_A);   // B, dann 2. Zeile: "1"? (Zeile 3 = Ziffern)
+    tap(BT_X);                               // Leerzeichen
+    tap(BT_Y); tap(BT_UP); tap(BT_UP); tap(BT_LEFT); tap(BT_A);   // klein: "a"
+    shot("12-keys");
+    char typed[32]; snprintf(typed, sizeof typed, "%s", U.keyBuf);
+    printf("   getippt: '%s'\n", typed);
+    CHECK(!strcmp(typed, "BB1 a"), "Tastatur tippt 'BB1 a'");
+    tap(BT_START);
+    CHECK(U.modal == M_NONE && !strcmp(gPrjName, "BB1 a") && prjExists("BB1 a"), "Projekt unter freiem Namen gespeichert");
+    // Durchblaettern und Oeffnen
+    snprintf(gPrjName, sizeof gPrjName, "zz other"); prjSave();
+    U.prjRow = PR_OPEN; gPrjBrowse = -1;
+    tap(BT_Y);
+    CHECK(!strcmp(browseName(), "BB1 a"), "Y blaettert zum vorigen Projekt");
+    shot("13-open");
+    tap(BT_A); CHECK(!strcmp(gPrjName, "BB1 a"), "A oeffnet das gezeigte Projekt");
+    prjPath("BB1 a", p, sizeof p); remove(p); prjPath("zz other", p, sizeof p); remove(p);
+    // MIDI: Clock fuehrt das Tempo, Program Change waehlt das Pattern, Noten spielen die Spur
+    gCfg.clockIn = 1; gCfg.midiIn = 1; gRate = 48000;
+    for (int i = 0; i <= 48; i++) { MidiMsg m = {0xF8, 0, 0, 0, 100.0 + i * (60.0 / (100.0 * 24.0))}; midiInHandle(m); }
+    printf("   Clock: %.2f BPM\n", gEng.extBpm);
+    CHECK(scTempoNow() == 100, "MIDI-Clock 100 BPM: Tempo folgt");
+    { MidiMsg m = {0xFA, 0, 0, 0, 0}; midiInHandle(m); } CHECK(scIsRunning(), "MIDI Start");
+    { MidiMsg m = {0xFC, 0, 0, 0, 0}; midiInHandle(m); } CHECK(!scIsRunning(), "MIDI Stop");
+    gCfg.clockIn = 0; midiBlock(256); CHECK(gEng.extBpm == 0, "Clock aus: eigenes Tempo");
+    { MidiMsg m = {0xC0, 2, 0, 0, 0}; midiInHandle(m); } CHECK(scPattern() == 2, "Program Change 3: Pattern 03");
+    scSetPattern(0);
+    {
+        int before = 0; for (int i = 0; i < NVOICES; i++) before += gEng.v[i].used ? 1 : 0;
+        MidiMsg m = {0x92, 60, 100, 0, 0}; midiInHandle(m);
+        int after = 0; for (int i = 0; i < NVOICES; i++) after += gEng.v[i].used && gEng.v[i].track == 2 ? 1 : 0;
+        CHECK(after > 0, "Note auf Kanal 3 spielt Spur 3");
+        (void)before;
+    }
+    // Noten hinaus: ein Trig erzeugt Note-On und spaeter Note-Off
+    gCfg.notesOut = 1; gNOffs = 0;
+    noteOutCb(nullptr, 1, 64, 100, gEng.seq.pos, 4800);
+    CHECK(gNOffs == 1 && gOffs[0].st == 0x81 && gOffs[0].note == 64, "Trig als MIDI-Note, Note-Off vorgemerkt");
+    flushOffs(-1); CHECK(gNOffs == 0, "Note-Offs gesendet");
+    gCfg.notesOut = 0;
+    // Webserver: hochladen, Liste, herunterladen, loeschen - ueber echtes HTTP
+    if (webStart(gBase, 18080)) {
+        auto http = [&](const char* req, const void* body, int blen, char* out, int on) -> int {
+            int fd = socket(AF_INET, SOCK_STREAM, 0);
+            sockaddr_in a; memset(&a, 0, sizeof a); a.sin_family = AF_INET; a.sin_port = htons((uint16_t)webPort()); a.sin_addr.s_addr = htonl(0x7f000001);
+            if (connect(fd, (sockaddr*)&a, sizeof a)) { close(fd); return -1; }
+            char h[600]; int hl = snprintf(h, sizeof h, "%s HTTP/1.1\r\nHost: x\r\nContent-Length: %d\r\n\r\n", req, blen);
+            if (send(fd, h, hl, 0) < 0 || (blen && send(fd, body, blen, 0) < 0)) { close(fd); return -1; }
+            int got = 0, r;
+            while (got < on - 1 && (r = (int)recv(fd, out + got, on - 1 - got, 0)) > 0) got += r;
+            out[got] = 0; close(fd);
+            int code = 0; sscanf(out, "HTTP/1.1 %d", &code);
+            return code;
+        };
+        static char resp[200000];
+        static float tone[2000]; for (int i = 0; i < 2000; i++) tone[i] = 0.3f * sinf(i * 0.1f);
+        char tmpw[800]; snprintf(tmpw, sizeof tmpw, "%sweb-tmp.wav", gBase); wavWrite(tmpw, tone, 2000, 48000, 1);
+        FILE* f = fopen(tmpw, "rb"); static char wb[20000]; int wn = (int)fread(wb, 1, sizeof wb, f); fclose(f); remove(tmpw);
+        CHECK(http("PUT /api/upload?root=samples&path=web%2Fkick.wav", wb, wn, resp, sizeof resp) == 200, "Web: Sample hochgeladen");
+        char fp[800]; snprintf(fp, sizeof fp, "%ssamples/web/kick.wav", gBase);
+        struct stat st; CHECK(stat(fp, &st) == 0 && st.st_size == wn, "Web: Datei liegt in samples/web/");
+        CHECK(http("GET /api/list", nullptr, 0, resp, sizeof resp) == 200 && strstr(resp, "\"web/kick.wav\""), "Web: Liste nennt das Sample");
+        const char* prj = "trk.0.vol = 90\n";
+        CHECK(http("PUT /api/upload?root=projects&path=from%20phone.sc", prj, (int)strlen(prj), resp, sizeof resp) == 200 && prjExists("from phone"), "Web: Projekt hochgeladen");
+        CHECK(http("GET /api/file?root=projects&path=from%20phone.sc", nullptr, 0, resp, sizeof resp) == 200 && strstr(resp, "trk.0.vol = 90"), "Web: Projekt heruntergeladen");
+        CHECK(http("PUT /api/upload?root=samples&path=..%2Fevil.wav", "x", 1, resp, sizeof resp) == 400, "Web: Pfad mit .. abgelehnt");
+        CHECK(http("PUT /api/upload?root=projects&path=x.exe", "x", 1, resp, sizeof resp) == 400, "Web: falsche Endung abgelehnt");
+        CHECK(http("GET /", nullptr, 0, resp, sizeof resp) == 200 && strstr(resp, "SYNTH CITY CORE"), "Web: Seite");
+        CHECK(http("POST /api/delete?root=samples&path=web%2Fkick.wav", nullptr, 0, resp, sizeof resp) == 200 && stat(fp, &st) != 0, "Web: geloescht");
+        prjPath("from phone", p, sizeof p); remove(p);
+        snprintf(fp, sizeof fp, "%ssamples/web", gBase); rmdir(fp);
+    } else CHECK(false, "Webserver startet");
+    U.view = V_SYSTEM; U.modal = M_NONE; idle(2);
+    shot("14-system");
     printf("%s: %d Fehler\n", gFails ? "SELBSTTEST FEHLGESCHLAGEN" : "Selbsttest bestanden", gFails);
     return gFails ? 1 : 0;
 }
@@ -1609,6 +2078,7 @@ static int selfTest(const char* shotDir) {
 // ============================================================================================
 int main(int argc, char** argv) {
     setvbuf(stdout, nullptr, _IOLBF, 0);
+    if (argc >= 3 && !strcmp(argv[1], "--dhcpd")) return runDhcpd(argv[2]);   // Helfer fuer pc-modus.sh
     bool test = false, windowed = false, bench = false, learnArg = false;
     const char* shotDir = nullptr;
     int bufFrames = 256;
@@ -1693,7 +2163,17 @@ int main(int argc, char** argv) {
         SDL_PauseAudioDevice(gAudio, 0);
     }
 
-    uint32_t lastSave = 0;
+    gEng.noteOut = noteOutCb;
+    midiStart();
+    usbAudioSetEngineRate(gRate);
+    usbAudioSetGain(gCfg.usbVol / 100.f);
+    webStart(gBase, 80);
+    gUsbNow = detectUsbMode();
+    if (haveUsbScript() && gCfg.usbMode != gUsbNow) applyUsbMode();   // PC-Modus ueber Neustarts merken
+
+    uint32_t lastSave = 0, usbAt = 0, smpChangedAt = 0, updAt = 0;
+    int smpSeq = webSampleSeq(), prjSeqSeen = webProjectSeq(), evSeen = 0;
+    { char b[8]; evSeen = webLastEvent(b, sizeof b); }
     while (!U.quit) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
@@ -1714,6 +2194,38 @@ int main(int argc, char** argv) {
         if (U.dirty && U.now - U.editAt > 4000 && U.now - lastSave > 20000) {
             if (prjSave()) { U.dirty = false; lastSave = U.now; settingsSave(); }
         }
+        // USB: Geraet umgebaut? USB-Audio und PC-Eingang folgen dem Modus
+        if (gUsbJob == 2) {
+            gUsbJob = 0;
+            gUsbNow = detectUsbMode();
+            if (gUsbNow != gCfg.usbMode) toast("USB mode failed - see pc-modus.log");
+            else toast(gUsbNow ? "PC mode on - browser: http://192.168.77.1" : "Host mode on");
+        }
+        if (U.now - usbAt > 1500 && !gUsbJob) {
+            usbAt = U.now;
+            gUsbNow = detectUsbMode();
+            bool want = gUsbNow == 2;
+            if (want && !usbAudioActive()) { usbAudioSetChannels(2); usbAudioStart(); }
+            if (!want && usbAudioActive()) usbAudioStop();
+            bool wantIn = want && gCfg.pcIn;
+            if (wantIn && !pcInActive()) pcInStart();
+            if (!wantIn && pcInActive()) pcInStop();
+        }
+        // Web: was hochgeladen wurde, kommt ohne Neustart an
+        {
+            char ev[160];
+            int seq = webLastEvent(ev, sizeof ev);
+            if (seq != evSeen) { evSeen = seq; toast("Web: %s", ev); }
+            if (webSampleSeq() != smpSeq) { smpSeq = webSampleSeq(); smpChangedAt = U.now ? U.now : 1; }
+            if (smpChangedAt && U.now - smpChangedAt > 1500) {   // Samples, die das Projekt vermisst, jetzt laden
+                smpChangedAt = 0;
+                int got = poolResolveWanted();
+                if (got) toast("%d missing sample(s) loaded", got);
+            }
+            if (webProjectSeq() != prjSeqSeen) { prjSeqSeen = webProjectSeq(); gPrjBrowse = -1; }
+            if (webUpdateReady() && !updAt) { updAt = U.now ? U.now : 1; prjSave(); settingsSave(); toast("Update received - restarting ..."); }
+            if (updAt && U.now - updAt > 1500) U.quit = true;
+        }
         if (gLearnReq) { gLearnReq = false; lockA(); scStop(); unlockA(); runLearn(gMapPath); IN.poll(); IN.poll(); }
         if (!gScreenOff) { drawAll(); present(); }
         if (useDrm || !ren || gScreenOff) SDL_Delay(16);   // ohne VSync: rund 60 Bilder/s
@@ -1721,6 +2233,9 @@ int main(int argc, char** argv) {
     if (U.dirty) prjSave();
     settingsSave();
     if (gAudio) SDL_CloseAudioDevice(gAudio);
+    flushOffs(-1);
+    midiStop();
+    usbAudioStop();
     drmClose();
     SDL_Quit();
     return 0;

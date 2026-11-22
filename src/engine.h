@@ -338,6 +338,7 @@ struct Engine : Sink {
     // Das Tempo, das gerade gilt: das eigene des Patterns, sonst das des Projekts.
     // Das ist das MUSIKALISCHE Tempo - so steht es in der Anzeige, und daran haengt das Echo.
     double tempoOf(int p) const {
+        if (extBpm > 0.0) return extBpm;                       // externe MIDI-Clock fuehrt
         if (songOn && songBpm > 0) return (double)songBpm;     // die Song-Zeile bestimmt das Tempo
         int pb = (p >= 0 && p < NPATTERNS) ? P.pat[p].bpm : 0;
         return pb > 0 ? (double)pb : (double)P.g[paramSlot(paramFind("bpm"))];
@@ -535,6 +536,12 @@ struct Engine : Sink {
         return ModState::trigOffset(snap, d, at, spb, 0x51u + (uint32_t)track * 977u);
     }
 
+    // Geraet: Noten nach aussen (MIDI) und Tempo von aussen (MIDI-Clock). Beides bleibt im
+    // Browser und im Plugin ungenutzt (nullptr / 0).
+    void (*noteOut)(void* user, int track, int note, int vel, int64_t at, int32_t len) = nullptr;
+    void* noteUser = nullptr;
+    double extBpm = 0.0;
+
     void fire(const Ev& e) {
         const Track& tr = P.pat[pat].t[e.track];
         float snap[64];
@@ -624,6 +631,8 @@ struct Engine : Sink {
                 if (nt < 0 || nt > 127) continue;
                 noten[nNoten++] = (float)nt;
             }
+        if (noteOut)
+            for (int c = 0; c < nNoten; c++) noteOut(noteUser, e.track, (int)(noten[c] + 0.5f), e.vel, e.at, e.len);
         for (int c = 0; c < nNoten; c++) {
             snap[sNote] = noten[c];
             int i = pick();
