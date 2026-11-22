@@ -216,6 +216,14 @@ r Wiederholungen dauert (s + l·r) Sechzehntel ab ihrem Ursprung. Klang-Tests: W
 LOOP-Sprung samt Zähler (Mutation wird rot), HALT genau am Ende, Mutes, Scene B, Start-Step,
 Zeilentempo, Dokument.
 
+**Song aufnehmen** (im Song-Fenster): **EXPORT WAV** rechnet den Song offline im Kern der
+Oberfläche — von Zeile FROM bis zum Ende von Zeile TO (samplegenau, auch wenn eine Zeile sich
+selbst folgt), dann TAIL Sekunden Ausklang für Hall und Delay; schneller als Echtzeit, in
+30-ms-Häppchen, damit die Seite bedienbar bleibt. **REC LIVE** nimmt auf, was gerade aus dem
+Klang-Kern kommt (Mutes, Morph, Pattern-Wechsel von Hand), bis man stoppt (höchstens 15 min).
+Beides wird als 16-Bit-Stereo-WAV gespeichert. Tests: Länge des Exports auf ±2 Samples
+(wasm), WAV-Kopf und Download im Browser, Live-Aufnahme.
+
 ## FX-Spur: ein eigener Sequencer für die Effekte
 
 Jedes Pattern hat neben den 8 Spuren eine **FX-Spur** (in der Spurleiste unten: **FX**). Ihre

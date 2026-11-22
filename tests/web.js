@@ -179,6 +179,41 @@ const grp = n => console.log('- ' + n);
   render(6000);
   chk(s1 >= 0 && x.scPlayStep(0) !== s1, 'der Zeiger bewegt sich nicht');
 
+  grp('Song als WAV rechnen: genau bis zum Zeilenende, dann der Ausklang');
+  {
+    x.scStop();
+    while (x.scSongN()) x.scSongDel(0);
+    x.scSongAdd(0, 1); x.scSongAdd(1, 2);
+    x.scSongSetF(0, 3, 16); x.scSongSetF(1, 3, 8);            // Laenge 16 und 8 Steps
+    const patVor = x.scPattern();
+    const zaehle = (von, bis, tail) => {
+      chk(x.scExportBegin(von, bis, tail, 600) === 1, 'der Export beginnt nicht');
+      const buf = x.scAlloc(4096 * 2 * 4);
+      let n = 0, k, laut = 0;
+      while ((k = x.scExportRender(buf, 4096)) > 0) {
+        const f = new Float32Array(x.memory.buffer, buf, k * 2);
+        for (const v of f) if (Math.abs(v) > laut) laut = Math.abs(v);
+        n += k;
+      }
+      x.scExportEnd();
+      return {n, laut};
+    };
+    const bpm = x.scTempoNow(), sech = SR * 60 / bpm / 4;
+    let r = zaehle(0, 0, 1);
+    chk(Math.abs(r.n - (Math.round(16 * sech) + SR)) <= 2, 'Zeile 1 + 1 s Ausklang hat nicht die richtige Laenge: ' + r.n);
+    chk(r.laut > 0.01, 'der Export ist still');
+    r = zaehle(0, 1, 0);
+    chk(Math.abs(r.n - Math.round((16 + 16) * sech)) <= 2, 'Zeile 1 bis 2 (16 + 2 x 8 Steps) hat nicht die richtige Laenge: ' + r.n);
+    r = zaehle(1, 1, 0);
+    chk(Math.abs(r.n - Math.round(16 * sech)) <= 2, 'ab Zeile 2 beginnt der Export nicht dort: ' + r.n);
+    chk(x.scPattern() === patVor && !x.scSongOn(), 'nach dem Export ist der Zustand nicht wie vorher');
+    // Ein Song aus einer Zeile wiederholt sich selbst - der Export endet trotzdem nach ihr
+    x.scSongDel(1);
+    r = zaehle(0, 0, 0);
+    chk(Math.abs(r.n - Math.round(16 * sech)) <= 2, 'eine Zeile, die sich selbst folgt, wird endlos exportiert: ' + r.n);
+    while (x.scSongN()) x.scSongDel(0);
+  }
+
   console.log(fails ? `\nFEHLGESCHLAGEN: ${fails} von ${checks} Pruefungen`
                     : `\nOK: ${checks} Pruefungen ok, 0 Fehler`);
   process.exit(fails ? 1 : 0);

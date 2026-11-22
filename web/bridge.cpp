@@ -241,6 +241,60 @@ void scSongMove(int i, int dir) {
     SongStep t = s.e[i]; s.e[i] = s.e[j]; s.e[j] = t;
 }
 int  scSongMuteNow()    { return gEng.songOn ? gEng.songMute : 0; }
+// --- Song als WAV rechnen (offline, im Kern der Oberflaeche) -------------------------------
+// Von Zeile 'von' bis zum Ende von Zeile 'bis', dann 'tail' Sekunden Ausklang. Gerechnet wird in
+// Haeppchen (scExportRender), damit die Oberflaeche dazwischen atmen kann.
+static int gExpBis = -1, gExpTail = 0, gExpPhase = 0, gExpPatVor = 0; static bool gExpDrin = false; static int64_t gExpUrsprung = 0;
+static int64_t gExpMax = 0, gExpDone = 0;
+int scExportBegin(int von, int bis, int tailSec, int maxSec) {
+    if (!gEng.P.song.n) return 0;
+    gExpPatVor = gEng.pat;
+    gEng.prepare(gEng.sr);
+    for (int t = 0; t < NTRACKS; t++) gEng.mute[t] = false;
+    gEng.morph = 0.0f;
+    gEng.songStart(von);                           // Uhr steht: die Zeile beginnt sofort
+    if (!gEng.songOn) return 0;
+    gEng.seq.bpm = gEng.effTempo(gEng.pat);        // wie start(), ohne den Song vorn neu zu beginnen
+    gEng.seq.start();
+    gEng.enterRow(gEng.songPos);
+    gExpBis = bis < 0 || bis >= gEng.P.song.n ? gEng.P.song.n - 1 : bis;
+    gExpTail = (int)(tailSec * gEng.sr);
+    gExpMax = (int64_t)maxSec * (int64_t)gEng.sr;
+    gExpPhase = 0; gExpDone = 0; gExpDrin = false;
+    return 1;
+}
+// Rechnet hoechstens 'frames' Bilder nach out (stereo verschraenkt). Rueckgabe: gerechnete Bilder;
+// 0 = fertig. Phase 0: Song bis zum Ende der Zielzeile, Phase 1: Ausklang.
+int scExportRender(float* out, int frames) {
+    int done = 0;
+    while (done < frames) {
+        int c = frames - done; if (c > 512) c = 512;
+        if (gExpPhase == 0) {
+            if (gEng.songPos == gExpBis && !gExpDrin) { gExpDrin = true; gExpUrsprung = gEng.seq.origin; }
+            // Ende: die Zielzeile ist vorbei (der Wechsel passiert genau am Blockende, die naechste
+            // Zeile hat noch nichts gespielt), der Song hat angehalten, oder die Hoechstdauer.
+            bool ende = !gEng.seq.running || !gEng.songOn || gExpDone >= gExpMax
+                        || (gExpDrin && (gEng.songPos != gExpBis || gEng.seq.origin != gExpUrsprung));   // auch: dieselbe Zeile beginnt neu
+            if (!ende && gEng.songPos == gExpBis && gEng.songArmed && gEng.switchAt > gEng.seq.pos) {
+                int64_t bis = gEng.switchAt - gEng.seq.pos;           // genau bis zum Zeilenende
+                if (bis < c) c = (int)bis;
+            }
+            if (ende) { gEng.songStop(); gEng.stop(); gExpPhase = 1; continue; }
+        } else {
+            if (gExpTail <= 0) break;
+            if (c > gExpTail) c = gExpTail;
+            gExpTail -= c;
+        }
+        gEng.render(out + done * 2, c);
+        done += c; gExpDone += c;
+    }
+    return done;
+}
+int  scExportSeconds() { return (int)(gExpDone / (int64_t)gEng.sr); }
+void scExportEnd() {
+    gEng.songStop(); gEng.stop(); gEng.prepare(gEng.sr);
+    gEng.pat = gExpPatVor; gEng.resetTrackValues();
+}
 void scSongStart()      { gEng.songStart(); }
 void scSongStop()       { gEng.songStop(); }
 int  scSongOn()         { return gEng.songOn ? 1 : 0; }

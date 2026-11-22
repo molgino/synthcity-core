@@ -259,6 +259,10 @@ footer {
 #songEdit .chips button.cur { background: var(--amber); color: #15100a; border-color: var(--amber); }
 #songEdit .chips span { align-self: center; font-family: var(--mono); font-size: 12px; padding: 0 4px; }
 .songdlg .sheet { max-height: 30vh; }
+#recPanel button { min-height: 32px; padding: 0 8px; font-size: 11px; }
+#recPanel button.cur { background: var(--amber); color: #15100a; border-color: var(--amber); }
+#recPanel span { font-family: var(--mono); font-size: 12px; }
+#songLive.on { background: var(--lock); color: #fff; border-color: var(--lock); }
 .trk.smuted { opacity: .45; }
 .trk.smuted .m { border-style: dashed; }
 .songrow .wo { font-family: var(--mono); font-size: 13px; padding: 0 6px; min-height: 44px;
@@ -473,6 +477,13 @@ textarea {
       <button id="songPlay">SONG ON</button>
       <div class="spacer"></div>
       <button id="songClose">CLOSE</button>
+    </div>
+    <div class="lbl" style="margin-top:2px">Record</div>
+    <div id="recPanel" class="chips" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button id="songExport">EXPORT WAV</button>
+      <button id="songLive">REC LIVE</button>
+      <span class="hint" id="recState" style="align-self:center"></span>
     </div>
   </div>
 </dialog>
@@ -698,6 +709,7 @@ async function audioOn() {
         buildPats(); buildPads(); buildParams();
       }
     }
+    if (e.data.type === 'liveChunk' || e.data.type === 'liveEnd') { liveNachricht(e.data); return; }
     if (e.data.type === 'ready') el('klang').classList.add('on');
     if (e.data.type === 'fehler') console.error('Audio-Kern:', e.data.text);
     if (e.data.type === 'smp') { if (e.data.n) smpAck.add(e.data.slot); smpPaint(); }
@@ -1962,6 +1974,7 @@ function songPaint() {
     list.appendChild(row);
   }
   songEditPaint();
+  recPaint();
   el('songPlay').textContent = songAn() ? 'SONG OFF' : 'SONG ON';
   el('songPlay').disabled = !n;
 }
@@ -2029,7 +2042,108 @@ function songEditPaint() {
     knopf(c, 'DELETE', () => { cmd('scSongDel', i); songSel = -1; songPaint(); });
   });
 }
-el('songBtn').onclick = () => { songPaint(); el('song').showModal(); };
+// --- Song aufnehmen ---------------------------------------------------------------------------
+// EXPORT WAV rechnet den Song offline im Kern der Oberflaeche (genau, schneller als Echtzeit);
+// REC LIVE nimmt auf, was gerade aus dem Klang-Kern kommt - mit allem, was man dabei tut.
+const rec = {von: 0, bis: -1, tail: 4, live: null, laeuft: false};
+function wavBlob(chunks, frames, sr) {
+  const buf = new ArrayBuffer(44 + frames * 4), d = new DataView(buf);
+  const txt = (o, t) => { for (let i = 0; i < t.length; i++) d.setUint8(o + i, t.charCodeAt(i)); };
+  txt(0, 'RIFF'); d.setUint32(4, 36 + frames * 4, true); txt(8, 'WAVE'); txt(12, 'fmt ');
+  d.setUint32(16, 16, true); d.setUint16(20, 1, true); d.setUint16(22, 2, true); d.setUint32(24, sr, true);
+  d.setUint32(28, sr * 4, true); d.setUint16(32, 4, true); d.setUint16(34, 16, true); txt(36, 'data');
+  d.setUint32(40, frames * 4, true);
+  let o = 44;
+  for (const c of chunks) { new Int16Array(buf, o, c.length).set(c); o += c.length * 2; }
+  return new Blob([buf], {type: 'audio/wav'});
+}
+const zuInt16 = (L, R, n) => {             // stereo verschraenkt, mit weicher Grenze
+  const o = new Int16Array(n * 2);
+  for (let i = 0; i < n; i++) {
+    const l = Math.max(-1, Math.min(1, L[i])), r = Math.max(-1, Math.min(1, R[i]));
+    o[i * 2] = l * 32767; o[i * 2 + 1] = r * 32767;
+  }
+  return o;
+};
+async function blobSpeichern(name, blob) {
+  try {
+    const dl = window.claude && window.claude.use ? await window.claude.use('downloads') : null;
+    if (dl) { await dl.save({filename: name, data: blob}); return true; }
+  } catch (e) { if (e && (e.code === 'dismissed' || e.code === 'declined')) return false; }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  return true;
+}
+const zeitName = () => new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+function recPaint() {
+  const box = el('recPanel');
+  box.innerHTML = '';
+  const n = X.scSongN();
+  if (rec.bis >= n) rec.bis = n - 1;
+  if (rec.von >= n) rec.von = 0;
+  const k = (t, fn, cur) => { const b = document.createElement('button'); b.textContent = t; if (cur) b.className = 'cur'; b.onclick = () => { fn(); recPaint(); }; box.appendChild(b); };
+  const w = t => { const sp = document.createElement('span'); sp.textContent = t; box.appendChild(sp); };
+  w('FROM'); k('\u2212', () => rec.von = Math.max(0, rec.von - 1)); w('row ' + (rec.von + 1)); k('+', () => rec.von = Math.min(n - 1, rec.von + 1));
+  w('TO'); k('\u2212', () => rec.bis = Math.max(rec.von, (rec.bis < 0 ? n - 1 : rec.bis) - 1));
+  w(rec.bis < 0 ? 'end' : 'row ' + (rec.bis + 1)); k('+', () => rec.bis = rec.bis < 0 || rec.bis >= n - 1 ? -1 : rec.bis + 1);
+  w('TAIL'); for (const t of [0, 2, 4, 8]) k(t + 's', () => rec.tail = t, rec.tail === t);
+  el('songExport').disabled = !n || rec.laeuft;
+}
+el('songExport').onclick = () => {
+  if (rec.laeuft) return;
+  if (!X.scExportBegin(rec.von, rec.bis, rec.tail, 900)) { el('recState').textContent = 'Nothing to export.'; return; }
+  rec.laeuft = true; recPaint();
+  const chunks = [];
+  let frames = 0;
+  const buf = X.scAlloc(8192 * 2 * 4);
+  const schritt = () => {
+    const t0 = performance.now();
+    let k = 1;
+    while (performance.now() - t0 < 30 && (k = X.scExportRender(buf, 8192)) > 0) {   // je 30 ms, die Seite bleibt bedienbar
+      const f = new Float32Array(X.memory.buffer, buf, k * 2);
+      const o = new Int16Array(k * 2);
+      for (let i = 0; i < k * 2; i++) { const v = f[i] > 1 ? 1 : (f[i] < -1 ? -1 : f[i]); o[i] = v * 32767; }
+      chunks.push(o); frames += k;
+    }
+    el('recState').textContent = 'rendering \u2026 ' + (frames / 48000).toFixed(1) + ' s';
+    if (k > 0) { setTimeout(schritt, 0); return; }
+    X.scExportEnd();
+    rec.laeuft = false; recPaint();
+    const name = 'synthcity-song-' + zeitName() + '.wav';
+    el('recState').textContent = 'Song: ' + (frames / 48000).toFixed(1) + ' s \u00b7 saving \u2026';
+    blobSpeichern(name, wavBlob(chunks, frames, 48000)).then(ok => {
+      el('recState').textContent = ok ? 'Saved ' + name : 'Not saved.';
+    });
+  };
+  schritt();
+};
+el('songLive').onclick = async () => {
+  if (!rec.live) {
+    try { await audioOn(); } catch (e) { return; }
+    rec.live = {chunks: [], frames: 0, t0: Date.now()};
+    node.port.postMessage({fn: 'liveRec', on: true});
+    el('songLive').classList.add('on'); el('songLive').textContent = 'STOP REC';
+    el('recState').textContent = 'recording \u2026 play, mute, morph - everything is captured';
+  } else node.port.postMessage({fn: 'liveRec', on: false});
+};
+function liveNachricht(m) {
+  if (!rec.live) return;
+  if (m.type === 'liveChunk') {
+    rec.live.chunks.push(zuInt16(m.L, m.R, m.L.length)); rec.live.frames += m.L.length;
+    el('recState').textContent = 'recording \u2026 ' + (rec.live.frames / 48000).toFixed(0) + ' s';
+    if (rec.live.frames > 48000 * 900) node.port.postMessage({fn: 'liveRec', on: false});   // hoechstens 15 min
+  } else if (m.type === 'liveEnd') {
+    const l = rec.live; rec.live = null;
+    el('songLive').classList.remove('on'); el('songLive').textContent = 'REC LIVE';
+    const name = 'synthcity-live-' + zeitName() + '.wav';
+    blobSpeichern(name, wavBlob(l.chunks, l.frames, sampleRateNow())).then(ok => {
+      el('recState').textContent = ok ? 'Saved ' + name + ' (' + (l.frames / sampleRateNow()).toFixed(1) + ' s)' : 'Not saved.';
+    });
+  }
+}
+const sampleRateNow = () => (ctx ? ctx.sampleRate : 48000);
+el('songBtn').onclick = () => { songPaint(); recPaint(); el('song').showModal(); };
 el('songClose').onclick = () => el('song').close();
 el('songAdd').onclick = () => { cmd('scSongAdd', X.scPattern(), 1); songPaint(); };
 el('songAddLoop').onclick = () => { cmd('scSongAdd', 0, 1); const n = X.scSongN() - 1; cmd('scSongSetF', n, 2, 1); songSel = n; songPaint(); };
@@ -2275,7 +2389,7 @@ el('docFile').onclick = async () => {
   try {
     const dl = window.claude && window.claude.use ? await window.claude.use('downloads') : null;
     if (dl) { await dl.save({filename: name, data: new Blob([text], {type: 'text/plain'})}); return; }
-  } catch (e) { if (e && e.code === 'dismissed') return; }
+  } catch (e) { if (e && (e.code === 'dismissed' || e.code === 'declined')) return; }
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([text], {type: 'text/plain'}));
   a.download = name; document.body.appendChild(a); a.click(); a.remove();

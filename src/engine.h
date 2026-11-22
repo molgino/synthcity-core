@@ -407,10 +407,10 @@ struct Engine : Sink {
 
     // Song an. Steht die Uhr, beginnt die erste Zeile sofort; laeuft sie, am naechsten Taktende -
     // ein Sprung mitten im Takt klaenge wie ein Fehler.
-    void songStart() {
+    void songStart(int ab = -1) {
         for (int i = 0; i < NSONG; i++) loopLeft[i] = -1;
         if (!P.song.n) { songOn = false; return; }
-        int erste = songResolve(-1);
+        int erste = (ab >= 0 && ab < P.song.n) ? songResolve(ab - 1) : songResolve(-1);
         if (erste < 0 || P.song.e[erste].type == SONG_HALT) { songOn = false; return; }
         songOn = true;
         if (seq.running) {

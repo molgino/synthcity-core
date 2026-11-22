@@ -588,6 +588,30 @@ async function R(p, id) {
         && /^song\.1\.mute = 1$/m.test(sd) && /^song\.2\.type = 1$/m.test(sd) && /^song\.2\.rep = 2$/m.test(sd) && /^song\.3\.type = 2$/m.test(sd),
         'die Song-Zeilen stehen nicht im Dokument');
     await p.locator('#docClose').tap();
+
+    // Song aufnehmen: EXPORT WAV (offline) von Zeile 1 bis 1, ohne Ausklang -> genau 1 Zeile lang
+    await p.locator('#songBtn').tap(); await p.waitForTimeout(200);
+    const rp = p.locator('#recPanel');
+    await rp.locator('button', {hasText: /^0s$/}).tap(); await p.waitForTimeout(100);
+    // TO: von "end" auf Zeile 1 herunter
+    for (let i = 0; i < 4; i++) { await rp.locator('button', {hasText: '\u2212'}).nth(1).tap(); await p.waitForTimeout(60); }
+    chk((await rp.textContent()).includes('TOrow 1') || (await rp.textContent()).includes('TO\u2212row 1'), 'TO laesst sich nicht auf Zeile 1 stellen: ' + await rp.textContent());
+    const [dl] = await Promise.all([p.waitForEvent('download', {timeout: 30000}), p.locator('#songExport').tap()]);
+    const datei = await dl.path();
+    const groesse = require('fs').statSync(datei).size;
+    // Zeile 1: Laenge 16 (+1 Start), 1 Wiederholung, Tempo +10 -> (1 + 16) Sechzehntel
+    chk(dl.suggestedFilename().startsWith('synthcity-song-') && dl.suggestedFilename().endsWith('.wav'), 'der Export heisst nicht synthcity-song-...wav');
+    chk(groesse > 44 + 48000 * 4 * 0.3, 'die exportierte WAV ist zu kurz: ' + groesse);
+    const kopf = require('fs').readFileSync(datei).subarray(0, 12).toString('latin1');
+    chk(kopf.startsWith('RIFF') && kopf.endsWith('WAVE'), 'der Export ist keine WAV-Datei');
+    chk((await p.locator('#recState').textContent()).includes('Saved'), 'der Export meldet nicht, dass er gespeichert hat');
+    // REC LIVE: aufnehmen, was klingt
+    await p.locator('#songLive').tap(); await p.waitForTimeout(1500);
+    chk(await p.locator('#songLive').evaluate(e => e.classList.contains('on')), 'REC LIVE zeigt nicht, dass es aufnimmt');
+    const [dl2] = await Promise.all([p.waitForEvent('download', {timeout: 15000}), p.locator('#songLive').tap()]);
+    const g2 = require('fs').statSync(await dl2.path()).size;
+    chk(dl2.suggestedFilename().startsWith('synthcity-live-') && g2 > 44 + 48000 * 4 * 1.0, 'die Live-Aufnahme fehlt oder ist zu kurz: ' + g2);
+    await p.locator('#songClose').tap();
   }
 
   grp('Kopieren, Einfuegen, Trigless wird Trig, benutzte Patterns');

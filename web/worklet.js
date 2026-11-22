@@ -30,6 +30,15 @@ class SynthCityNode extends AudioWorkletProcessor {
     if (m.fn === 'scLoad') { this.load(m.doc); return; }
     if (m.fn === 'smp')    { this.sample(m); return; }
     if (m.fn === 'rec')    { this.record(m); return; }
+    if (m.fn === 'liveRec') {
+      if (!m.on && this.live) {                       // Rest schicken, dann Schluss
+        const lv = this.live;
+        this.port.postMessage({type: 'liveChunk', L: lv.L.slice(0, lv.n), R: lv.R.slice(0, lv.n)});
+        this.port.postMessage({type: 'liveEnd'});
+      }
+      this.live = m.on ? {L: new Float32Array(24000), R: new Float32Array(24000), n: 0} : null;
+      return;
+    }
     if (this.x[m.fn]) this.x[m.fn](...(m.args || []));
   }
 
@@ -78,6 +87,15 @@ class SynthCityNode extends AudioWorkletProcessor {
       L[i] = f[i * 2]; R[i] = f[i * 2 + 1];
       const a = Math.abs(L[i]) > Math.abs(R[i]) ? Math.abs(L[i]) : Math.abs(R[i]);
       if (a > peak) peak = a;
+    }
+    // Live-Aufnahme: was herauskommt, in halben Sekunden an die Oberflaeche - dort wird es zur WAV.
+    if (this.live) {
+      const lv = this.live;
+      for (let i = 0; i < n; i++) { lv.L[lv.n] = L[i]; lv.R[lv.n] = R[i]; lv.n++;
+        if (lv.n >= lv.L.length) {
+          this.port.postMessage({type: 'liveChunk', L: lv.L, R: lv.R}, [lv.L.buffer, lv.R.buffer]);
+          lv.L = new Float32Array(24000); lv.R = new Float32Array(24000); lv.n = 0;
+        } }
     }
     // Gemeldet wird das Maximum SEIT DER LETZTEN MELDUNG - ein Spitzenwert, der zwischen
     // zwei Meldungen abfaellt, zeigt sonst fast immer null.
