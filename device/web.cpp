@@ -128,7 +128,13 @@ static void listDir(Buf& b, const char* dir, const char* sub, const char* ext, b
         char full[1200]; snprintf(full, sizeof full, "%s/%s", dir, rel);
         struct stat st;
         if (stat(full, &st)) continue;
-        if (S_ISDIR(st.st_mode)) { if (depth < 4) listDir(b, dir, rel, ext, first, depth + 1); continue; }
+        if (S_ISDIR(st.st_mode)) {
+            if (depth >= 6) continue;
+            bstr(b, first ? "{\"p\":" : ",{\"p\":"); first = false;   // Ordner auch leer zeigen
+            bjson(b, rel); bstr(b, ",\"d\":1}");
+            listDir(b, dir, rel, ext, first, depth + 1);
+            continue;
+        }
         if (!hasExt(e->d_name, ext)) continue;
         char num[64];
         bstr(b, first ? "{\"p\":" : ",{\"p\":"); first = false;
@@ -152,6 +158,24 @@ static void handleList(int fd) {
     bstr(b, tail);
     reply(fd, 200, "application/json", b.p ? b.p : "{}", b.p ? b.n : 2);
     free(b.p);
+}
+// Ordner rekursiv loeschen (nur unter samples/, Tiefe begrenzt). Rueckgabe: geloeschte Dateien, -1 = fehlt
+static int rmTree(const char* path, int depth) {
+    DIR* d = opendir(path);
+    if (!d) return -1;
+    int n = 0;
+    struct dirent* e;
+    while ((e = readdir(d))) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
+        char p[1200]; snprintf(p, sizeof p, "%s/%s", path, e->d_name);
+        struct stat st;
+        if (lstat(p, &st)) continue;
+        if (S_ISDIR(st.st_mode)) { if (depth < 6) { int k = rmTree(p, depth + 1); if (k > 0) n += k; } }
+        else if (!unlink(p)) n++;
+    }
+    closedir(d);
+    rmdir(path);
+    return n;
 }
 static void mkParents(const char* dir, const char* rel) {
     char p[1200]; snprintf(p, sizeof p, "%s/%s", dir, rel);
@@ -237,7 +261,7 @@ static void handle(int fd) {
     }
     if (!isS && !isP) { replyText(fd, 400, "root?"); return; }
     if (!strcmp(method, "GET") && !strcmp(target, "/api/file")) {
-        if (!webSafeRel(rel, 4) || !hasExt(rel, ext)) { replyText(fd, 400, "path?"); return; }
+        if (!webSafeRel(rel, 6) || !hasExt(rel, ext)) { replyText(fd, 400, "path?"); return; }
         FILE* f = fopen(full, "rb");
         if (!f) { replyText(fd, 404, "not found"); return; }
         fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
@@ -254,7 +278,7 @@ static void handle(int fd) {
         return;
     }
     if (!strcmp(method, "PUT") && !strcmp(target, "/api/upload")) {
-        if (!webSafeRel(rel, isS ? 4 : 0) || !hasExt(rel, ext)) { replyText(fd, 400, "invalid file name"); return; }
+        if (!webSafeRel(rel, isS ? 6 : 0) || !hasExt(rel, ext)) { replyText(fd, 400, "invalid file name"); return; }
         if (clen <= 0 || clen > 200LL * 1024 * 1024) { replyText(fd, 413, "file too large (max 200 MB)"); return; }
         mkdir(dir, 0755);
         mkParents(dir, rel);
@@ -264,8 +288,25 @@ static void handle(int fd) {
         replyText(fd, 200, "ok");
         return;
     }
+    if (!strcmp(method, "POST") && !strcmp(target, "/api/mkdir") && isS) {
+        if (!webSafeRel(rel, 6)) { replyText(fd, 400, "invalid folder name"); return; }
+        mkParents(dir, rel);
+        if (mkdir(full, 0755) && errno != EEXIST) { replyText(fd, 400, "could not create folder"); return; }
+        replyText(fd, 200, "ok");
+        return;
+    }
+    if (!strcmp(method, "POST") && !strcmp(target, "/api/rmdir") && isS) {   // Ordner samt Inhalt
+        if (!webSafeRel(rel, 6)) { replyText(fd, 400, "path?"); return; }
+        int n = rmTree(full, 0);
+        if (n < 0) { replyText(fd, 404, "not found"); return; }
+        sync();
+        g_smpSeq++;
+        note("DELETED FOLDER", rel);
+        replyText(fd, 200, "ok");
+        return;
+    }
     if (!strcmp(method, "POST") && !strcmp(target, "/api/delete")) {
-        if (!webSafeRel(rel, 4) || !hasExt(rel, ext)) { replyText(fd, 400, "path?"); return; }
+        if (!webSafeRel(rel, 6) || !hasExt(rel, ext)) { replyText(fd, 400, "path?"); return; }
         if (unlink(full)) { replyText(fd, 404, "not found"); return; }
         sync();
         if (isS) g_smpSeq++; else g_prjSeq++;

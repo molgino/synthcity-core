@@ -232,7 +232,7 @@ static float* wavRead(const char* path, int* frames, int* ch, float* rate) {
 }
 
 // --- Sample-Dateien: alle WAVs unter samples/ (mit Unterordnern) ---------------------------
-enum { MAX_FILES = 1024 };
+enum { MAX_FILES = 4096 };
 struct FileEnt { char rel[200]; };
 static FileEnt gFiles[MAX_FILES];
 static int gNFiles = 0;
@@ -251,7 +251,7 @@ static void scanDir(const char* rel, int depth) {
         char full[800]; snprintf(full, sizeof full, "%ssamples/%s", gBase, r);
         struct stat st;
         if (stat(full, &st) != 0) continue;
-        if (S_ISDIR(st.st_mode)) { if (depth < 4 && strcmp(e->d_name, "export")) scanDir(r, depth + 1); }
+        if (S_ISDIR(st.st_mode)) { if (depth < 6 && strcmp(e->d_name, "export")) scanDir(r, depth + 1); }
         else if (hasWav(e->d_name) && strlen(r) < sizeof gFiles[0].rel) snprintf(gFiles[gNFiles++].rel, sizeof gFiles[0].rel, "%s", r);
     }
     closedir(d);
@@ -772,11 +772,69 @@ static void menuDo(int i) {
 
 // --- Sample-Auswahl -----------------------------------------------------------------------
 static int smpTargetSlot() { return U.sel < FXT ? scGet(U.sel, slotOf(P_SMP)) : 0; }
+// Ordner-Explorer: die Dateiliste ist flach (relative Pfade), die Ansicht zeigt einen Ordner:
+// "..", dann die Unterordner, dann die WAVs darin - wie die Webseite.
+static char gSmpDir[200] = "";
+struct SmpEnt { int kind; int file; char name[96]; int count; };   // kind 0 = "..", 1 = Ordner, 2 = Datei
+static SmpEnt gSmpView[MAX_FILES + 64];
+static int gNSmpView = 0;
+static int cmpEnt(const void* a, const void* b) {
+    const SmpEnt* x = (const SmpEnt*)a; const SmpEnt* y = (const SmpEnt*)b;
+    if (x->kind != y->kind) return x->kind - y->kind;
+    return strcasecmp(x->name, y->name);
+}
+static void buildSmpView() {
+    gNSmpView = 0;
+    size_t dl = strlen(gSmpDir);
+    if (dl) { gSmpView[gNSmpView++] = {0, -1, "..", 0}; }
+    for (int i = 0; i < gNFiles; i++) {
+        const char* r = gFiles[i].rel;
+        if (dl && (strncmp(r, gSmpDir, dl) || r[dl] != '/')) continue;
+        const char* rest = dl ? r + dl + 1 : r;
+        const char* sl = strchr(rest, '/');
+        if (!sl) {
+            if (gNSmpView < MAX_FILES + 63) { SmpEnt& e = gSmpView[gNSmpView++]; e.kind = 2; e.file = i; e.count = 0; snprintf(e.name, sizeof e.name, "%s", rest); }
+            continue;
+        }
+        char sub[96]; snprintf(sub, sizeof sub, "%.*s", (int)(sl - rest), rest);
+        int k = -1;
+        for (int j = 0; j < gNSmpView; j++) if (gSmpView[j].kind == 1 && !strcmp(gSmpView[j].name, sub)) { k = j; break; }
+        if (k < 0 && gNSmpView < MAX_FILES + 63) { k = gNSmpView++; gSmpView[k].kind = 1; gSmpView[k].file = -1; gSmpView[k].count = 0; snprintf(gSmpView[k].name, sizeof gSmpView[k].name, "%s", sub); }
+        if (k >= 0) gSmpView[k].count++;
+    }
+    int skip = dl ? 1 : 0;
+    qsort(gSmpView + skip, gNSmpView - skip, sizeof gSmpView[0], cmpEnt);
+    if (U.smpSel >= gNSmpView) U.smpSel = gNSmpView ? gNSmpView - 1 : 0;
+}
+static void smpEnter(const char* sub) {
+    size_t dl = strlen(gSmpDir);
+    char n[200]; snprintf(n, sizeof n, "%s%s%s", gSmpDir, dl ? "/" : "", sub);
+    snprintf(gSmpDir, sizeof gSmpDir, "%s", n);
+    U.smpSel = 0; U.smpScroll = 0;
+    buildSmpView();
+    if (gNSmpView > 1) U.smpSel = 1;   // erste Zeile unter ".."
+}
+static void smpLeave() {
+    if (!gSmpDir[0]) return;
+    char was[96]; const char* sl = strrchr(gSmpDir, '/');
+    snprintf(was, sizeof was, "%s", sl ? sl + 1 : gSmpDir);
+    if (sl) gSmpDir[sl - gSmpDir] = 0; else gSmpDir[0] = 0;
+    buildSmpView();
+    U.smpSel = 0;
+    for (int i = 0; i < gNSmpView; i++) if (gSmpView[i].kind == 1 && !strcmp(gSmpView[i].name, was)) U.smpSel = i;
+}
 static void openSamples() {
     scanSamples();
+    // Ordner gibt es nicht mehr (per Web geloescht)? Dann nach oben.
+    while (gSmpDir[0]) {
+        size_t dl = strlen(gSmpDir); bool any = false;
+        for (int i = 0; i < gNFiles && !any; i++) any = !strncmp(gFiles[i].rel, gSmpDir, dl) && gFiles[i].rel[dl] == '/';
+        if (any) break;
+        char* sl = strrchr(gSmpDir, '/'); if (sl) *sl = 0; else gSmpDir[0] = 0;
+    }
+    buildSmpView();
     U.modal = M_SAMPLES;
-    if (U.smpSel >= gNFiles) U.smpSel = 0;
-    if (!gNFiles) toast("No .wav files in %ssamples/", gBase);
+    if (!gNFiles) toast("No .wav files in %ssamples/ - upload them in the browser", gBase);
 }
 
 // --- Song ----------------------------------------------------------------------------------
@@ -1189,12 +1247,17 @@ static void handleModal() {
     }
     if (U.modal == M_SAMPLES) {
         if (IN.repeat(BT_UP, U.now) && U.smpSel > 0) U.smpSel--;
-        if (IN.repeat(BT_DOWN, U.now) && U.smpSel < gNFiles - 1) U.smpSel++;
-        if (IN.repeat(BT_LEFT, U.now)) U.smpSel = U.smpSel > 10 ? U.smpSel - 10 : 0;
-        if (IN.repeat(BT_RIGHT, U.now)) U.smpSel = U.smpSel + 10 < gNFiles ? U.smpSel + 10 : (gNFiles ? gNFiles - 1 : 0);
-        if (IN.pressed(BT_A) && gNFiles) {
+        if (IN.repeat(BT_DOWN, U.now) && U.smpSel < gNSmpView - 1) U.smpSel++;
+        if (IN.repeat(BT_L1, U.now)) U.smpSel = U.smpSel > 10 ? U.smpSel - 10 : 0;
+        if (IN.repeat(BT_R1, U.now)) U.smpSel = U.smpSel + 10 < gNSmpView ? U.smpSel + 10 : (gNSmpView ? gNSmpView - 1 : 0);
+        const SmpEnt* e = U.smpSel < gNSmpView ? &gSmpView[U.smpSel] : nullptr;
+        if (IN.pressed(BT_LEFT)) { smpLeave(); return; }
+        if (IN.pressed(BT_RIGHT) && e && e->kind == 1) { smpEnter(e->name); return; }
+        if (IN.pressed(BT_A) && e && e->kind == 0) { smpLeave(); return; }
+        if (IN.pressed(BT_A) && e && e->kind == 1) { char n[96]; snprintf(n, sizeof n, "%s", e->name); smpEnter(n); return; }
+        if (IN.pressed(BT_A) && e && e->kind == 2) {
             int slot = smpTargetSlot();
-            if (poolLoadFile(slot, gFiles[U.smpSel].rel)) {
+            if (poolLoadFile(slot, gFiles[e->file].rel)) {
                 toast("Slot %d: %s", slot + 1, scSmpName(slot));
                 lockA(); scSmpPreview(slot); unlockA();
                 touched();
@@ -1594,7 +1657,7 @@ static void drawKeys() {
 static const char* helpLine() {
     if (U.modal == M_KEYS) return "D-pad choose  A type  B delete  START done  SELECT cancel";
     if (U.modal == M_MENU) return "UP/DOWN choose   A do it   B close";
-    if (U.modal == M_SAMPLES) return "UP/DOWN file   LEFT/RIGHT page   A load+hear   X hear   B close";
+    if (U.modal == M_SAMPLES) return "A open/load  LEFT up  RIGHT into  L1/R1 page  X hear  B close";
     if (U.modal == M_HELP) return "any of A / B / SELECT closes";
     if (U.view == V_SONG) return "X/Y value  A dup row  B+A delete  B+UP/DN move  START play song";
     if (U.view == V_PROJECT) return "UP/DOWN item   X/Y value / browse projects   A action";
@@ -1624,19 +1687,47 @@ static void drawMenu() {
         text(x + 14, ry, MENU[i], i == U.menuSel ? C_TXT : C_DIM);
     }
 }
+static void folderIcon(int x, int y, uint32_t c) { fill(x, y + 3, 6, 2, c); fill(x, y + 5, 13, 9, c); }
+static void waveIcon(int x, int y, uint32_t c) {
+    static const int hh[6] = {3, 8, 5, 10, 4, 7};
+    for (int i = 0; i < 6; i++) fill(x + i * 2, y + 9 - hh[i] / 2, 1, hh[i], c);
+}
 static void drawSamples() {
-    int w = 560, h = 380, x = (SW - w) / 2, y = 40;
-    char t[96]; snprintf(t, sizeof t, "LOAD SAMPLE INTO SLOT %d  (%d files)", smpTargetSlot() + 1, gNFiles);
+    int w = 580, h = 392, x = (SW - w) / 2, y = 34;
+    char t[96]; snprintf(t, sizeof t, "LOAD SAMPLE INTO SLOT %d", smpTargetSlot() + 1);
     box(x, y, w, h, t);
-    int vis = (h - 60) / 18;
+    // Pfad als Brotkrumen
+    char path[240]; snprintf(path, sizeof path, "samples/%s", gSmpDir);
+    fill(x + 1, y + 24, w - 2, 20, C_BG);
+    int pl = (int)strlen(path), maxc = (w - 24) / FONT_W;
+    text(x + 10, y + 26, pl > maxc ? path + (pl - maxc) : path, C_SCENE, maxc);
+    int rowH = 20, top = y + 50, vis = (h - 82) / rowH;
     if (U.smpSel < U.smpScroll) U.smpScroll = U.smpSel;
     if (U.smpSel >= U.smpScroll + vis) U.smpScroll = U.smpSel - vis + 1;
-    for (int i = U.smpScroll; i < gNFiles && i < U.smpScroll + vis; i++) {
-        int ry = y + 30 + (i - U.smpScroll) * 18;
-        if (i == U.smpSel) fill(x + 4, ry - 1, w - 8, 18, C_LINE);
-        text(x + 12, ry, gFiles[i].rel, i == U.smpSel ? C_TXT : C_DIM, 66);
+    const char* cur = scSmpName(smpTargetSlot());
+    for (int i = U.smpScroll; i < gNSmpView && i < U.smpScroll + vis; i++) {
+        const SmpEnt& e = gSmpView[i];
+        int ry = top + (i - U.smpScroll) * rowH;
+        bool s = i == U.smpSel;
+        if (s) fill(x + 4, ry - 2, w - 8, rowH - 1, C_LINE);
+        if (e.kind == 0) { text(x + 14, ry, "..", s ? C_TXT : C_DIM); text(x + 40, ry, "(up)", C_FAINT); continue; }
+        if (e.kind == 1) {
+            folderIcon(x + 12, ry, C_LOCK);
+            text(x + 32, ry, e.name, s ? C_TXT : C_DIM, 52);
+            char n[16]; snprintf(n, sizeof n, "%d", e.count); textR(x + w - 14, ry, n, C_FAINT);
+            continue;
+        }
+        char nm[SMP_NAME]; smpNameOf(gFiles[e.file].rel, nm, sizeof nm);
+        bool inSlot = cur[0] && !strcmp(nm, cur);
+        waveIcon(x + 12, ry, inSlot ? C_PLAY : C_PLAY & 0x7f7f7f);
+        text(x + 32, ry, e.name, s ? C_TXT : (inSlot ? C_PLAY : C_DIM), 60);
     }
-    char b[96]; snprintf(b, sizeof b, "free sample memory: %.1f s", scSmpFree() / 48000.0);
+    if (gNSmpView > vis) {
+        int bh = vis * rowH;
+        fill(x + w - 5, top, 2, bh, C_LINE);
+        fill(x + w - 5, top + U.smpScroll * bh / gNSmpView, 2, vis * bh / gNSmpView > 4 ? vis * bh / gNSmpView : 4, C_SCENE);
+    }
+    char b[96]; snprintf(b, sizeof b, "%d files  -  free sample memory %.1f s", gNFiles, scSmpFree() / 48000.0);
     text(x + 12, y + h - 22, b, C_FAINT);
 }
 static void drawHelp() {
@@ -1969,16 +2060,28 @@ static int selfTest(const char* shotDir) {
     {
         static float tone[4800];
         for (int i = 0; i < 4800; i++) tone[i] = 0.5f * sinf(i * 0.05f);
-        char sp[800]; snprintf(sp, sizeof sp, "%ssamples/zz-selftest.wav", gBase);
+        char dd[800]; snprintf(dd, sizeof dd, "%ssamples/kit", gBase); mkdir(dd, 0755);
+        snprintf(dd, sizeof dd, "%ssamples/kit/sub", gBase); mkdir(dd, 0755);
+        char sp[800]; snprintf(sp, sizeof sp, "%ssamples/kit/zz-selftest.wav", gBase);
         wavWrite(sp, tone, 4800, 48000, 1);
+        char sp2[800]; snprintf(sp2, sizeof sp2, "%ssamples/kit/sub/deep.wav", gBase);
+        wavWrite(sp2, tone, 100, 48000, 1);
         U.sel = 0; U.view = V_TRACK;
+        gSmpDir[0] = 0;
         openSamples();
-        int k = -1; for (int i = 0; i < gNFiles; i++) if (!strcmp(gFiles[i].rel, "zz-selftest.wav")) k = i;
-        CHECK(k >= 0, "Sample-Datei gefunden");
+        int k = -1; for (int i = 0; i < gNSmpView; i++) if (gSmpView[i].kind == 1 && !strcmp(gSmpView[i].name, "kit")) k = i;
+        CHECK(k >= 0 && gSmpView[k].count == 2, "Explorer zeigt Ordner kit mit 2 Samples");
         U.smpSel = k < 0 ? 0 : k;
+        tap(BT_A);
+        CHECK(!strcmp(gSmpDir, "kit") && gSmpView[0].kind == 0 && gSmpView[1].kind == 1 && gSmpView[2].kind == 2, "A: in den Ordner, .. / Ordner / Dateien");
+        U.smpSel = 2;
         tap(BT_A);
         int slot = smpTargetSlot();
         CHECK(scSmpFrames(slot) == 4800 && !strcmp(scSmpName(slot), "zz-selftest"), "Sample im Slot der Spur");
+        U.smpSel = 1; tap(BT_RIGHT);
+        CHECK(!strcmp(gSmpDir, "kit/sub"), "RECHTS: in den Unterordner");
+        tap(BT_LEFT); CHECK(!strcmp(gSmpDir, "kit") && U.smpSel == 1, "LINKS: zurueck, Cursor auf dem Ordner");
+        U.smpSel = 2; idle(1);
         shot("11-samples");
         tap(BT_B);
         // Projekt mit Sample: nach dem Laden sucht der Slot seine Datei selbst
@@ -1986,7 +2089,9 @@ static int selfTest(const char* shotDir) {
         lockA(); scSmpClear(); scLoad(""); unlockA();
         CHECK(prjLoad("selftest") && scSmpFrames(slot) == 4800, "Sample nach Laden wieder da");
         prjPath("selftest", p, sizeof p); remove(p);
-        remove(sp);
+        remove(sp); remove(sp2);
+        snprintf(dd, sizeof dd, "%ssamples/kit/sub", gBase); rmdir(dd);
+        snprintf(dd, sizeof dd, "%ssamples/kit", gBase); rmdir(dd);
     }
     // Projektnamen: SAVE AS ueber die Bildschirmtastatur
     U.modal = M_NONE; U.view = V_PROJECT; U.prjRow = PR_SAVEAS;
@@ -2064,6 +2169,11 @@ static int selfTest(const char* shotDir) {
         CHECK(http("PUT /api/upload?root=projects&path=x.exe", "x", 1, resp, sizeof resp) == 400, "Web: falsche Endung abgelehnt");
         CHECK(http("GET /", nullptr, 0, resp, sizeof resp) == 200 && strstr(resp, "SYNTH CITY CORE"), "Web: Seite");
         CHECK(http("POST /api/delete?root=samples&path=web%2Fkick.wav", nullptr, 0, resp, sizeof resp) == 200 && stat(fp, &st) != 0, "Web: geloescht");
+        CHECK(http("PUT /api/upload?root=samples&path=web%2Fa%2Fb%2Fc%2Fd%2Fdeep.wav", wb, wn, resp, sizeof resp) == 200, "Web: Ordner-Import mit tiefem Pfad");
+        CHECK(http("POST /api/mkdir?root=samples&path=web%2Fleer", nullptr, 0, resp, sizeof resp) == 200 &&
+              http("GET /api/list", nullptr, 0, resp, sizeof resp) == 200 && strstr(resp, "\"web/leer\",\"d\":1"), "Web: leerer Ordner angelegt und gelistet");
+        CHECK(http("POST /api/rmdir?root=samples&path=web", nullptr, 0, resp, sizeof resp) == 200 && stat(fp, &st) != 0, "Web: Ordner samt Inhalt geloescht");
+        CHECK(http("POST /api/rmdir?root=samples&path=..", nullptr, 0, resp, sizeof resp) == 400, "Web: rmdir ausserhalb abgelehnt");
         prjPath("from phone", p, sizeof p); remove(p);
         snprintf(fp, sizeof fp, "%ssamples/web", gBase); rmdir(fp);
     } else CHECK(false, "Webserver startet");

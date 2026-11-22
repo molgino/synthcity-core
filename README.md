@@ -602,10 +602,16 @@ Gerät und umgekehrt.
   Notenlänge. Dafür gibt es den Haken `Engine::noteOut`; Browser und Plugin lassen ihn leer.
 
 **Web-Upload:** Browser auf die Adresse aus SYSTEM (PC-Modus: `http://192.168.77.1`, sonst die
-WLAN-IP, Port 80 bzw. 8080). Samples (auch in Ordner, per Ziehen), Projekte (`.sc`, auch die
+WLAN-IP, Port 80 bzw. 8080). Samples als **Ordner-Explorer** (Brotkrumen, Ordner zuerst mit Anzahl,
+Vorhören im Browser, Suche über alle Ordner, neuer Ordner, Ordner samt Inhalt löschen); **IMPORT
+FOLDER** oder Ziehen lädt ganze Ordner mit allen Unterordnern in den Ordner, in dem man gerade
+steht (nur `.wav`, Fortschritt je Datei). Projekte (`.sc`, auch die
 `.txt`-Sicherung der Handy-App), Herunterladen, Löschen, Song-Exporte unter `export/`, im
 Groovebox-OS das App-Update (`.tgz`). Hochgeladene Samples, die ein Projekt vermisst, lädt das
 Gerät sofort nach. Pfade mit `..`, versteckte Dateien und fremde Endungen lehnt der Server ab.
+
+Auf dem Gerät zeigt SELECT → Load sample dieselbe Ordnerstruktur: A öffnet bzw. lädt, ◀ eine Ebene
+hoch, ▶ in den Ordner, L1/R1 blättern, X hört den Slot vor; das Sample im Slot ist grün markiert.
 
 Dateien liegen neben dem Programm: `projects/<name>.sc` (das Dokument als Text, wie die
 Web-Sicherung), `samples/` (WAV 8–32 Bit, mono/stereo, mit Unterordnern). Ein Projekt merkt
@@ -624,7 +630,7 @@ make device && make devtest          # Desktop-Build + Selbsttest mit Bildschirm
 
 Der Cross-Build linkt **ohne libstdc++** (nur SDL2, ALSA, libm, libc) und läuft so unverändert auf
 ArkOS und auf dem Groovebox-OS. Der Selbsttest besteht auch als aarch64-Programm (unter
-qemu, mit einer SDL-Attrappe): 67 Prüfungen von Trig/Lock/Scene über Song, Speichern/Laden,
+qemu, mit einer SDL-Attrappe): 74 Prüfungen von Trig/Lock/Scene über Song, Speichern/Laden,
 Samples und Export bis zu Bildschirmtastatur, MIDI-Clock/Program Change/Noten und dem
 Webserver über echtes HTTP.
 
