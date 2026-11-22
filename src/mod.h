@@ -56,9 +56,15 @@ inline int modDestOfSlot(int slot) {
     for (int d = 1; d < MOD_NDEST; d++) if (modDestSlot(d) == slot) return d;
     return -1;
 }
+// Bereich eines Ziels - einmal nachgeschlagen (vorher lief je Steuertakt eine Namenssuche).
 inline void modDestRange(int d, float& lo, float& hi) {
-    const ParamDef& pd = PARAMS[paramFind(MOD_DESTS[d].id)];
-    lo = pd.lo; hi = pd.hi;
+    static float L[MOD_NDEST], H[MOD_NDEST];
+    static bool ok = false;
+    if (!ok) {
+        for (int i = 1; i < MOD_NDEST; i++) { const ParamDef& pd = PARAMS[paramFind(MOD_DESTS[i].id)]; L[i] = pd.lo; H[i] = pd.hi; }
+        ok = true;
+    }
+    lo = L[d]; hi = H[d];
 }
 
 struct ModSlots { int wave[2], rate[2], depth[2], dest[2], mode[2], eAtk, eDec, eDepth, eDest; };
@@ -115,13 +121,21 @@ struct ModState {
     // Einen Steuertakt weiter (n Samples) und die Modulation auf pm anwenden.
     bool apply(const float* pf, float* pm, int n, float sr) {
         const ModSlots& m = modSlots();
-        float off[MOD_NDEST] = {0};
+        // Hoechstens drei Ziele (2 LFOs, Mod-Huellkurve): nur diese werden angefasst, statt alle
+        // Ziele durchzugehen. Summiert wird in derselben Reihenfolge wie vorher - bitgleich.
+        int nd = 0, dd[3]; float off[3];
+        auto add = [&](int d, float v) {
+            for (int i = 0; i < nd; i++) if (dd[i] == d) { off[i] += v; return; }
+            dd[nd] = d; off[nd] = 0.0f; off[nd] += v; nd++;
+        };
         for (int k = 0; k < 2; k++) {
             int d = (int)(pf[m.dest[k]] + 0.5f);
             int mode = (int)(pf[m.mode[k]] + 0.5f);
             float per = (float)(spb * LFO_RATES[clampRate(pf[m.rate[k]])].beats);
-            float w = wave((int)(pf[m.wave[k]] + 0.5f), ph[k], sh[k]);
-            if (d > 0 && d < MOD_NDEST) off[d] += pBip(pf[m.depth[k]]) * w;
+            // Ohne Ziel (oder Tiefe 0) wird die Welle nicht gebraucht - die Phase laeuft trotzdem weiter.
+            if (d > 0 && d < MOD_NDEST && pf[m.depth[k]] != 64.0f)
+                add(d, pBip(pf[m.depth[k]]) * wave((int)(pf[m.wave[k]] + 0.5f), ph[k], sh[k]));
+            else if (d > 0 && d < MOD_NDEST) add(d, 0.0f);
             if (mode == LFO_ONE && ph[k] >= 1.0f) continue;
             ph[k] += (float)n / per;
             if (ph[k] >= 1.0f) {
@@ -134,15 +148,16 @@ struct ModState {
             if (d > 0 && d < MOD_NDEST) {
                 float a = pTime(pf[m.eAtk]) * sr, dc = pTime(pf[m.eDec]) * sr;
                 float e = (float)t < a ? (float)t / a : expf(-((float)t - a) / (dc * 0.4f));
-                off[d] += pBip(pf[m.eDepth]) * e;
+                add(d, pBip(pf[m.eDepth]) * e);
             }
             t += (uint32_t)n;
         }
         bool amp = false;
-        for (int d = 1; d < MOD_NDEST; d++) {
-            if (off[d] == 0.0f || MOD_DESTS[d].trig) continue;      // Anschlag-Ziele: siehe trigOffset
+        for (int i = 0; i < nd; i++) {
+            int d = dd[i];
+            if (off[i] == 0.0f || MOD_DESTS[d].trig) continue;      // Anschlag-Ziele: siehe trigOffset
             int sl = modDestSlot(d);
-            float v = pf[sl] + off[d] * MOD_DESTS[d].range;
+            float v = pf[sl] + off[i] * MOD_DESTS[d].range;
             float lo, hi; modDestRange(d, lo, hi);
             pm[sl] = v < lo ? lo : (v > hi ? hi : v);
             if (d >= 12 && d <= 15) amp = true;

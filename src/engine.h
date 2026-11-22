@@ -43,6 +43,12 @@ struct Voice {
     bool     preview = false;   // vom Sample-Editor angeschlagen, gehoert keiner Spur
     FltType  ft = FLT_LP;
     const Machine* mach = nullptr;
+    // Zwischenspeicher der Steuerrate: teure Funktionen (pow, tan, sin/cos) nur, wenn sich ihr
+    // Eingang geaendert hat. Gleicher Eingang, gleiches Ergebnis - der Klang bleibt bitgleich.
+    struct Memo { float in = -1e30f, out = 0.0f; };
+    Memo mHz, mBase, mGain, mReso, mEnv;
+    float cPanIn = -1e30f, cFc = -1e30f, cQ = -1e30f, cBb = -1e30f, cBw = -1e30f, cSr = 0.0f;
+    int   cFt = -1;
 
     // Welche Regler waehrend eines Tons weiterwirken: alles, was als modulierbar
     // gekennzeichnet ist (Filter, Pegel, Panorama, Sends, die Regler der Machine).
@@ -73,6 +79,7 @@ struct Voice {
     void start(const Machine* mc, int tr, int st, const float* pp, float v,
                int64_t lenSamples, float sr, uint64_t when, uint64_t lockMask, const float* live,
                const SamplePool& pl) {
+        mHz = Memo(); mBase = Memo(); mGain = Memo(); cPanIn = cFc = cQ = cBb = cBw = -1e30f; cFt = -1; cSr = 0.0f;
         mach = mc; pool = &pl; preview = false; track = (uint8_t)tr; step = (uint8_t)st; born = when;
         for (int i = 0; i < 64; i++) pf[i] = pp[i];
         locked = lockMask;
@@ -131,25 +138,32 @@ struct Voice {
         const Slots& s = S();
         if (mod.apply(pf, pm, CTL, sr))          // Amp-Huellkurve moduliert: Zeiten neu rechnen
             env.setup(pTime(pm[s.atk]), pTime(pm[s.dec]), pLevel(pm[s.sus]), pTime(pm[s.rel]), sr);
-        hz = noteHz(pm[s.note]);
-        base = pFreq(pm[s.fFreq]);
+        if (pm[s.note] != mHz.in)    { mHz.in = pm[s.note];    mHz.out = noteHz(mHz.in); }
+        if (pm[s.fFreq] != mBase.in) { mBase.in = pm[s.fFreq]; mBase.out = pFreq(mBase.in); }
+        if (pm[s.vol] != mGain.in)   { mGain.in = pm[s.vol];   mGain.out = pLevel(mGain.in); }
+        hz = mHz.out;
+        base = mBase.out;
         q = 0.7f + pUni(pm[s.fReso]) * 11.0f;
         envAmt = pBip(pm[s.fEnv]);
         ft = (FltType)(((int)(pm[s.fType] + 0.5f)) % FLT_N);
-        gain = pLevel(pm[s.vol]) * vel;
+        gain = mGain.out * vel;
         {   // Base-Width: Hochpass bei BASE, Tiefpass WIDTH Oktaven darueber
             static const int sB = paramSlot(paramFind("trk.bw.base")), sW = paramSlot(paramFind("trk.bw.width"));
             float bb = pm[sB], bw = pm[sW];
             bwOn = bb > 0.5f || bw < 126.5f;
-            if (bwOn) {
+            if (bwOn && (bb != cBb || bw != cBw || sr != cSr)) {
+                cBb = bb; cBw = bw; cSr = sr;
                 float hp = bb > 0.5f ? pFreq(bb) : 10.0f;
                 float lp = bw < 126.5f ? hp * exp2f(bw * 10.0f / 127.0f) : sr * 0.49f;
                 bwHp.set(hp, 0.707f, sr); bwLp.set(lp, 0.707f, sr);
                 if (true) { bwHpR = bwHp.coefOnly(bwHpR); bwLpR = bwLp.coefOnly(bwLpR); }
             }
         }
-        float a = 0.7853982f * (pBip(pm[s.pan]) + 1.0f);     // gleiche Leistung links wie rechts
-        panL = cosf(a); panR = sinf(a);
+        if (pm[s.pan] != cPanIn) {
+            cPanIn = pm[s.pan];
+            float a = 0.7853982f * (pBip(pm[s.pan]) + 1.0f);     // gleiche Leistung links wie rechts
+            panL = cosf(a); panR = sinf(a);
+        }
     }
 
     // Drei Ziele: trocken, Sende A, Sende B. Die Sende-Anteile gehoeren zur Stimme,
@@ -161,7 +175,7 @@ struct Voice {
         static const int slotSA = paramSlot(paramFind("trk.send.a"));
         static const int slotSB = paramSlot(paramFind("trk.send.b"));
         float sa = pLevel(pm[slotSA]), sb = pLevel(pm[slotSB]);
-        float buf[MACH_CHUNK], bufR[MACH_CHUNK];
+        float buf[MACH_CHUNK], bufR[MACH_CHUNK], oL[MACH_CHUNK], oR[MACH_CHUNK];
         const bool st = mach->stereo(pf, *pool);
         int done = 0;
         while (done < n) {
@@ -174,11 +188,15 @@ struct Voice {
                 // wie der Host die Bloecke schneidet.
                 if ((age & (CTL - 1)) == 0) {
                     ctl(sr, live);
-                    float fc = base * exp2f(envAmt * e * 6.0f);          // bis zu sechs Oktaven
-                    if (ft == FLT_LADDER) { lad.set(fc, q, sr); ladR.G = lad.G; ladR.k = lad.k; }
-                    else {
-                        flt.set(fc, q, sr);
-                        if (st) { fltR.a1 = flt.a1; fltR.a2 = flt.a2; fltR.a3 = flt.a3; fltR.k = flt.k; }
+                    float fc = envAmt != 0.0f ? base * exp2f(envAmt * e * 6.0f) : base;   // bis zu sechs Oktaven
+                    // Koeffizienten (tanf) nur, wenn sich Eckfrequenz, Resonanz oder Typ geaendert haben
+                    if (fc != cFc || q != cQ || (int)ft != cFt || sr != cSr) {
+                        cFc = fc; cQ = q; cFt = (int)ft; cSr = sr;
+                        if (ft == FLT_LADDER) { lad.set(fc, q, sr); ladR.G = lad.G; ladR.k = lad.k; }
+                        else {
+                            flt.set(fc, q, sr);
+                            if (st) { fltR.a1 = flt.a1; fltR.a2 = flt.a2; fltR.a3 = flt.a3; fltR.k = flt.k; }
+                        }
                     }
                 }
                 age++;
@@ -194,14 +212,28 @@ struct Voice {
                     if (bwOn) x = bwLp.run(bwHp.run(x, FLT_HP), FLT_LP);
                     x *= eg; xl = x * panL; xr = x * panR;
                 }
-                mx.dL[done + i] += xl;        mx.dR[done + i] += xr;
-                mx.aL[done + i] += xl * sa;   mx.aR[done + i] += xr * sa;
-                mx.bL[done + i] += xl * sb;   mx.bR[done + i] += xr * sb;
+                oL[i] = xl; oR[i] = xr;
             }
+            // Mischen: Sende-Wege nur, wenn sie offen sind (x * 0 dazuzaehlen aendert nichts)
+            float* dL = mx.dL + done; float* dR = mx.dR + done;
+            for (int i = 0; i < c; i++) { dL[i] += oL[i]; dR[i] += oR[i]; }
+            if (sa != 0.0f) { float* aL = mx.aL + done; float* aR = mx.aR + done; for (int i = 0; i < c; i++) { aL[i] += oL[i] * sa; aR[i] += oR[i] * sa; } }
+            if (sb != 0.0f) { float* bL = mx.bL + done; float* bR = mx.bR + done; for (int i = 0; i < c; i++) { bL[i] += oL[i] * sb; bR[i] += oR[i] * sb; } }
             done += c;
             if (env.done()) { used = false; return; }
         }
     }
+};
+
+// Ein zweiter Rechenkern fuer die Stimmen (Geraet): die Engine teilt die Stimmen fest in gerade
+// und ungerade; die ungeraden rechnet - wenn es ihn gibt - der Helfer, sonst sie selbst. Beide
+// Haelften landen in eigenen Puffern und werden danach addiert: das Ergebnis haengt also nicht
+// davon ab, ob ein Helfer da ist, wie schnell er ist oder wie die Faeden laufen.
+struct Engine;
+struct VoiceHelper {
+    virtual void begin() = 0;      // ungerade Stimmen anstossen (Engine::runHalf(1))
+    virtual void wait() = 0;       // warten, bis sie fertig sind
+    virtual ~VoiceHelper() {}
 };
 
 struct Engine : Sink {
@@ -256,6 +288,22 @@ struct Engine : Sink {
     // Arbeitspuffer gehoeren zur Engine, nicht auf den Stapel: im Browser sind davon
     // nur 64 KB da, und sechs Puffer zu 4096 Samples waeren mehr.
     float bufD[2][4096], bufA[2][4096], bufB[2][4096];
+    float bufD2[2][4096], bufA2[2][4096], bufB2[2][4096];   // die ungerade Haelfte der Stimmen
+    VoiceHelper* helper = nullptr;
+    int jobC = 0;                  // Laenge des laufenden Teilblocks
+    // Eine Haelfte der Stimmen rechnen (0 = gerade in bufD/A/B, 1 = ungerade in bufD2/A2/B2).
+    void runHalf(int parity, int c) {
+        Voice::Mix mx = parity ? Voice::Mix{bufD2[0], bufD2[1], bufA2[0], bufA2[1], bufB2[0], bufB2[1]}
+                               : Voice::Mix{bufD[0], bufD[1], bufA[0], bufA[1], bufB[0], bufB[1]};
+        for (int i = parity; i < NVOICES; i += 2) v[i].run(mx, c, sr, live[v[i].track]);
+    }
+    // Faule Tabellen einmal im Hauptfaden fuellen, bevor ein zweiter Faden Stimmen rechnet.
+    static void warmTables() {
+        float lo, hi;
+        knobSlot(0); modDestSlot(1); modDestRange(1, lo, hi); modSlots();
+        Voice::liveSlots(); Voice::S();
+        for (int i = 0; i < machineCount(); i++) machineAt(i);
+    }
 
     Engine() { projectInit(P); resetTrackValues(); for (int i = 0; i < NSONG; i++) loopLeft[i] = -1; }
 
@@ -267,6 +315,7 @@ struct Engine : Sink {
     // Vorbereiten heisst: alles steht still. Sonst laeuft die Uhr nach einem Neuaufbau weiter,
     // ohne dass jemand sie gestartet hat.
     void prepare(float rate) {
+        warmTables();
         sr = rate; seq.sr = rate;
         seq.stop();
         patNext = -1; switchAt = -1; songArmed = false;
@@ -510,7 +559,13 @@ struct Engine : Sink {
 
     int pick() {
         for (int i = 0; i < NVOICES; i++) if (!v[i].used) return i;
-        int best = 0; uint64_t old = ~0ull;                  // sonst die aelteste stehlen
+        // Alle belegt: zuerst die leiseste, die schon ausklingt - das Abschneiden hoert man dort
+        // am wenigsten. Erst wenn keine ausklingt, die aelteste.
+        int rel = -1; float lo = 1e30f;
+        for (int i = 0; i < NVOICES; i++)
+            if (!v[i].preview && v[i].env.st == Env::REL && v[i].env.v < lo) { lo = v[i].env.v; rel = i; }
+        if (rel >= 0) return rel;
+        int best = 0; uint64_t old = ~0ull;
         for (int i = 0; i < NVOICES; i++) if (v[i].born < old) { old = v[i].born; best = i; }
         return best;
     }
@@ -773,9 +828,19 @@ struct Engine : Sink {
                 bufD[0][i] = bufD[1][i] = 0.0f;
                 bufA[0][i] = bufA[1][i] = 0.0f;
                 bufB[0][i] = bufB[1][i] = 0.0f;
+                bufD2[0][i] = bufD2[1][i] = 0.0f;
+                bufA2[0][i] = bufA2[1][i] = 0.0f;
+                bufB2[0][i] = bufB2[1][i] = 0.0f;
             }
-            Voice::Mix mx{bufD[0], bufD[1], bufA[0], bufA[1], bufB[0], bufB[1]};
-            for (int i = 0; i < NVOICES; i++) v[i].run(mx, c, sr, live[v[i].track]);
+            jobC = c;
+            if (helper) helper->begin();
+            runHalf(0, c);
+            if (helper) helper->wait(); else runHalf(1, c);
+            for (int i = 0; i < c; i++) {
+                bufD[0][i] += bufD2[0][i]; bufD[1][i] += bufD2[1][i];
+                bufA[0][i] += bufA2[0][i]; bufA[1][i] += bufA2[1][i];
+                bufB[0][i] += bufB2[0][i]; bufB[1][i] += bufB2[1][i];
+            }
             delay.run(bufA[0], bufA[1], bufD[0], bufD[1], c, fb, tone, aVol);
             reverb.run(bufB[0], bufB[1], bufD[0], bufD[1], c, dec, damp, bVol);
             for (int i = 0; i < c; i++) {

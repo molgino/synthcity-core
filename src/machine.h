@@ -136,10 +136,17 @@ struct MachPoly : Machine {
                 float fa = 1.0f + s.dr[0] * 0.00867f, fb = 1.0f + s.dr[1] * 0.00867f;   // 15 Cent
                 s.a.inc = incA * fa; s.b.inc = incB * fb; s.sub.inc = incS * fa;
             }
-            float x = (1.0f - shape) * s.a.saw() + shape * s.a.pulse(w);
-            float y = (1.0f - shape) * s.b.saw() + shape * s.b.pulse(w);
-            float sb = s.sub.pulse(0.5f);
-            float v = (x + y + subL * sb + noise * 0.8f * machNoise(s.rng)) * mixN;
+            // Was mit 0 gewichtet wird, muss nicht gerechnet werden (das Ergebnis ist bitgleich).
+            float x, y;
+            if (shape == 0.0f)      { x = s.a.saw();      y = s.b.saw(); }
+            else if (shape == 1.0f) { x = s.a.pulse(w);   y = s.b.pulse(w); }
+            else {
+                float sa, pa, sb2, pb; s.a.sawPulse(w, sa, pa); s.b.sawPulse(w, sb2, pb);
+                x = (1.0f - shape) * sa + shape * pa; y = (1.0f - shape) * sb2 + shape * pb;
+            }
+            float sb = subL != 0.0f ? s.sub.pulse(0.5f) : 0.0f;
+            float nz = machNoise(s.rng);                 // Zufall laeuft immer weiter (DRIFT teilt ihn)
+            float v = (x + y + subL * sb + noise * 0.8f * nz) * mixN;
             buf[i] = drive > 0.001f ? softSat(v * g) * norm : v;
             s.a.advance(); s.b.advance(); s.sub.advance();
         }
@@ -313,7 +320,22 @@ struct MachSmpl : Machine {
         int32_t wspan;              // worauf sich BEATS bezieht (ganzes Sample bei CHOP)
         int8_t dir;                 // +1 vorwaerts, -1 rueckwaerts
         uint8_t ch, loop, done;     // loop: 0 aus, 1 vorwaerts, 2 Ping-Pong
+        uint8_t fadeIn;             // Start mitten im Sample: kurz einblenden
+        uint16_t fin;               // Samples seit dem Start (fuer das Einblenden)
     };
+    // Gegen Knackser: ein Start mitten in der Welle (START, Slice, rueckwaerts) springt sonst von 0
+    // auf den Wert dort, und ein Ende (Slice, LENGTH) springt zurueck auf 0. Beides wird ueber
+    // ~1 ms ein- bzw. ausgeblendet - kurz genug, dass kein Anschlag weicher klingt.
+    enum { FADE = 48 };
+    static float fade(St& st, double step) {
+        float g = 1.0f;
+        if (st.fadeIn && st.fin < FADE) { st.fin++; g = (float)st.fin * (1.0f / FADE); }
+        if (!st.loop && step > 0.0) {
+            double rem = st.dir > 0 ? ((double)(st.e - 1) - st.pos) / step : (st.pos - (double)st.s) / step;
+            if (rem < (double)FADE) g *= rem <= 0.0 ? 0.0f : (float)(rem * (1.0 / FADE));
+        }
+        return g;
+    }
     static_assert(sizeof(St) <= MACH_STATE, "Zustand passt nicht in den Block");
     enum { K_START, K_FINE, K_LOOP, K_TUNE, K_REV, K_WARP, K_BEATS, K_LEN };
     // Welcher Regler spielt welche Rolle? -1: gibt es bei dieser Machine nicht (Grundwert gilt).
@@ -377,6 +399,8 @@ struct MachSmpl : Machine {
         st.dir = stufe(kv(p, K_REV, 0), 2) ? -1 : 1;
         st.pos = st.dir > 0 ? (double)s0 : (double)(e0 - 1);
         st.gp[0] = st.gp[1] = st.pos; st.gph[0] = 0.0f; st.gph[1] = 0.5f;
+        st.fin = 0;
+        st.fadeIn = (s0 != sl.a || st.dir < 0) ? 1 : 0;   // am Anfang des Samples beginnt es von selbst sauber
         st.done = 0;
     }
     bool stereo(const float* p, const SamplePool& pool) const override {
@@ -402,13 +426,14 @@ struct MachSmpl : Machine {
         const double weiterH = st.gp[h] + (double)(st.gph[h] * gLen) * pstep * st.dir;
         const double rad = 0.008 * 48000.0;
         double best = st.pos, bestV = -1e30;
+        float ref[32];                       // was das andere Korn spielt - fuer alle Kandidaten gleich
+        for (int j = 0; j < 64; j += 2) { float b2; lese(st, pool, weiterH + j * pstep * st.dir, ref[j / 2], b2); }
         for (double c = st.pos - rad; c <= st.pos + rad; c += 2.0) {
             double v = 0.0;
             for (int j = 0; j < 64; j += 2) {
-                float a, a2, b, b2;
+                float a, a2;
                 lese(st, pool, c + j * pstep * st.dir, a, a2);
-                lese(st, pool, weiterH + j * pstep * st.dir, b, b2);
-                v += (double)(a * b);
+                v += (double)(a * ref[j / 2]);
             }
             if (v > bestV) { bestV = v; best = c; }
         }
@@ -460,7 +485,8 @@ struct MachSmpl : Machine {
             for (int i = 0; i < n; i++) {
                 if (st.done) { buf[i] = 0.0f; if (bufR) bufR[i] = 0.0f; continue; }
                 float l, r; lese(st, pool, st.pos, l, r);
-                buf[i] = l; if (bufR) bufR[i] = r;
+                float g = fade(st, step);
+                buf[i] = l * g; if (bufR) bufR[i] = r * g;
                 weiter(st, step);
             }
             return;
@@ -481,7 +507,8 @@ struct MachSmpl : Machine {
                 st.gph[g] += dph;
                 if (st.gph[g] >= 1.0f) { st.gph[g] -= 1.0f; st.gp[g] = passend(st, pool, g, gLen, pstep); }
             }
-            buf[i] = l; if (bufR) bufR[i] = r;
+            float fg = fade(st, tstep);
+            buf[i] = l * fg; if (bufR) bufR[i] = r * fg;
             weiter(st, tstep);
         }
     }

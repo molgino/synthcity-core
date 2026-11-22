@@ -38,7 +38,7 @@ CXXINC=/usr/aarch64-linux-gnu/include/c++/$GCCV
 mkdir -p build
 # C-Header aus dem Sysroot (alte glibc), aus dem Compiler nur die header-only-Teile (<atomic>)
 ${CROSS}g++ --sysroot="$SYSROOT" -std=c++17 -O2 -mcpu=cortex-a35 -fno-math-errno \
-  -fno-exceptions -fno-rtti -fno-threadsafe-statics -fno-asynchronous-unwind-tables \
+  -fno-exceptions -fno-rtti -fno-asynchronous-unwind-tables \
   -DSC_NO_LIBSTDCXX -Wall -Wno-unused-parameter -Wno-format-truncation \
   -nostdinc -isystem "$(${CROSS}gcc -print-file-name=include)" \
   -isystem "$CXXINC" -isystem "$CXXINC/aarch64-linux-gnu" \

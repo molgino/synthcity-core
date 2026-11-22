@@ -650,6 +650,33 @@ Webserver über echtes HTTP.
 `--bench` misst, wie schnell der Kern auf dem Gerät rechnet; die Kopfzeile zeigt die
 Audio-Last laufend (CPU %).
 
+**Last und Knackser (Nov. 2026, gemeldet: 2× SMPL, CHOP, POLY mit Locks bis 80 %, viele Klicks):**
+
+* *Rechnen ohne Klangverlust.* Alles, was sich am Klang nicht ändern darf, ist mit einer
+  Prüfsumme über jedes Sample nachgewiesen bitgleich (`tools/bench_device <spur> <sek>` druckt sie):
+  Modulationsbereich wurde je Steuertakt per Namenssuche nachgeschlagen; die Modulation lief über
+  alle 34 Ziele statt über die belegten; LFO-Welle ohne Ziel wurde gerechnet; Filter-, Pegel- und
+  Panorama-Werte (tan, pow, sin/cos) werden nur neu gerechnet, wenn sich ihr Eingang ändert; POLY
+  rechnet Säge/Puls nur, wenn sie gemischt werden, und den gemeinsamen BLEP einmal; Sende-Wege nur,
+  wenn sie offen sind; WSOLA liest sein Vergleichsstück einmal statt für jeden Kandidaten.
+  callgrind über das Szenario: 779 → 645 Mio. Instruktionen (−17 %).
+* *Zwei Rechenkerne.* Die Engine teilt die Stimmen fest in gerade/ungerade (`VoiceHelper`,
+  `runHalf`); auf dem Gerät rechnet ein zweiter Faden die ungeraden. Beide Hälften haben eigene
+  Puffer und werden danach addiert – das Ergebnis hängt nicht vom Helfer ab (Selbsttest:
+  bitgleich mit einem Kern; gegenüber der alten Summierreihenfolge höchstens −129 dBFS
+  Rundungsrauschen, Referenz-WAV unverändert gültig).
+* *Knackser im Klang behoben:* Hüllkurve sprang bei SUSTAIN über 0 dB am Ende der Attack
+  schlagartig auf den Haltepegel (bis doppelt so laut); Sampler/CHOP blenden 1 ms ein, wenn mitten
+  im Sample gestartet wird (START, Slice, rückwärts), und vor einem Ende aus (Slice, LENGTH) –
+  vorher sprang das Signal auf bzw. von null. Stimmenklau nimmt die leiseste ausklingende Stimme.
+  Test „Sampler ohne Knacksen“ misst den größten Sprung (vorher 33 % bzw. 18 % der Spitze, jetzt 2 %).
+* *Knackser auf dem Gerät behoben:* Autosave baute das Dokument unter der Audio-Sperre, Sample-
+  und Projekt-Laden lasen Dateien darunter (der Audio-Faden wartete Millisekunden). Jetzt wird
+  Pattern für Pattern kurz kopiert und ohne Sperre geschrieben/gelesen (`NoLock`). Dazu
+  Echtzeit-Priorität für Audio- und Helfer-Faden, `mlockall`, Denormals aus (FTZ).
+* SYSTEM: AUDIO BUFFER (128–1024), AUDIO CORES (1/2), AUDIO STATS (zu späte Blöcke, schwerster
+  Block in % – zu späte Blöcke hört man als Klick).
+
 ## Als Nächstes
 
 12. Gerät: Sampling vom Eingang/PC, MIDI-CC auf Regler, Mehrkanal-USB-Audio.

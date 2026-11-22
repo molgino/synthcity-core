@@ -10,7 +10,7 @@ endif
 WASMFLAGS = --target=wasm32 -O2 -std=c++17 -nostdlib -ffreestanding -fno-exceptions -fno-rtti \
             -fno-threadsafe-statics -DSC_NO_FILES -Iweb/stub -include web/freestanding.h \
             -Wl,--no-entry -Wl,--export-all -Wl,--initial-memory=67108864
-BINS = tests/unit tests/render tests/plugin tools/bench tools/demo build/synthcity.clap web/synthcity.wasm
+BINS = tests/unit tests/render tests/plugin tools/bench tools/bench_device tools/demo build/synthcity.clap web/synthcity.wasm
 HDRS = $(wildcard src/*.h)
 
 test: tests/unit tests/render tests/plugin build/synthcity.clap web/synthcity.wasm
@@ -42,6 +42,7 @@ tests/unit:   tests/unit.cpp   $(HDRS) ; $(CXX) $(CXXFLAGS) -o $@ $< $(LDLIBS)
 tests/render: tests/render.cpp $(HDRS) ; $(CXX) $(CXXFLAGS) -o $@ $< $(LDLIBS)
 tools/bench:  tools/bench.cpp  $(HDRS) ; $(CXX) $(CXXFLAGS) -o $@ $< $(LDLIBS)
 tools/demo:   tools/demo.cpp   $(HDRS) ; $(CXX) $(CXXFLAGS) -o $@ $< $(LDLIBS)
+tools/bench_device: tools/bench_device.cpp $(HDRS) ; $(CXX) $(CXXFLAGS) -o $@ $< $(LDLIBS)
 
 build/synthcity.clap: plugin/clap_plugin.cpp $(HDRS)
 	@mkdir -p build

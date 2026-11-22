@@ -29,9 +29,34 @@ int runDhcpd(const char* ifname);   // dhcpd.cpp: Helfer fuer den PC-Modus (pc-m
 #include <linux/input.h>
 #include <math.h>
 #include <stdarg.h>
+#include <atomic>
+#include <pthread.h>
+#include <sched.h>
+#include <semaphore.h>
+#include <sys/mman.h>
 #include <ctype.h>
 
 #ifdef SC_NO_LIBSTDCXX
+// Statische Variablen in Funktionen werden beim ersten Aufruf angelegt - mit zwei Audio-Faeden
+// muss das gesperrt sein. Ohne libstdc++ liefern wir die drei Funktionen selbst: Byte 0 = fertig,
+// Byte 1 = wird gerade angelegt (je Variable, damit verschachtelte Anlagen nicht blockieren).
+#include <cxxabi.h>
+namespace __cxxabiv1 {
+extern "C" int __cxa_guard_acquire(__guard* g) {
+    char* b = (char*)g;
+    for (;;) {
+        if (__atomic_load_n(&b[0], __ATOMIC_ACQUIRE)) return 0;
+        char z = 0;
+        if (__atomic_compare_exchange_n(&b[1], &z, (char)1, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+            if (__atomic_load_n(&b[0], __ATOMIC_ACQUIRE)) { __atomic_store_n(&b[1], (char)0, __ATOMIC_RELEASE); return 0; }
+            return 1;
+        }
+        sched_yield();
+    }
+}
+extern "C" void __cxa_guard_release(__guard* g) _GLIBCXX_NOTHROW { char* b = (char*)g; __atomic_store_n(&b[0], (char)1, __ATOMIC_RELEASE); __atomic_store_n(&b[1], (char)0, __ATOMIC_RELEASE); }
+extern "C" void __cxa_guard_abort(__guard* g) _GLIBCXX_NOTHROW { char* b = (char*)g; __atomic_store_n(&b[1], (char)0, __ATOMIC_RELEASE); }
+}
 // Ohne libstdc++ gebaut (R36S-Cross-Build): die zwei Dinge, die der Compiler trotzdem erwartet.
 extern "C" void __cxa_pure_virtual() { abort(); }
 void operator delete(void* p) noexcept { free(p); }
@@ -142,11 +167,16 @@ struct DevCfg {
     int notesOut = 0;       // Trigs als Noten senden (Spur n = Kanal n)
     int hwVol = 85;         // Codec-Lautstaerke (Groovebox-OS, Lautstaerketasten)
     char audioDev[128] = "";// SDL-Ausgang, leer = Standard
+    int audioBuf = 256;     // Frames je Puffer
+    int cores = 2;          // Rechenkerne fuer die Stimmen
     bool haveUsbMode = false;   // usb_mode stand in einer Datei (sonst: was gerade aktiv ist, nicht umschalten)
 } gCfg;
 
 static void lockA();
 static bool gLearnReq = false;
+// Kurz ohne Sperre arbeiten (Dateien lesen/schreiben), auch wenn der Aufrufer sie haelt:
+// sonst wartet der Audio-Faden so lange - und das ist ein Knacks.
+struct NoLock { int d; NoLock(); ~NoLock(); };
 static int gJack = -1;                    // -1 unbekannt, 0 Lautsprecher, 1 Kopfhoerer
 static void unlockA();
 static void pathOf(char* out, size_t n, const char* rel) { snprintf(out, n, "%s%s", gBase, rel); }
@@ -199,6 +229,8 @@ static void settingsLoad() {
         else if (!strcmp(k, "clock_in")) gCfg.clockIn = atoi(v) != 0;
         else if (!strcmp(k, "clock_out")) gCfg.clockOut = atoi(v) != 0;
         else if (!strcmp(k, "notes_out")) gCfg.notesOut = atoi(v) != 0;
+        else if (!strcmp(k, "audio_buffer")) gCfg.audioBuf = atoi(v);
+        else if (!strcmp(k, "audio_cores")) gCfg.cores = atoi(v) == 1 ? 1 : 2;
     }
     fclose(f);
     // Version 1 schrieb usb_mode 0 auch, wenn nie jemand gewaehlt hatte - das schaltete den PC-Modus
@@ -212,6 +244,7 @@ static void settingsSave() {
     fprintf(f, "cfg_version 2\nproject %s\ndisplay_offset %d\nusb_volume %d\npc_in %d\nmidi_in %d\nclock_in %d\nclock_out %d\nnotes_out %d\nhw_volume %d\naudio_device %s\n",
             gPrjName, gDispOff, gCfg.usbVol, gCfg.pcIn, gCfg.midiIn, gCfg.clockIn, gCfg.clockOut, gCfg.notesOut, gCfg.hwVol, gCfg.audioDev[0] ? gCfg.audioDev : "-");
     if (gCfg.haveUsbMode) fprintf(f, "usb_mode %d\n", gCfg.usbMode);
+    fprintf(f, "audio_buffer %d\naudio_cores %d\n", gCfg.audioBuf, gCfg.cores);
     fclose(f);
 }
 
@@ -331,6 +364,7 @@ static void poolCompact() {
     }
 }
 static bool poolLoadFile(int slot, const char* rel) {
+    NoLock nl;
     char full[800]; snprintf(full, sizeof full, "%ssamples/%s", gBase, rel);
     int n = 0, ch = 1; float rate = 48000;
     float* d = wavRead(full, &n, &ch, &rate);
@@ -364,20 +398,47 @@ static int poolResolveWanted() {
 
 // --- Projekt: das Dokument des Kerns als Textdatei ----------------------------------------
 static void prjPath(const char* name, char* out, size_t n) { snprintf(out, n, "%sprojects/%s.sc", gBase, name); }
+// Speichern ohne Knacks: das Projekt wird Pattern fuer Pattern unter kurzer Sperre kopiert
+// (je ~90 KB), das Dokument entsteht danach aus der Kopie - der Audio-Faden wartet nie lange.
+static const char* snapshotDoc() {
+    static Project snap;
+    static SamplePool* poolSnap = (SamplePool*)calloc(1, sizeof(SamplePool));   // nur die Slot-Angaben
+    static Doc d;
+    static char out[DOC_MAX * 48];
+    int pat;
+    char* src = (char*)&gEng.P; char* dst = (char*)&snap;
+    size_t a = (size_t)((char*)&gEng.P.pat[0] - src), b = a + sizeof gEng.P.pat;
+    for (int i = 0; i < NPATTERNS; i++) { lockA(); memcpy(&snap.pat[i], &gEng.P.pat[i], sizeof snap.pat[i]); unlockA(); }
+    lockA();
+    memcpy(dst, src, a);
+    memcpy(dst + b, src + b, sizeof(Project) - b);
+    if (poolSnap) memcpy(poolSnap->s, gEng.pool.s, sizeof gEng.pool.s);
+    pat = gEng.pat;
+    unlockA();
+    d.clear();
+    projectToDoc(snap, d);
+    if (poolSnap) poolToDoc(*poolSnap, d);
+    d.set("prj.pat", pat);
+    int at = 0;
+    for (int i = 0; i < d.n && at < (int)sizeof out - 64; i++) at += snprintf(out + at, sizeof out - at, "%s = %d\n", d.e[i].k, d.e[i].v);
+    for (int i = 0; i < d.ns && at < (int)sizeof out - 64; i++) at += snprintf(out + at, sizeof out - at, "%s = %s\n", d.se[i].k, d.se[i].v);
+    out[at] = 0;
+    return out;
+}
 static bool prjSave() {
+    NoLock nl;
     char p[800], tmp[820]; prjPath(gPrjName, p, sizeof p);
     snprintf(tmp, sizeof tmp, "%s.tmp", p);
-    lockA();
-    const char* doc = scSave();
+    const char* doc = snapshotDoc();
     FILE* f = fopen(tmp, "w");
     bool ok = f && fputs("# synthcity 1\n", f) >= 0 && fputs(doc, f) >= 0;
-    unlockA();
     if (f) ok = (fclose(f) == 0) && ok;
     if (ok) ok = rename(tmp, p) == 0;     // erst ganz schreiben, dann ersetzen: ein Absturz verliert nichts
     if (ok) sync();
     return ok;
 }
 static bool prjLoad(const char* name) {
+    NoLock nl;
     char p[800]; prjPath(name, p, sizeof p);
     FILE* f = fopen(p, "r");
     if (!f) return false;
@@ -486,16 +547,91 @@ static void midiBlock(int frames) {
     gWasRunning = run;
 }
 
+// --- Zweiter Rechenkern: die ungeraden Stimmen (siehe VoiceHelper in engine.h) ---------------
+// Der Helfer schlaeft, bis ein Audio-Block beginnt, und wartet dann aktiv auf Teilbloecke - der
+// Weg ueber den Kernel waere fuer jeden Teilblock zu langsam. Nach dem Block schlaeft er wieder.
+static inline void flushDenormals() {
+#if defined(__aarch64__)
+    uint64_t fpcr; __asm__ __volatile__("mrs %0, fpcr" : "=r"(fpcr)); fpcr |= (1ull << 24); __asm__ __volatile__("msr fpcr, %0" :: "r"(fpcr));
+#elif defined(__x86_64__) || defined(__i386__)
+    unsigned csr; __asm__ __volatile__("stmxcsr %0" : "=m"(csr)); csr |= 0x8040; __asm__ __volatile__("ldmxcsr %0" :: "m"(csr));
+#endif
+}
+static inline void cpuRelax() {
+#if defined(__aarch64__)
+    __asm__ __volatile__("yield" ::: "memory");
+#else
+    __asm__ __volatile__("" ::: "memory");
+#endif
+}
+struct Helper : VoiceHelper {
+    std::atomic<int> go{0}, done{0};
+    std::atomic<bool> inBlock{false};
+    sem_t wake;
+    bool on = false;
+    void begin() override { done.store(0, std::memory_order_relaxed); go.store(1, std::memory_order_release); }
+    void wait() override { while (!done.load(std::memory_order_acquire)) cpuRelax(); }
+    void enter() { inBlock.store(true, std::memory_order_release); sem_post(&wake); }
+    void leave() { inBlock.store(false, std::memory_order_release); }
+    static void* main(void* a) {
+        Helper* h = (Helper*)a;
+        flushDenormals();
+        for (;;) {
+            while (sem_wait(&h->wake) != 0) {}
+            while (h->inBlock.load(std::memory_order_acquire) || h->go.load(std::memory_order_acquire)) {
+                if (h->go.exchange(0, std::memory_order_acq_rel)) {
+                    gEng.runHalf(1, gEng.jobC);
+                    h->done.store(1, std::memory_order_release);
+                } else cpuRelax();
+            }
+        }
+        return nullptr;
+    }
+    bool start() {
+        if (sysconf(_SC_NPROCESSORS_ONLN) < 2 || sem_init(&wake, 0, 0) != 0) return false;
+        pthread_t t;
+        if (pthread_create(&t, nullptr, main, this) != 0) return false;
+        struct sched_param sp; sp.sched_priority = 69;
+        pthread_setschedparam(t, SCHED_FIFO, &sp);   // als root (Groovebox-OS), sonst bleibt es normal
+        pthread_detach(t);
+        on = true;
+        return true;
+    }
+} gHelper;
+static volatile int gCores = 2;           // Einstellung: 1 oder 2 Rechenkerne fuer die Stimmen
+static volatile unsigned gLate = 0;       // Bloecke, die zu spaet kamen (hoerbar als Knacks)
+static volatile float gWorkMax = 0;       // laengste Rechenzeit eines Blocks (Anteil am Budget)
+
 static volatile int gToneLeft = 0;        // Testton: verbleibende Frames
 static double gTonePh = 0;
 static void audioCb(void*, Uint8* stream, int len) {
     float* out = (float*)stream;
     int frames = len / (int)(2 * sizeof(float));
     if (gExporting) { memset(stream, 0, (size_t)len); return; }
+    static bool first = true;
+    if (first) {   // einmal: Echtzeit-Prioritaet (als root), Denormals aus
+        first = false;
+        struct sched_param sp; sp.sched_priority = 70;
+        int pol; struct sched_param cur;
+        if (pthread_getschedparam(pthread_self(), &pol, &cur) == 0 && pol == SCHED_OTHER)
+            printf("Audio-Faden Echtzeit-Prioritaet: %s\n", pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp) == 0 ? "ja" : "nein");
+        flushDenormals();
+    }
     uint64_t t0 = SDL_GetPerformanceCounter();
+    {   // Abstand der Aufrufe: deutlich zu spaet = der Puffer lief leer (ein Knacks)
+        static uint64_t last = 0;
+        double per = (double)frames / gRate;
+        if (last) { double gap = (double)(t0 - last) / SDL_GetPerformanceFrequency(); if (gap > per * 2.5) gLate++; }
+        last = t0;
+    }
+    const bool two = gHelper.on && gCores > 1;
+    gEng.helper = two ? &gHelper : nullptr;
+    if (two) gHelper.enter();
     gCbTime = midiNow(); gCbFrames = frames; gBlockPos = gEng.seq.pos;
     midiBlock(frames);
     scRender(out, frames);
+    if (two) gHelper.leave();
+    gEng.helper = nullptr;                 // ausserhalb des Callbacks (Export) rechnet die Engine allein
     flushOffs(gClock + frames);
     gClock += frames;
     if (gToneLeft > 0) {   // 440 Hz, -12 dB - zeigt, ob der Weg zum Ohr ueberhaupt offen ist
@@ -511,6 +647,7 @@ static void audioCb(void*, Uint8* stream, int len) {
     double used = (double)(SDL_GetPerformanceCounter() - t0) / SDL_GetPerformanceFrequency();
     float load = (float)(used * gRate / frames);
     gCpu = load > gCpu ? load : gCpu * 0.98f + load * 0.02f;
+    if (load > gWorkMax) gWorkMax = load;
     float pk = 0;
     for (int i = 0; i < frames * 2; i++) { float a = fabsf(out[i]); if (a > pk) pk = a; }
     if (pk > gPeak) gPeak = pk;
@@ -560,8 +697,11 @@ static void reopenAudio() {   // anderer Ausgang gewaehlt
     }
 }
 // Sperre um alles, was das Modell aendert. Ohne Ton (Tests, Bilder) geht es ohne.
-static void lockA()   { if (gAudio) SDL_LockAudioDevice(gAudio); }
-static void unlockA() { if (gAudio) SDL_UnlockAudioDevice(gAudio); }
+static int gLockDepth = 0;          // nur der Hauptfaden sperrt
+static void lockA()   { if (gAudio) SDL_LockAudioDevice(gAudio); gLockDepth++; }
+static void unlockA() { gLockDepth--; if (gAudio) SDL_UnlockAudioDevice(gAudio); }
+NoLock::NoLock() : d(gLockDepth) { for (int i = 0; i < d; i++) unlockA(); }
+NoLock::~NoLock() { for (int i = 0; i < d; i++) lockA(); }
 
 // ============================================================================================
 // Oberflaeche: Zustand
@@ -1171,9 +1311,9 @@ static void deviceAddr(char* out, int n) {
 }
 
 // --- SYSTEM-Ansicht ------------------------------------------------------------------------------
-enum { SY_OUT, SY_VOL, SY_TONE, SY_USB, SY_ADDR, SY_USBAUD, SY_USBVOL, SY_PCIN, SY_MIDIIN, SY_CLKIN, SY_CLKOUT,
+enum { SY_OUT, SY_VOL, SY_TONE, SY_BUF, SY_CORES, SY_STATS, SY_USB, SY_ADDR, SY_USBAUD, SY_USBVOL, SY_PCIN, SY_MIDIIN, SY_CLKIN, SY_CLKOUT,
        SY_NOTESOUT, SY_MIDIDEV, SY_DISP, SY_LEARN, SY_QUIT, SY_N };
-static const char* SYNAME[SY_N] = {"AUDIO OUT", "VOLUME", "TEST TONE", "USB MODE", "WEB ADDRESS", "USB AUDIO", "USB VOLUME",
+static const char* SYNAME[SY_N] = {"AUDIO OUT", "VOLUME", "TEST TONE", "AUDIO BUFFER", "AUDIO CORES", "AUDIO STATS", "USB MODE", "WEB ADDRESS", "USB AUDIO", "USB VOLUME",
     "PC AUDIO IN", "MIDI IN", "CLOCK IN", "CLOCK OUT", "NOTES OUT", "MIDI DEVICES", "DISPLAY SHIFT", "LEARN BUTTONS", "QUIT"};
 static bool syDivider(int r) { return r == SY_USB || r == SY_MIDIIN || r == SY_DISP; }
 static int gOutWant = -2;                   // AUDIO OUT: -2 = nichts gewaehlt, -1 = Standard, sonst Index in gDevs
@@ -1187,6 +1327,14 @@ static void syEdit(int dir, bool coarse) {
         gOutWant = clampi(gOutWant + dir, -1, gNDevs - 1);
         return;
     }
+    case SY_BUF: {
+        static const int B[4] = {128, 256, 512, 1024};
+        int i = 0; for (int k = 0; k < 4; k++) if (B[k] == gCfg.audioBuf) i = k;
+        gCfg.audioBuf = B[clampi(i + dir, 0, 3)];
+        settingsSave(); reopenAudio(); gLate = 0; gWorkMax = 0;
+        return;
+    }
+    case SY_CORES: gCfg.cores = dir > 0 ? 2 : 1; gCores = gCfg.cores; gWorkMax = 0; break;
     case SY_VOL: gCfg.hwVol = clampi(gCfg.hwVol + dir * (coarse ? 10 : 5), 0, 100); if (hwVolumeSet(gCfg.hwVol) < 0) toast("No codec volume here"); break;
     case SY_USBVOL: gCfg.usbVol = clampi(gCfg.usbVol + dir * (coarse ? 10 : 5), 0, 100); usbAudioSetGain(gCfg.usbVol / 100.f); break;
     case SY_PCIN: gCfg.pcIn = dir > 0; break;
@@ -1217,6 +1365,7 @@ static void syAction() {
         toast("Audio out: %s", gAudioName);
         gToneLeft = gRate;
         break;
+    case SY_STATS: gLate = 0; gWorkMax = 0; toast("Audio stats reset"); break;
     case SY_TONE: gToneLeft = gRate * 2; toast("Test tone 2 s (internal and USB)"); break;
     case SY_LEARN: gLearnReq = true; break;
     case SY_QUIT: U.quit = true; break;
@@ -1690,6 +1839,10 @@ static void drawSystem() {
             else snprintf(b, sizeof b, "%s%s", gAudioName[0] ? gAudioName : "-", gAudio ? "" : "  (not open!)");
             break;
         case SY_VOL: snprintf(b, sizeof b, "%d %%%s", gCfg.hwVol, gJack == 1 ? "  (headphones)" : gJack == 0 ? "  (speaker)" : ""); break;
+        case SY_BUF: snprintf(b, sizeof b, "%d frames (%.1f ms)", gAudioBuf, gAudioBuf * 1000.0 / gRate); break;
+        case SY_CORES: snprintf(b, sizeof b, "%d%s", gCfg.cores, gHelper.on ? "" : " (only 1 available)"); break;
+        case SY_STATS: snprintf(b, sizeof b, "late blocks %u, worst block %d %%  A = reset", gLate, (int)(gWorkMax * 100 + 0.5f));
+                       if (gLate) c = C_LOCK; break;
         case SY_TONE: snprintf(b, sizeof b, "%s", gToneLeft > 0 ? "playing ..." : "A = 2 s 440 Hz on every output"); break;
         case SY_USB:
             if (!os) snprintf(b, sizeof b, "Groovebox-OS only");
@@ -2150,14 +2303,29 @@ static int selfTest(const char* shotDir) {
     lockA(); scLoad(""); unlockA();
     CHECK(prjLoad("selftest"), "Projekt geladen");
     CHECK(!strcmp(before, scSave()), "Dokument nach Laden gleich");
+    CHECK(!strcmp(snapshotDoc(), scSave()), "Speichern aus der Kopie = Dokument des Kerns");
     prjPath("selftest", p, sizeof p); remove(p);
     // Demo + Rendern: es kommt Ton heraus
     scDemo(); scStart();
     static float buf[48000 * 2];
     float pk = 0;
-    for (int i = 0; i < 48000; i += 256) scRender(buf + i * 2, 256);
+    for (int i = 0; i + 256 <= 48000; i += 256) scRender(buf + i * 2, 256);
     for (int i = 0; i < 96000; i++) pk = fmaxf(pk, fabsf(buf[i]));
     CHECK(pk > 0.01f, "Demo klingt");
+    // Zwei Rechenkerne: Ergebnis bitgleich mit einem (die Haelften werden fest zugeteilt)
+    {
+        static float one[48000 * 2], two[48000 * 2];
+        scInit(48000); scDemo(); scStart();
+        for (int i = 0; i + 256 <= 48000; i += 256) scRender(one + i * 2, 256);
+        bool ok = gHelper.on || gHelper.start();
+        scInit(48000); scDemo(); scStart();
+        for (int i = 0; i + 256 <= 48000; i += 256) {
+            gEng.helper = &gHelper; gHelper.enter();
+            scRender(two + i * 2, 256);
+            gHelper.leave(); gEng.helper = nullptr;
+        }
+        CHECK(ok && !memcmp(one, two, sizeof one), "zwei Rechenkerne: bitgleich mit einem");
+    }
     U.view = V_TRACK; U.tab = TAB_TRIG; idle(3);
     shot("09-demo");
     scStop();
@@ -2389,6 +2557,11 @@ int main(int argc, char** argv) {
 
     scInit(48000);
     if (!prjLoad(gPrjName)) { scDemo(); printf("neues Projekt %s (Demo)\n", gPrjName); }
+    if (!getenv("SC_AUDIO_BUF") && bufFrames == 256) bufFrames = gCfg.audioBuf;   // --buffer / SC_AUDIO_BUF gehen vor
+    gCores = gCfg.cores;
+    if (isGrooveboxOS() && mlockall(MCL_CURRENT | MCL_FUTURE) == 0) printf("Speicher gesperrt (keine Seitenfehler im Audio-Faden)\n");
+    Engine::warmTables();
+    printf("Zweiter Rechenkern: %s\n", gHelper.start() ? "ja" : "nein");
     if (openAudio(bufFrames)) {
         if (gRate != 48000) scInit((float)gRate);   // vor dem Start: nichts geht verloren
         SDL_PauseAudioDevice(gAudio, 0);

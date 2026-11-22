@@ -51,6 +51,14 @@ struct Osc {
         return (ph < width ? 1.0f : -1.0f) - blep(ph, inc) + blep(p2, inc);
     }
     float sine() const { return sinf(6.2831853f * ph); }
+    // Saege und Puls zusammen: der Sprung bei Phase 0 (blep) gehoert zu beiden und wird nur
+    // einmal gerechnet. Gleiche Rechnung wie saw()/pulse() einzeln - bitgleiches Ergebnis.
+    void sawPulse(float width, float& sw, float& pu) const {
+        float b0 = blep(ph, inc);
+        float p2 = ph + (1.0f - width); if (p2 >= 1.0f) p2 -= 1.0f;
+        sw = 2.0f * ph - 1.0f - b0;
+        pu = (ph < width ? 1.0f : -1.0f) - b0 + blep(p2, inc);
+    }
 };
 
 // --- Filter: TPT/ZDF-State-Variable (Zavalishin) -----------------------------------------------
@@ -108,7 +116,8 @@ struct Env {
     float tick() {
         switch (st) {
         case ATK: v = 1.3f + (v - 1.3f) * ca; if (v >= 1.0f) { v = 1.0f; st = DEC; } break;
-        case DEC: v = sus + (v - sus) * cd;   if (v <= sus + 0.0005f) { v = sus; st = SUS; } break;
+        // Auch nach OBEN (SUS ueber 0 dB): gleiten statt springen - der Sprung war ein Knacks je Note.
+        case DEC: v = sus + (v - sus) * cd;   if (v <= sus + 0.0005f && v >= sus - 0.0005f) { v = sus; st = SUS; } break;
         case SUS: v = sus; break;
         case REL: v *= cr; if (v < 0.0001f) { v = 0.0f; st = OFF; } break;
         default:  v = 0.0f;

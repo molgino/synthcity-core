@@ -1452,6 +1452,38 @@ int main() {
         e.P.song.n = 0;
     }
 
+    grp("Sampler ohne Knacksen: Slice-Start und -Ende werden ein- und ausgeblendet");
+    {
+        // Gleichspannung als Sample: jeder Sprung im Ausgang waere ein Knacks
+        static float dc[48000];
+        for (int i = 0; i < 48000; i++) dc[i] = 0.5f;
+        e.prepare(48000.0f); e.pat = 0;
+        projectInit(e.P); e.P.pat[0].used = 1;
+        e.pool.clear(); e.pool.set(5, dc, 48000, 48000.0f, "dc");
+        Track& t = e.P.pat[0].t[0];
+        machineSelect(t.p, 4);                         // CHOP
+        t.len = 16; t.speed = 4;
+        t.p[SL("trk.smp")] = 5;
+        t.p[SL("trk.src.a")] = 3 * 128 / 6 + 10;       // 16 Stuecke (je 62,5 ms, kuerzer als ein Step)
+        t.p[SL("trk.src.b")] = 5;                      // Stueck 6: beginnt mitten im Sample
+        t.p[SL("trk.amp.atk")] = 0; t.p[SL("trk.amp.sus")] = 127; t.p[SL("trk.amp.rel")] = 60;
+        t.p[SL("trk.flt.freq")] = 127; t.p[SL("trk.send.a")] = 0; t.p[SL("trk.send.b")] = 0;
+        t.s[0].on = 1;
+        e.start();
+        static float b[48000 * 2];
+        e.render(b, 24000);
+        float jump = 0.0f, peak = 0.0f;
+        for (int i = 1; i < 24000; i++) {
+            float d = fabsf(b[i * 2] - b[(i - 1) * 2]);
+            if (d > jump) jump = d;
+            if (fabsf(b[i * 2]) > peak) peak = fabsf(b[i * 2]);
+        }
+        printf("  Spitze %.3f, groesster Sprung zwischen zwei Samples %.4f\n", peak, jump);
+        chk(peak > 0.1f, "Stueck klingt");
+        chk(jump < peak * 0.05f, "kein Sprung am Anfang oder Ende des Stuecks (< 5 % der Spitze)");
+        e.stop(); e.pool.clear();
+    }
+
     grp("Referenz-Aufnahme");
     {
         const int N = 96000;                         // zwei Sekunden
