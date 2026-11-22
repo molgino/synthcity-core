@@ -240,7 +240,27 @@ footer {
 .finebtns button { min-height: 56px; font-size: 15px; font-family: var(--mono); padding: 0 4px; min-width: 0; }
 .semark button { min-width: 0; padding: 0 4px; }
 @media (max-width: 400px) { .finebtns button { font-size: 13px; } }
-.songrow { display: grid; grid-template-columns: 1fr auto auto auto auto; gap: 6px; align-items: center; }
+.songrow { display: grid; grid-template-columns: 30px 44px 34px repeat(8, minmax(0, 1fr)); gap: 3px; align-items: stretch; }
+.songhead { position: sticky; top: 0; background: var(--panel); z-index: 1; font-size: 10px; color: var(--dim); }
+.songhead span { text-align: center; font-family: var(--mono); padding: 2px 0; }
+.songrow .nr, .songrow .pp, .songrow .rr { min-height: 40px; min-width: 0; padding: 0; font-family: var(--mono); font-size: 12px; }
+.songrow .cell { min-height: 40px; min-width: 0; padding: 0; border-radius: 4px; background: var(--c); border: 0; opacity: .85; }
+.songrow .cell.stumm { background: var(--surface); opacity: 1; box-shadow: inset 0 0 0 1px var(--line); }
+.songrow .wide { grid-column: 2 / span 10; text-align: left; padding: 0 10px; min-height: 40px; font-family: var(--mono); font-size: 12px; }
+.songrow.jetzt .nr { background: var(--ok); color: #06231a; border-color: var(--ok); }
+.songrow.sel .nr { box-shadow: inset 0 0 0 2px var(--amber); }
+.songrow .meta { grid-column: 2 / span 10; font-size: 10px; color: var(--dim); font-family: var(--mono); margin-top: -2px; padding-left: 2px; }
+#songEdit { border-top: 1px solid var(--line); padding-top: 6px; display: grid; gap: 6px; max-height: 34vh; overflow-y: auto; overscroll-behavior: contain; }
+#songEdit[hidden] { display: none; }
+#songEdit .se { display: grid; grid-template-columns: 74px 1fr; gap: 6px; align-items: center; }
+#songEdit .se .k { font-size: 11px; color: var(--dim); letter-spacing: .06em; }
+#songEdit .chips { display: flex; flex-wrap: wrap; gap: 4px; }
+#songEdit .chips button { min-height: 34px; padding: 0 8px; font-size: 11px; }
+#songEdit .chips button.cur { background: var(--amber); color: #15100a; border-color: var(--amber); }
+#songEdit .chips span { align-self: center; font-family: var(--mono); font-size: 12px; padding: 0 4px; }
+.songdlg .sheet { max-height: 30vh; }
+.trk.smuted { opacity: .45; }
+.trk.smuted .m { border-style: dashed; }
 .songrow .wo { font-family: var(--mono); font-size: 13px; padding: 0 6px; min-height: 44px;
                display: flex; align-items: center; border-radius: 6px; background: var(--raised);
                border: 1px solid var(--line); }
@@ -440,13 +460,16 @@ textarea {
 </dialog>
 
 <dialog id="song">
-  <div class="dlg">
+  <div class="dlg songdlg">
     <div class="lbl">Song</div>
-    <p class="hint">A chain of patterns: each plays as often as listed, then the next one.
-      At the end it starts over. Switching on while playing starts at the end of the bar.</p>
+    <p class="hint">Rows play top to bottom, then start over. Tap a cell to mute that track in
+      the row; tap the row number to edit pattern, repeats, length, start, tempo and scene.</p>
     <div class="sheet" id="songList"></div>
+    <div id="songEdit" hidden></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       <button id="songAdd">+ PATTERN</button>
+      <button id="songAddLoop">+ LOOP</button>
+      <button id="songAddHalt">+ HALT</button>
       <button id="songPlay">SONG ON</button>
       <div class="spacer"></div>
       <button id="songClose">CLOSE</button>
@@ -661,7 +684,8 @@ async function audioOn() {
     if (e.data.type === 'pos') {
       posSteps = e.data.steps;
       patNextView = e.data.next;
-      songView = {on: !!e.data.songOn, pos: e.data.songPos};
+      songView = {on: !!e.data.songOn, pos: e.data.songPos, mute: e.data.songMute || 0};
+      if (typeof e.data.morph === 'number' && songView.on && sceneEdit < 0) el('morph').value = Math.round(e.data.morph * 100);
       // Der Spitzenwert wird kurz gehalten, sonst zeigt die Anzeige fast immer null.
       const pk = e.data.peak || 0;
       meterPeak = pk > meterPeak ? pk : meterPeak * 0.82;
@@ -1285,6 +1309,7 @@ function paint() {
   for (let t = 0; t < rail.length; t++) {
     rail[t].classList.toggle('sel', t === sel);
     rail[t].classList.toggle('muted', !!X.scIsMute(t));
+    rail[t].classList.toggle('smuted', t < 8 && songAn() && !!(((node && playing) ? songView.mute : X.scSongMuteNow()) >> t & 1));
   }
   el('songBtn').classList.toggle('on', songAn());
   for (const k of [0, 1]) {
@@ -1295,7 +1320,7 @@ function paint() {
     b.classList.toggle('has', hat);
   }
   if (el('song').open) {
-    const rows = el('songList').querySelectorAll('.songrow');
+    const rows = el('songList').querySelectorAll('.songrow:not(.songhead)');
     rows.forEach((r, i) => r.classList.toggle('jetzt', songAn() && songView.pos === i));
   }
   const pats = el('pats').children;
@@ -1892,39 +1917,123 @@ function smpPut(slot, data, rate, ch, name) {
 // Die Kette ist Projektdaten: jede Aenderung geht an beide Kerne. Ob der Song laeuft und wo
 // er steht, sagt der Klang-Kern.
 const songAn = () => (node && playing) ? songView.on : !!X.scSongOn();
+let songSel = -1;                 // welche Zeile im Editor steht
+const sgGet = (i, f) => X.scSongGet(i, f);
+const sgSet = (i, f, v) => { cmd('scSongSetF', i, f, v); songPaint(); };
 function songPaint() {
   const list = el('songList');
   list.innerHTML = '';
   const n = X.scSongN();
+  if (songSel >= n) songSel = n - 1;
   if (!n) {
     list.innerHTML = '<p class="hint">Empty. <b>+ PATTERN</b> appends the selected pattern.</p>';
+  } else {
+    const h = document.createElement('div');
+    h.className = 'songrow songhead';
+    h.innerHTML = '<span>#</span><span>PAT</span><span>\u00d7</span>' +
+      [1, 2, 3, 4, 5, 6, 7, 8].map(t => `<span style="color:${HUE[t - 1]}">${t}</span>`).join('');
+    list.appendChild(h);
   }
   for (let i = 0; i < n; i++) {
     const row = document.createElement('div');
-    row.className = 'songrow' + (songAn() && songView.pos === i ? ' jetzt' : '');
-    row.innerHTML = `<span class="wo">${i + 1}.  P${X.scSongPat(i) + 1}  \u00d7 ${X.scSongRep(i)}</span>
-      <button data-a="pat" aria-label="anderes Pattern">P</button>
-      <button data-a="minus" aria-label="weniger Wiederholungen">\u2212</button>
-      <button data-a="plus" aria-label="mehr Wiederholungen">+</button>
-      <button data-a="weg" aria-label="Remove entry">\u00d7</button>`;
-    row.querySelector('[data-a=pat]').onclick = () => {
-      cmd('scSongSet', i, (X.scSongPat(i) + 1) % X.scNPatterns(), X.scSongRep(i)); songPaint();
-    };
-    row.querySelector('[data-a=minus]').onclick = () => {
-      cmd('scSongSet', i, X.scSongPat(i), X.scSongRep(i) - 1); songPaint();
-    };
-    row.querySelector('[data-a=plus]').onclick = () => {
-      cmd('scSongSet', i, X.scSongPat(i), X.scSongRep(i) + 1); songPaint();
-    };
-    row.querySelector('[data-a=weg]').onclick = () => { cmd('scSongDel', i); songPaint(); };
+    const typ = sgGet(i, 2);
+    row.className = 'songrow' + (songAn() && songView.pos === i ? ' jetzt' : '') + (songSel === i ? ' sel' : '');
+    const nr = `<button class="nr" data-a="sel" aria-label="Edit row ${i + 1}">${i + 1}</button>`;
+    if (typ === 1) {
+      const z = sgGet(i, 0), c = sgGet(i, 1);
+      row.innerHTML = nr + `<button class="wide" data-a="sel">LOOP \u2192 row ${z + 1}  ${c ? '\u00d7 ' + c : 'forever'}</button>`;
+    } else if (typ === 2) {
+      row.innerHTML = nr + `<button class="wide" data-a="sel">HALT \u2013 stop here</button>`;
+    } else {
+      const m = sgGet(i, 6);
+      row.innerHTML = nr + `<button class="pp" data-a="sel">P${sgGet(i, 0) + 1}</button><button class="rr" data-a="sel">\u00d7${sgGet(i, 1)}</button>` +
+        [0, 1, 2, 3, 4, 5, 6, 7].map(t => `<button class="cell${(m >> t) & 1 ? ' stumm' : ''}" data-t="${t}" style="--c:${HUE[t]}" aria-label="Track ${t + 1} in row ${i + 1}"></button>`).join('');
+      const meta = [];
+      const len = sgGet(i, 3), st = sgGet(i, 4), bpm = sgGet(i, 5), mo = sgGet(i, 7);
+      if (len) meta.push('LEN ' + len);
+      if (st) meta.push('START ' + (st + 1));
+      if (bpm) meta.push(bpm + ' BPM');
+      if (mo) meta.push('SCENE ' + (mo === 1 ? 'A' : mo === 101 ? 'B' : (mo - 1) + '%'));
+      if (meta.length) { const d = document.createElement('div'); d.className = 'meta'; d.textContent = meta.join(' \u00b7 '); row.dataset.meta = 1; row.appendChild(d); }
+      for (const c of row.querySelectorAll('.cell'))
+        c.onclick = () => sgSet(i, 6, sgGet(i, 6) ^ (1 << +c.dataset.t));
+    }
+    for (const b of row.querySelectorAll('[data-a=sel]')) b.onclick = () => { songSel = songSel === i ? -1 : i; songPaint(); };
     list.appendChild(row);
   }
+  songEditPaint();
   el('songPlay').textContent = songAn() ? 'SONG OFF' : 'SONG ON';
   el('songPlay').disabled = !n;
+}
+// Der Zeilen-Editor unter der Matrix.
+function songEditPaint() {
+  const box = el('songEdit');
+  box.innerHTML = '';
+  box.hidden = songSel < 0;
+  if (songSel < 0) return;
+  const i = songSel, typ = sgGet(i, 2);
+  const zeile = (k, inhalt) => { const d = document.createElement('div'); d.className = 'se'; d.innerHTML = `<span class="k">${k}</span>`; const c = document.createElement('div'); c.className = 'chips'; d.appendChild(c); inhalt(c); box.appendChild(d); };
+  const knopf = (c, t, fn, cur) => { const b = document.createElement('button'); b.textContent = t; if (cur) b.className = 'cur'; b.onclick = fn; c.appendChild(b); return b; };
+  const wert = (c, t) => { const sp = document.createElement('span'); sp.textContent = t; c.appendChild(sp); };
+  const stepper = (c, f, text, schritte, lo) => {
+    for (const [t, d] of schritte) {
+      if (t === null) { wert(c, text); continue; }
+      knopf(c, t, () => sgSet(i, f, Math.max(lo, sgGet(i, f) + d)));
+    }
+  };
+  zeile('ROW ' + (i + 1), c => {
+    knopf(c, 'PATTERN', () => sgSet(i, 2, 0), typ === 0);
+    knopf(c, 'LOOP', () => sgSet(i, 2, 1), typ === 1);
+    knopf(c, 'HALT', () => sgSet(i, 2, 2), typ === 2);
+  });
+  if (typ === 0) {
+    zeile('PATTERN', c => stepper(c, 0, 'P' + (sgGet(i, 0) + 1), [['\u2212', -1], [null], ['+', 1]], 0));
+    zeile('REPEATS', c => stepper(c, 1, '\u00d7' + sgGet(i, 1), [['\u2212', -1], [null], ['+', 1]], 1));
+    zeile('LENGTH', c => {
+      const l = sgGet(i, 3);
+      knopf(c, 'AUTO', () => sgSet(i, 3, 0), !l);
+      stepper(c, 3, l ? l + ' steps' : 'pattern', [['\u221216', -16], ['\u22121', -1], [null], ['+1', 1], ['+16', 16]], 0);
+    });
+    zeile('START', c => stepper(c, 4, 'step ' + (sgGet(i, 4) + 1), [['\u22124', -4], ['\u22121', -1], [null], ['+1', 1], ['+4', 4]], 0));
+    zeile('TEMPO', c => {
+      const b = sgGet(i, 5);
+      knopf(c, 'PATTERN', () => sgSet(i, 5, 0), !b);
+      const basis = b || X.scTempoNow();
+      for (const [t, d] of [['\u221210', -10], ['\u22121', -1], [null], ['+1', 1], ['+10', 10]]) {
+        if (t === null) { wert(c, b ? b + ' BPM' : '\u2013'); continue; }
+        knopf(c, t, () => sgSet(i, 5, basis + d));
+      }
+    });
+    zeile('SCENE', c => {
+      const mo = sgGet(i, 7);
+      for (const [t, v] of [['KEEP', 0], ['A', 1], ['25%', 26], ['50%', 51], ['75%', 76], ['B', 101]])
+        knopf(c, t, () => sgSet(i, 7, v), mo === v);
+    });
+    zeile('MUTES', c => {
+      knopf(c, 'ALL ON', () => sgSet(i, 6, 0));
+      knopf(c, 'ALL OFF', () => sgSet(i, 6, 255));
+      knopf(c, 'COPY \u2191', () => sgSet(i, 6, i > 0 ? sgGet(i - 1, 6) : 0));
+    });
+  } else if (typ === 1) {
+    zeile('JUMP TO', c => stepper(c, 0, 'row ' + (sgGet(i, 0) + 1), [['\u2212', -1], [null], ['+', 1]], 0));
+    zeile('TIMES', c => {
+      const r = sgGet(i, 1);
+      knopf(c, 'FOREVER', () => sgSet(i, 1, 0), !r);
+      stepper(c, 1, r ? '\u00d7' + r : '\u221e', [['\u2212', -1], [null], ['+', 1]], 0);
+    });
+  }
+  zeile('', c => {
+    knopf(c, 'DUPLICATE', () => { cmd('scSongDup', i); songSel = i + 1; songPaint(); });
+    knopf(c, '\u2191', () => { if (i > 0) { cmd('scSongMove', i, -1); songSel = i - 1; songPaint(); } });
+    knopf(c, '\u2193', () => { if (i < X.scSongN() - 1) { cmd('scSongMove', i, 1); songSel = i + 1; songPaint(); } });
+    knopf(c, 'DELETE', () => { cmd('scSongDel', i); songSel = -1; songPaint(); });
+  });
 }
 el('songBtn').onclick = () => { songPaint(); el('song').showModal(); };
 el('songClose').onclick = () => el('song').close();
 el('songAdd').onclick = () => { cmd('scSongAdd', X.scPattern(), 1); songPaint(); };
+el('songAddLoop').onclick = () => { cmd('scSongAdd', 0, 1); const n = X.scSongN() - 1; cmd('scSongSetF', n, 2, 1); songSel = n; songPaint(); };
+el('songAddHalt').onclick = () => { cmd('scSongAdd', 0, 1); const n = X.scSongN() - 1; cmd('scSongSetF', n, 2, 2); songPaint(); };
 el('songPlay').onclick = () => {
   if (songAn()) cmd('scSongStop');
   else cmd('scSongStart');
@@ -1968,7 +2077,7 @@ el('docNew').onclick = () => {
 const PRJKEY = 'synthcity-projekt';
 let savedText = null, bootText = null, restoring = true, cloud = null, cloudAt = 0, cloudText = null;
 // Was gerade wohin geht - steht im DOK-Fenster, damit man sieht, ob Speichern wirkt.
-const stand = {browser: 'checking…', konto: 'connecting…', zuletzt: '', geladen: ''};
+const stand = {browser: 'checking\u2026', konto: 'connecting\u2026', zuletzt: '', geladen: ''};
 function standZeigen() {
   const e = el('saveState'); if (!e) return;
   e.innerHTML = (stand.geladen ? stand.geladen + '<br>' : '') +

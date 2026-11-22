@@ -83,9 +83,21 @@ inline void fxTrackClear(Track& f) {
     for (int s = 0; s < NSTEPS; s++) { f.s[s].on = 0; f.s[s].nLock = 0; }
 }
 
-// Ein Song ist eine Kette: Pattern, wie oft, dann das naechste. Am Ende geht es vorn weiter.
+// Ein Song ist eine Kette von Zeilen (wie der Octatrack-Arranger): Pattern, wie oft, wie lang,
+// ab welchem Step, in welchem Tempo, welche Spuren stumm, wohin die Scene steht. Dazu Zeilen,
+// die springen (LOOP: zurueck zu Zeile pat, rep-mal; 0 = immer) oder anhalten (HALT).
+// Am Ende geht es vorn weiter.
 enum { NSONG = 64 };
-struct SongStep { uint8_t pat = 0, rep = 1; };
+enum { SONG_PAT = 0, SONG_LOOP = 1, SONG_HALT = 2 };
+struct SongStep {
+    uint8_t pat = 0, rep = 1;
+    uint8_t type = SONG_PAT;
+    uint8_t len = 0;            // Steps je Durchlauf; 0 = AUTO (Wechsellaenge des Patterns)
+    uint8_t start = 0;          // ab diesem Step (in Sechzehnteln des Patterns)
+    int16_t bpm = 0;            // 0 = Tempo des Patterns/Projekts
+    uint16_t mute = 0;          // Bit t: Spur t ist in dieser Zeile stumm
+    uint8_t morph = 0;          // 0 = Scene-Stellung bleibt; 1..101 = Morph 0..100 % (A..B)
+};
 struct Song {
     uint8_t  n = 0;
     SongStep e[NSONG];
@@ -181,8 +193,15 @@ inline void projectToDoc(const Project& P, Doc& d) {
     if (P.song.n) {
         d.set("song.n", P.song.n);
         for (int i = 0; i < P.song.n; i++) {
-            snprintf(k, sizeof k, "song.%d.pat", i); d.set(k, P.song.e[i].pat);
-            snprintf(k, sizeof k, "song.%d.rep", i); d.set(k, P.song.e[i].rep);
+            const SongStep& r = P.song.e[i];
+            snprintf(k, sizeof k, "song.%d.pat", i); d.set(k, r.pat);
+            snprintf(k, sizeof k, "song.%d.rep", i); d.set(k, r.rep);
+            if (r.type)  { snprintf(k, sizeof k, "song.%d.type", i);  d.set(k, r.type); }
+            if (r.len)   { snprintf(k, sizeof k, "song.%d.len", i);   d.set(k, r.len); }
+            if (r.start) { snprintf(k, sizeof k, "song.%d.start", i); d.set(k, r.start); }
+            if (r.bpm)   { snprintf(k, sizeof k, "song.%d.bpm", i);   d.set(k, r.bpm); }
+            if (r.mute)  { snprintf(k, sizeof k, "song.%d.mute", i);  d.set(k, r.mute); }
+            if (r.morph) { snprintf(k, sizeof k, "song.%d.morph", i); d.set(k, r.morph); }
         }
     }
     for (int i = 0; i < NPARAMS; i++) {
@@ -266,9 +285,20 @@ inline void projectFromDoc(const Doc& d, Project& P) {
         snprintf(k, sizeof k, "song.%d.pat", i);
         int pt = d.get(k, 0);
         P.song.e[i].pat = (uint8_t)(pt < 0 || pt >= NPATTERNS ? 0 : pt);
-        snprintf(k, sizeof k, "song.%d.rep", i);
-        int r = d.get(k, 1);
-        P.song.e[i].rep = (uint8_t)(r < 1 ? 1 : (r > 99 ? 99 : r));
+        SongStep& z = P.song.e[i];
+        auto lies = [&](const char* f, int def, int lo, int hi) {
+            snprintf(k, sizeof k, "song.%d.%s", i, f);
+            int v = d.get(k, def);
+            return v < lo ? lo : (v > hi ? hi : v);
+        };
+        z.type  = (uint8_t)lies("type", 0, 0, 2);
+        z.rep   = (uint8_t)lies("rep", 1, z.type == SONG_LOOP ? 0 : 1, 99);
+        if (z.type == SONG_LOOP) z.pat = (uint8_t)lies("pat", 0, 0, NSONG - 1);
+        z.len   = (uint8_t)lies("len", 0, 0, NSTEPS);
+        z.start = (uint8_t)lies("start", 0, 0, NSTEPS - 1);
+        z.bpm   = (int16_t)lies("bpm", 0, 0, 300);
+        z.mute  = (uint16_t)lies("mute", 0, 0, 0xFFFF);
+        z.morph = (uint8_t)lies("morph", 0, 0, 101);
     }
     for (int i = 0; i < NPARAMS; i++) {
         if (PARAMS[i].scope != PS_GLOBAL) continue;

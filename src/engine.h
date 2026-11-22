@@ -243,8 +243,12 @@ struct Engine : Sink {
     // dazwischen neu anzufangen: eine Spur mit 12 Steps laeuft ueber die Wiederholungen
     // hinweg weiter gegen die 16.
     bool songOn = false;
-    int  songPos = 0;              // welcher Eintrag gerade spielt
+    int  songPos = 0;              // welche Zeile gerade spielt
     bool songArmed = false;        // der anstehende Wechsel kommt vom Song
+    int  songNext = -1;            // die eingeplante naechste Zeile
+    int  songBpm = 0;              // Tempo der Zeile (0 = keins)
+    uint16_t songMute = 0;         // Mutes der Zeile - zusaetzlich zu den eigenen
+    int8_t loopLeft[NSONG];        // LOOP-Zeilen: wie oft noch springen (-1 = frisch)
 
     Ev   q[256];
     int  qoff[256];
@@ -253,7 +257,7 @@ struct Engine : Sink {
     // nur 64 KB da, und sechs Puffer zu 4096 Samples waeren mehr.
     float bufD[2][4096], bufA[2][4096], bufB[2][4096];
 
-    Engine() { projectInit(P); resetTrackValues(); }
+    Engine() { projectInit(P); resetTrackValues(); for (int i = 0; i < NSONG; i++) loopLeft[i] = -1; }
 
     void resetTrackValues() {
         for (int t = 0; t < NTRACKS; t++)
@@ -276,6 +280,7 @@ struct Engine : Sink {
         if (songOn) { seq.stop(); songStart(); }         // der Song faengt vorn an
         seq.bpm = effTempo(pat);
         seq.start();
+        if (songOn) enterRow(songPos);                   // Start-Step der Zeile nach dem Reset
     }
 
     // Platz reservieren und scharf stellen. Gibt die moegliche Laenge in Bildern zurueck, 0 = kein Platz.
@@ -333,6 +338,7 @@ struct Engine : Sink {
     // Das Tempo, das gerade gilt: das eigene des Patterns, sonst das des Projekts.
     // Das ist das MUSIKALISCHE Tempo - so steht es in der Anzeige, und daran haengt das Echo.
     double tempoOf(int p) const {
+        if (songOn && songBpm > 0) return (double)songBpm;     // die Song-Zeile bestimmt das Tempo
         int pb = (p >= 0 && p < NPATTERNS) ? P.pat[p].bpm : 0;
         return pb > 0 ? (double)pb : (double)P.g[paramSlot(paramFind("bpm"))];
     }
@@ -359,37 +365,87 @@ struct Engine : Sink {
         return sp16 * (chg < 1 ? 1 : chg);
     }
 
-    // Song an. Steht die Uhr, beginnt Eintrag 1 sofort; laeuft sie, am naechsten Taktende -
+    // Laenge einer Song-Zeile in Sechzehnteln (ein Durchlauf).
+    int rowLen(int i) const {
+        const SongStep& r = P.song.e[i];
+        int l = r.len ? r.len : P.pat[r.pat].chg;
+        return l < 1 ? 1 : l;
+    }
+    // Welche Zeile kommt nach 'von'? LOOP-Zeilen springen (und zaehlen mit), HALT bleibt stehen.
+    int songResolve(int von) {
+        int i = von + 1;
+        for (int g = 0; g < NSONG * 4; g++) {
+            if (i >= P.song.n || i < 0) i = 0;
+            const SongStep& r = P.song.e[i];
+            if (r.type != SONG_LOOP) return i;
+            if (r.rep == 0) { i = r.pat; continue; }             // fuer immer
+            if (loopLeft[i] < 0) loopLeft[i] = (int8_t)r.rep;
+            if (loopLeft[i] > 0) { loopLeft[i]--; i = r.pat; continue; }
+            loopLeft[i] = -1; i++;                               // fertig gesprungen: weiter
+        }
+        return -1;                                               // nur Spruenge, nichts zu spielen
+    }
+    // Eine Zeile beginnt (das Pattern steht schon): Tempo, Start-Step, Mutes, Scene.
+    void enterRow(int i) {
+        const SongStep& r = P.song.e[i];
+        songBpm = r.bpm;
+        songMute = r.mute;
+        if (r.morph) morph = (float)(r.morph - 1) / 100.0f;
+        seq.bpm = effTempo(pat);
+        if (r.start) {                                           // ab Step 'start': Ursprung zurueck
+            double sp16 = seq.sr * 60.0 / ((seq.bpm < 2.5 ? 2.5 : seq.bpm) * 4.0);
+            seq.origin = seq.pos - (int64_t)llround(r.start * sp16);
+            for (int t = 0; t < NTRACKS; t++) {
+                double sp = seq.stepLen(P.pat[pat].t[t]);
+                double rel = (double)(seq.pos - seq.origin);
+                int64_t k = (int64_t)(rel / sp);
+                if ((double)k * sp < rel) k++;
+                seq.nextK[t] = k;
+            }
+        }
+    }
+
+    // Song an. Steht die Uhr, beginnt die erste Zeile sofort; laeuft sie, am naechsten Taktende -
     // ein Sprung mitten im Takt klaenge wie ein Fehler.
     void songStart() {
+        for (int i = 0; i < NSONG; i++) loopLeft[i] = -1;
         if (!P.song.n) { songOn = false; return; }
+        int erste = songResolve(-1);
+        if (erste < 0 || P.song.e[erste].type == SONG_HALT) { songOn = false; return; }
         songOn = true;
         if (seq.running) {
-            songPos = P.song.n - 1;                    // als ginge der letzte Eintrag gerade zu Ende
-            patNext = P.song.e[0].pat;
+            songNext = erste;
+            patNext = P.song.e[erste].pat;
             double cyc = cycleLen();
             int64_t k = (int64_t)((double)(seq.pos - seq.origin) / cyc) + 1;
             switchAt = seq.origin + (int64_t)llround((double)k * cyc);
             songArmed = true;
             return;
         }
-        songPos = 0; songArmed = false;
+        songPos = erste; songArmed = false;
         patNext = -1; switchAt = -1;
-        pat = P.song.e[0].pat;
+        pat = P.song.e[erste].pat;
         seq.toPattern(seq.pos);
-        seq.bpm = effTempo(pat);
+        enterRow(erste);
         resetTrackValues();
     }
-    void songStop() { songOn = false; if (songArmed) { patNext = -1; switchAt = -1; songArmed = false; } }
+    void songStop() {
+        songOn = false; songBpm = 0; songMute = 0;
+        if (songArmed) { patNext = -1; switchAt = -1; songArmed = false; }
+    }
 
-    // Den naechsten Wechsel des Songs einplanen: am Ende der letzten Wiederholung.
+    // Den naechsten Wechsel des Songs einplanen: nach (Start + Laenge x Wiederholungen) Steps.
     void songPlan() {
         if (!songOn || !P.song.n || patNext >= 0 || !seq.running) return;
         if (songPos >= P.song.n) songPos = 0;
-        int rep = P.song.e[songPos].rep < 1 ? 1 : P.song.e[songPos].rep;
-        int nx = (songPos + 1) % P.song.n;
-        patNext = P.song.e[nx].pat;
-        switchAt = seq.origin + (int64_t)llround(cycleLen() * rep);
+        const SongStep& r = P.song.e[songPos];
+        int rep = r.rep < 1 ? 1 : r.rep;
+        int nx = songResolve(songPos);
+        if (nx < 0) { songStop(); return; }
+        songNext = nx;
+        patNext = P.song.e[nx].type == SONG_HALT ? pat : P.song.e[nx].pat;
+        double sp16 = seq.sr * 60.0 / ((seq.bpm < 2.5 ? 2.5 : seq.bpm) * 4.0);
+        switchAt = seq.origin + (int64_t)llround(sp16 * (double)(r.start + rowLen(songPos) * rep));
         if (switchAt <= seq.pos) switchAt = seq.pos;      // verspaetet: sofort
         songArmed = true;
     }
@@ -513,7 +569,7 @@ struct Engine : Sink {
         }
         float from[64];
         for (int i = 0; i < 64; i++) { from[i] = trkVal[e.track][i]; trkVal[e.track][i] = snap[i]; }
-        if (mute[e.track]) return;           // stumm heisst: kein Klang, der Lauf geht weiter
+        if (mute[e.track] || (songOn && (songMute >> e.track) & 1)) return;   // stumm: kein Klang, der Lauf geht weiter
 
         uint64_t lockMask = 0;
         for (int li = 0; li < tr.s[e.step].nLock; li++) lockMask |= 1ull << tr.s[e.step].lock[li].slot;
@@ -613,6 +669,10 @@ struct Engine : Sink {
         if (sl.n >= recMax) recStop();          // die Laenge stand vorher fest
     }
 
+    // Nach einem HALT: den Rest des Blocks mit gestoppter Uhr rechnen (Stimmen klingen aus).
+    void renderRest(float* out, int done, int frames) {
+        while (done < frames) { int c = frames - done; renderPart(out + done * 2, c); done += c; }
+    }
     // out ist stereo-verschraenkt (L,R,L,R...) und wird ueberschrieben.
     // Steht ein Pattern-Wechsel an, wird der Block an GENAU der Stelle geteilt - sonst haenge
     // der Wechsel davon ab, wie der Host schneidet.
@@ -626,15 +686,23 @@ struct Engine : Sink {
             renderPart(out + done * 2, c);
             done += c;
             if (patNext >= 0 && seq.pos >= switchAt) {
+                if (songArmed && songNext >= 0 && songNext < P.song.n && P.song.e[songNext].type == SONG_HALT) {
+                    // HALT: der Song haelt an - Stimmen klingen aus, die Uhr steht
+                    patNext = -1; switchAt = -1; songArmed = false;
+                    songPos = songNext; songStop(); stop();
+                    renderRest(out, done, frames);
+                    return;
+                }
                 pat = patNext; patNext = -1; switchAt = -1;
                 seq.toPattern(seq.pos);
                 seq.bpm = effTempo(pat);              // Ursprung ist frisch - kein Umrechnen noetig
-                resetTrackValues();
                 if (songArmed) {
                     songArmed = false;
-                    songPos = P.song.n ? (songPos + 1) % P.song.n : 0;
+                    songPos = songNext >= 0 ? songNext : 0;
+                    enterRow(songPos);
+                    resetTrackValues();
                     songPlan();                          // gleich den naechsten einplanen
-                }
+                } else resetTrackValues();
             }
         }
     }

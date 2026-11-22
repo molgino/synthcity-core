@@ -534,8 +534,10 @@ async function R(p, id) {
     await p.locator('.pt').nth(1).tap(); await p.waitForTimeout(200);
     await p.locator('#songBtn').tap(); await p.waitForTimeout(200);
     await p.locator('#songAdd').tap();
-    const zeilen = (await p.locator('.songrow .wo').allTextContents()).map(t => t.replace(/\s+/g, ' ').trim());
-    chk(zeilen.join(' | ') === '1. P1 \u00d7 1 | 2. P2 \u00d7 1', 'die Kette stimmt nicht: ' + zeilen.join(' | '));
+    const zeilen = await p.evaluate(() => [...document.querySelectorAll('.songrow:not(.songhead)')].map(r =>
+      r.querySelector('.nr').textContent + '. ' + r.querySelector('.pp').textContent + ' ' + r.querySelector('.rr').textContent));
+    chk(zeilen.join(' | ') === '1. P1 \u00d71 | 2. P2 \u00d71', 'die Kette stimmt nicht: ' + zeilen.join(' | '));
+    chk(await p.locator('.songrow:not(.songhead)').first().locator('.cell').count() === 8, 'die Zeile hat keine acht Spur-Zellen');
 
     await p.locator('#songPlay').tap(); await p.waitForTimeout(200);
     chk((await p.locator('#songPlay').textContent()).trim() === 'SONG OFF', 'der Song laesst sich nicht einschalten');
@@ -556,6 +558,36 @@ async function R(p, id) {
     await p.locator('.pt').nth(2).tap(); await p.waitForTimeout(300);
     chk(!(await p.locator('#songBtn').evaluate(e => e.classList.contains('on'))),
         'ein Tipp auf ein Pattern laesst den Song weiterlaufen');
+
+    // Clip-Matrix: Zelle = Spur in dieser Zeile stumm; Zeilen-Editor: Start, Laenge, Tempo, Scene
+    if ((await p.locator('#play').textContent()).trim() === 'STOP') await p.locator('#play').click();
+    await p.locator('#songBtn').tap(); await p.waitForTimeout(250);
+    const z2 = p.locator('.songrow:not(.songhead)').nth(1);
+    await z2.locator('.cell').nth(0).tap(); await p.waitForTimeout(150);
+    chk(await z2.locator('.cell').nth(0).evaluate(e => e.classList.contains('stumm')), 'die Zelle schaltet die Spur in der Zeile nicht stumm');
+    const z1 = p.locator('.songrow:not(.songhead)').nth(0);
+    await z1.locator('.nr').tap(); await p.waitForTimeout(200);
+    chk(await p.locator('#songEdit').isVisible(), 'die Zeilennummer oeffnet keinen Editor');
+    const se = k => p.locator('#songEdit .se', {hasText: k});
+    await se('START').locator('button', {hasText: /^\+1$/}).tap(); await p.waitForTimeout(120);
+    await se('LENGTH').locator('button', {hasText: /^\+16$/}).tap(); await p.waitForTimeout(120);
+    await se('TEMPO').locator('button', {hasText: /^\+10$/}).tap(); await p.waitForTimeout(120);
+    await se('SCENE').locator('button', {hasText: /^B$/}).tap(); await p.waitForTimeout(120);
+    const meta = (await p.locator('.songrow:not(.songhead)').nth(0).locator('.meta').textContent());
+    chk(meta.includes('LEN 16') && meta.includes('START 2') && /\d+ BPM/.test(meta) && meta.includes('SCENE B'),
+        'die Zeile zeigt Laenge, Start, Tempo und Scene nicht: ' + meta);
+    await p.locator('#songAddLoop').tap(); await p.waitForTimeout(150);
+    chk((await p.locator('.songrow:not(.songhead)').nth(2).textContent()).includes('LOOP'), 'eine LOOP-Zeile laesst sich nicht anlegen');
+    await se('TIMES').locator('button', {hasText: /^\+$/}).tap(); await p.waitForTimeout(120);
+    await p.locator('#songAddHalt').tap(); await p.waitForTimeout(150);
+    chk((await p.locator('.songrow:not(.songhead)').nth(3).textContent()).includes('HALT'), 'eine HALT-Zeile laesst sich nicht anlegen');
+    await p.locator('#songClose').tap();
+    await p.locator('#docBtn').tap(); await p.waitForTimeout(150);
+    const sd = await p.locator('#docText').inputValue();
+    chk(/^song\.0\.start = 1$/m.test(sd) && /^song\.0\.len = 16$/m.test(sd) && /^song\.0\.morph = 101$/m.test(sd)
+        && /^song\.1\.mute = 1$/m.test(sd) && /^song\.2\.type = 1$/m.test(sd) && /^song\.2\.rep = 2$/m.test(sd) && /^song\.3\.type = 2$/m.test(sd),
+        'die Song-Zeilen stehen nicht im Dokument');
+    await p.locator('#docClose').tap();
   }
 
   grp('Kopieren, Einfuegen, Trigless wird Trig, benutzte Patterns');

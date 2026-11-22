@@ -202,6 +202,20 @@ DECAY als RT60 von 0,3 bis 15 s, DAMPING nie ganz zu), beim **Delay** ist TONE j
 herum (127 = hell). Vorher machten DAMP 127 bzw. TONE 127 den Effekt stumm — gemeldet als
 „Effekte klingen abgeschnitten“; Klang-Tests sichern das jetzt.
 
+## Song: Zeilen wie im Arranger, Clip-Matrix
+
+Jede Song-Zeile hat **Pattern, Wiederholungen, Länge** (AUTO = Wechsellänge des Patterns),
+**Start-Step**, **Tempo** (oder das des Patterns), **Mutes je Spur** und eine **Scene-Stellung**
+(KEEP, A, 25/50/75 %, B). Dazu Zeilen vom Typ **LOOP** (springe zu Zeile n, x-mal oder für immer)
+und **HALT** (der Song hält an, die Stimmen klingen aus). Bedient wird als **Clip-Matrix**:
+Zeilen × Spuren, ein Tipp auf eine Zelle schaltet die Spur in dieser Zeile stumm; die
+Zeilennummer öffnet den Editor (dort auch Duplizieren, Verschieben, Löschen, Mutes übernehmen).
+Song-Mutes wirken zusätzlich zu den eigenen; in der Spurleiste erscheinen song-stumme Spuren
+gedimmt mit gestricheltem M. Der Wechsel bleibt samplegenau: eine Zeile mit Start s, Länge l und
+r Wiederholungen dauert (s + l·r) Sechzehntel ab ihrem Ursprung. Klang-Tests: Wechselzeitpunkte,
+LOOP-Sprung samt Zähler (Mutation wird rot), HALT genau am Ende, Mutes, Scene B, Start-Step,
+Zeilentempo, Dokument.
+
 ## FX-Spur: ein eigener Sequencer für die Effekte
 
 Jedes Pattern hat neben den 8 Spuren eine **FX-Spur** (in der Spurleiste unten: **FX**). Ihre

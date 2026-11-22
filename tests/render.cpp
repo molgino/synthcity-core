@@ -1381,6 +1381,77 @@ int main() {
         machineAt(4)->text(0, stufe(3, 6), tx, sizeof tx); chk(!strcmp(tx, "16"), "SLICES Stufe 4 ist nicht 16");
     }
 
+    grp("Song-Zeilen: Laenge, Start, Mutes, Tempo, Scene, LOOP, HALT");
+    {
+        // 120 bpm: ein Sechzehntel = 6000 Samples.
+        e.prepare(48000.0f);
+        for (int t = 0; t < NTRACKS; t++) e.mute[t] = false;   // fruehere Gruppen haben gemutet
+        projectInit(e.P);
+        for (int p = 0; p < 2; p++) {
+            e.P.pat[p].used = 1;
+            for (int t = 0; t < 2; t++) {
+                Track& tr = e.P.pat[p].t[t];
+                tr.p[SL("trk.note")] = (int16_t)(p == 0 ? 45 : 69);
+                for (int st = 0; st < 16; st++) tr.s[st].on = 1;
+                tr.p[SL("trk.len")] = 6;
+            }
+        }
+        Song& sg = e.P.song;
+        sg.n = 4;
+        sg.e[0] = SongStep(); sg.e[0].pat = 0; sg.e[0].rep = 2; sg.e[0].len = 4;
+        sg.e[1] = SongStep(); sg.e[1].pat = 1; sg.e[1].len = 8; sg.e[1].start = 4; sg.e[1].mute = 1 << 1; sg.e[1].morph = 101;
+        sg.e[2] = SongStep(); sg.e[2].type = SONG_LOOP; sg.e[2].pat = 0; sg.e[2].rep = 1;
+        sg.e[3] = SongStep(); sg.e[3].type = SONG_HALT;
+        e.pat = 0;
+        e.songStart(); e.start();
+        static float b[1000 * 2];
+        int64_t wechsel[8]; int zeile[8], nw = 0, vorher = e.songPos;
+        int spur1InZeile1 = 0, spur0InZeile1 = 0;
+        float morphInZeile1 = -1;
+        int64_t haltPos = -1;
+        for (int k = 0; k < 260; k++) {
+            e.render(b, 1000);
+            if (e.songPos != vorher && nw < 8) { wechsel[nw] = e.seq.pos; zeile[nw] = e.songPos; nw++; vorher = e.songPos; }
+            if (e.songOn && e.songPos == 1) {
+                morphInZeile1 = e.morph;
+                for (int i = 0; i < NVOICES; i++) if (e.v[i].used && e.v[i].age <= 1000) {
+                    if (e.v[i].track == 1) spur1InZeile1++; else spur0InZeile1++;
+                }
+            }
+            if (!e.seq.running && haltPos < 0) haltPos = e.seq.pos;
+        }
+        chk(nw >= 1 && zeile[0] == 1 && wechsel[0] == 48000, "Zeile 1 (4 Steps x 2) wechselt nicht bei 48000");
+        chk(nw >= 2 && zeile[1] == 0 && wechsel[1] == 96000, "Zeile 2 (Start 4, 8 Steps) endet nicht bei 96000 - oder LOOP springt nicht");
+        chk(nw >= 3 && zeile[2] == 1 && wechsel[2] == 144000, "nach dem Sprung kommt Zeile 2 nicht wieder");
+        chk(nw >= 4 && zeile[3] == 3, "nach dem LOOP kommt nicht HALT");
+        chk(haltPos == 192000, "HALT haelt nicht genau am Ende an");
+        chk(spur1InZeile1 == 0 && spur0InZeile1 > 0, "die Mutes der Zeile wirken nicht (oder muten alles)");
+        chk(morphInZeile1 > 0.99f, "die Zeile stellt die Scene nicht auf B");
+        // Start-Step: Zeile 2 beginnt bei Step 5 (Index 4) - der erste Anschlag dort ist Step 4
+        e.prepare(48000.0f); e.songStart(); e.start();
+        int ersterStep = -1;
+        for (int k = 0; k < 60 && ersterStep < 0; k++) {
+            e.render(b, 1000);
+            if (e.songPos == 1) for (int i = 0; i < NVOICES; i++) if (e.v[i].used && e.v[i].track == 0 && e.v[i].age <= 1000) ersterStep = e.v[i].step;
+        }
+        chk(ersterStep == 4, "Zeile mit START 4 beginnt nicht bei Step 5");
+        // Tempo der Zeile
+        sg.n = 1; sg.e[0] = SongStep(); sg.e[0].pat = 0; sg.e[0].bpm = 90;
+        e.prepare(48000.0f); e.songStart(); e.start();
+        chk((int)(e.seq.bpm + 0.5) == 90 && (int)(e.tempoOf(e.pat) + 0.5) == 90, "das Tempo der Zeile gilt nicht");
+        e.songStop();
+        chk((int)(e.tempoOf(e.pat) + 0.5) == 120, "nach dem Song bleibt das Zeilentempo haengen");
+        // Im Dokument
+        sg.n = 2; sg.e[1] = SongStep(); sg.e[1].type = SONG_LOOP; sg.e[1].pat = 0; sg.e[1].rep = 0;
+        sg.e[0].len = 12; sg.e[0].start = 3; sg.e[0].mute = 0x81; sg.e[0].morph = 51;
+        static Doc d; d.clear(); projectToDoc(e.P, d);
+        static Project Q; projectFromDoc(d, Q);
+        chk(Q.song.n == 2 && Q.song.e[0].len == 12 && Q.song.e[0].start == 3 && Q.song.e[0].bpm == 90
+            && Q.song.e[0].mute == 0x81 && Q.song.e[0].morph == 51 && Q.song.e[1].type == SONG_LOOP && Q.song.e[1].rep == 0,
+            "die Song-Zeilen ueberleben das Dokument nicht");
+        e.P.song.n = 0;
+    }
+
     grp("Referenz-Aufnahme");
     {
         const int N = 96000;                         // zwei Sekunden

@@ -192,7 +192,7 @@ void scSongSet(int i, int pat, int rep) {
 }
 void scSongAdd(int pat, int rep) {
     if (gEng.P.song.n >= NSONG) return;
-    gEng.P.song.e[gEng.P.song.n] = {0, 1};
+    gEng.P.song.e[gEng.P.song.n] = SongStep();
     gEng.P.song.n++;
     scSongSet(gEng.P.song.n - 1, pat, rep);
 }
@@ -203,6 +203,44 @@ void scSongDel(int i) {
     s.n--;
     if (!s.n) gEng.songStop();
 }
+// Felder einer Zeile: 0 Pattern (bei LOOP: Zielzeile), 1 Wiederholungen (LOOP: wie oft, 0 = immer),
+// 2 Typ, 3 Laenge (0 = AUTO), 4 Start-Step, 5 Tempo (0 = keins), 6 Mutes (Bitmaske), 7 Scene (0 = bleibt)
+int  scSongGet(int i, int f) {
+    if (i < 0 || i >= gEng.P.song.n) return 0;
+    const SongStep& r = gEng.P.song.e[i];
+    switch (f) { case 0: return r.pat; case 1: return r.rep; case 2: return r.type; case 3: return r.len;
+                 case 4: return r.start; case 5: return r.bpm; case 6: return r.mute; case 7: return r.morph; }
+    return 0;
+}
+void scSongSetF(int i, int f, int v) {
+    if (i < 0 || i >= gEng.P.song.n) return;
+    SongStep& r = gEng.P.song.e[i];
+    auto k = [](int x, int lo, int hi) { return x < lo ? lo : (x > hi ? hi : x); };
+    switch (f) {
+    case 0: r.pat = (uint8_t)k(v, 0, r.type == SONG_LOOP ? NSONG - 1 : NPATTERNS - 1); break;
+    case 1: r.rep = (uint8_t)k(v, r.type == SONG_LOOP ? 0 : 1, 99); break;
+    case 2: r.type = (uint8_t)k(v, 0, 2); if (r.type == SONG_LOOP) { r.pat = 0; r.rep = 1; } else if (r.rep < 1) r.rep = 1; break;
+    case 3: r.len = (uint8_t)k(v, 0, NSTEPS); break;
+    case 4: r.start = (uint8_t)k(v, 0, NSTEPS - 1); break;
+    case 5: r.bpm = (int16_t)(v <= 0 ? 0 : k(v, 30, 300)); break;
+    case 6: r.mute = (uint16_t)k(v, 0, 0xFFFF); break;
+    case 7: r.morph = (uint8_t)k(v, 0, 101); break;
+    }
+}
+// Zeile i verdoppeln (die Kopie steht direkt darunter) / um eins verschieben.
+void scSongDup(int i) {
+    Song& s = gEng.P.song;
+    if (i < 0 || i >= s.n || s.n >= NSONG) return;
+    for (int k = s.n; k > i + 1; k--) s.e[k] = s.e[k - 1];
+    s.e[i + 1] = s.e[i]; s.n++;
+}
+void scSongMove(int i, int dir) {
+    Song& s = gEng.P.song;
+    int j = i + (dir < 0 ? -1 : 1);
+    if (i < 0 || i >= s.n || j < 0 || j >= s.n) return;
+    SongStep t = s.e[i]; s.e[i] = s.e[j]; s.e[j] = t;
+}
+int  scSongMuteNow()    { return gEng.songOn ? gEng.songMute : 0; }
 void scSongStart()      { gEng.songStart(); }
 void scSongStop()       { gEng.songStop(); }
 int  scSongOn()         { return gEng.songOn ? 1 : 0; }
@@ -274,6 +312,7 @@ int  scScaleHas(int note) {
 void  scMute(int t, int on) { if (t >= 0 && t < NTRACKS) gEng.mute[t] = on != 0; }
 int   scIsMute(int t)       { return (t >= 0 && t < NTRACKS && gEng.mute[t]) ? 1 : 0; }
 void  scSetMorph(float v)   { gEng.morph = v; }
+float scMorph()            { return gEng.morph; }
 float scGetMorph()          { return gEng.morph; }
 void  scFill(int on)        { gEng.seq.fill = on != 0; }
 int   scIsFill()            { return gEng.seq.fill ? 1 : 0; }

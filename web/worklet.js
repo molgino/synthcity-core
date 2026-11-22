@@ -97,7 +97,8 @@ class SynthCityNode extends AudioWorkletProcessor {
       for (let t = 0; t <= 8; t++) steps.push(this.x.scPlayStep(t));   // 8 = FX-Spur
       this.port.postMessage({type: 'pos', steps, peak: this.peak,
                              pat: this.x.scPattern(), next: this.x.scPatNext(),
-                             songOn: this.x.scSongOn(), songPos: this.x.scSongPos()});
+                             songOn: this.x.scSongOn(), songPos: this.x.scSongPos(),
+                             songMute: this.x.scSongMuteNow(), morph: this.x.scMorph()});
       this.peak = 0;
     }
     return true;
