@@ -7,15 +7,15 @@
 #include <stdio.h>
 #include <math.h>
 
-enum { LFO_SIN, LFO_TRI, LFO_SAW, LFO_SQR, LFO_SH, LFO_WAVES };
-enum { LFO_FREE, LFO_TRIG, LFO_ONE, LFO_MODES };
+enum { LFO_SIN, LFO_TRI, LFO_SAW, LFO_SQR, LFO_SH, LFO_EXP, LFO_RAMP, LFO_WAVES };
+enum { LFO_FREE, LFO_TRIG, LFO_ONE, LFO_HOLD, LFO_HALF, LFO_MODES };
 
 inline const char* lfoWaveName(int i) {
-    static const char* n[LFO_WAVES] = {"SINE", "TRIANGLE", "SAW", "SQUARE", "S&H"};
+    static const char* n[LFO_WAVES] = {"SINE", "TRIANGLE", "SAW", "SQUARE", "S&H", "EXP", "RAMP"};
     return n[i < 0 ? 0 : (i >= LFO_WAVES ? LFO_WAVES - 1 : i)];
 }
 inline const char* lfoModeName(int i) {
-    static const char* n[LFO_MODES] = {"FREE", "TRIG", "ONE SHOT"};
+    static const char* n[LFO_MODES] = {"FREE", "TRIG", "ONE", "HOLD", "HALF"};
     return n[i < 0 ? 0 : (i >= LFO_MODES ? LFO_MODES - 1 : i)];
 }
 // Geschwindigkeit als Notenwert - ein LFO, der nicht im Takt laeuft, ist in einer Groovebox selten gemeint.
@@ -67,7 +67,7 @@ inline void modDestRange(int d, float& lo, float& hi) {
     lo = L[d]; hi = H[d];
 }
 
-struct ModSlots { int wave[2], rate[2], depth[2], dest[2], mode[2], eAtk, eDec, eDepth, eDest; };
+struct ModSlots { int wave[2], rate[2], depth[2], dest[2], mode[2], speed[2], mult[2], fade[2], phase[2], eAtk, eDec, eDepth, eDest, eMode; };
 inline const ModSlots& modSlots() {
     static ModSlots m;
     static bool ok = false;
@@ -80,9 +80,14 @@ inline const ModSlots& modSlots() {
             snprintf(b, sizeof b, "%sdepth", w[k]); m.depth[k] = paramSlot(paramFind(b));
             snprintf(b, sizeof b, "%sdest", w[k]);  m.dest[k]  = paramSlot(paramFind(b));
             snprintf(b, sizeof b, "%smode", w[k]);  m.mode[k]  = paramSlot(paramFind(b));
+            snprintf(b, sizeof b, "%sspd", w[k]);   m.speed[k] = paramSlot(paramFind(b));
+            snprintf(b, sizeof b, "%smult", w[k]);  m.mult[k]  = paramSlot(paramFind(b));
+            snprintf(b, sizeof b, "%sfade", w[k]);  m.fade[k]  = paramSlot(paramFind(b));
+            snprintf(b, sizeof b, "%sphase", w[k]); m.phase[k] = paramSlot(paramFind(b));
         }
         m.eAtk = paramSlot(paramFind("trk.menv.atk"));   m.eDec  = paramSlot(paramFind("trk.menv.dec"));
         m.eDepth = paramSlot(paramFind("trk.menv.depth")); m.eDest = paramSlot(paramFind("trk.menv.dest"));
+        m.eMode = paramSlot(paramFind("trk.menv.mode"));
         ok = true;
     }
     return m;
@@ -92,13 +97,17 @@ struct ModState {
     float ph[2] = {0, 0}, sh[2] = {0, 0};
     uint32_t rng = 0x9e3779b9u;
     double spb = 24000.0;       // Samples je Viertel - aus dem Tempo beim Anschlag
-    uint32_t t = 0;             // Samples seit dem Anschlag (fuer die Mod-Huellkurve)
+    int64_t origin = 0;
+    uint32_t trackSeed = 0;
+    uint64_t t = 0;             // Samples seit dem Anschlag (fuer die Mod-Huellkurve)
     float rnd() { rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5; return (rng >> 8) * (2.0f / 16777216.0f) - 1.0f; }
 
     // pos = Transport-Position des Anschlags in Samples: FREE-LFOs laufen am Takt, nicht an der Note.
-    void start(const float* pf, double samplesPerBeat, int64_t pos, uint32_t seed) {
+    void start(const float* pf, double samplesPerBeat, int64_t pos, uint32_t seed, uint32_t modulationSeed = 0, int64_t globalTime = -1) {
         const ModSlots& m = modSlots();
         spb = samplesPerBeat > 1 ? samplesPerBeat : 24000.0;
+        origin = globalTime >= 0 ? globalTime : (pos >= 0 ? pos : 0);
+        trackSeed = modulationSeed;
         t = 0; rng = seed * 2654435761u + 1;
         for (int k = 0; k < 2; k++) {
             int mode = (int)(pf[m.mode[k]] + 0.5f);
@@ -115,9 +124,71 @@ struct ModState {
         case LFO_TRI: return ph < 0.5f ? ph * 4.0f - 1.0f : 3.0f - ph * 4.0f;
         case LFO_SAW: return 1.0f - 2.0f * ph;
         case LFO_SQR: return ph < 0.5f ? 1.0f : -1.0f;
+        case LFO_EXP: return (1.0f - ph) * (1.0f - ph) * (1.0f - ph);
+        case LFO_RAMP: return ph;
         default:      return sh;
         }
     }
+    static int modeOf(const float* pf, int k) {
+        return (int)(pf[modSlots().mode[k]] + 0.5f);
+    }
+    static bool extended(const float* pf, int k) {
+        const auto& m = modSlots();
+        return pf[m.speed[k]] > -64.5f || pf[m.phase[k]] != 0 || pf[m.fade[k]] != 0
+            || modeOf(pf, k) >= LFO_HOLD;
+    }
+    static double cyclesPerSample(const float* pf, int k, double spb, float sr) {
+        const auto& m = modSlots();
+        float speed = pf[m.speed[k]];
+        if (speed < -64.5f) return 1.0 / (spb * LFO_RATES[clampRate(pf[m.rate[k]])].beats);
+        int mult = (int)pf[m.mult[k]];
+        if (mult < 0) mult = 0;
+        if (mult > 23) mult = 23;
+        if (mult >= 12) spb = sr * 0.5;
+        return speed * (double)(1u << (mult % 12)) / (512.0 * spb);
+    }
+    static float newLfo(const float* pf, int k, int64_t pos, uint64_t elapsed,
+                        double spb, float sr, uint32_t seed) {
+        const auto& m = modSlots();
+        int mode = modeOf(pf, k);
+        double inc = cyclesPerSample(pf, k, spb, sr);
+        double travel = inc * (double)elapsed;
+        if (mode == LFO_FREE || mode == LFO_HOLD)
+            travel = inc * ((double)pos + (mode == LFO_FREE ? (double)elapsed : 0.0));
+        if (mode == LFO_ONE || mode == LFO_HALF) {
+            double span = mode == LFO_ONE ? 1.0 - 1e-6 : 0.5;
+            travel = travel < -span ? -span : travel > span ? span : travel;
+        }
+        double cycle = travel + pf[m.phase[k]] / 128.0;
+        int64_t whole = (int64_t)cycle;
+        if (cycle < whole) whole--;
+        float phase = (float)(cycle - whole);
+        uint32_t h = seed * 2654435761u ^ (uint32_t)whole * 40503u;
+        h ^= h >> 15; h *= 2246822519u; h ^= h >> 13;
+        float result = wave((int)(pf[m.wave[k]] + 0.5f), phase, (h >> 8) * (2.0f / 16777216.0f) - 1.0f);
+        float fade = pf[m.fade[k]];
+        if (fade) {
+            // One quarter note at magnitude 16, with a useful range from 1/16 to four beats.
+            float progress = (float)(elapsed * 16.0 / (spb * fabsf(fade)));
+            if (progress > 1.0f) progress = 1.0f;
+            result *= fade < 0 ? progress : 1.0f - progress;
+        }
+        return result;
+    }
+    static float envelope(const float* pf, double samples, float sr) {
+        const auto& m = modSlots();
+        float a = pTime(pf[m.eAtk]) * sr, dc = pTime(pf[m.eDec]) * sr;
+        bool loop = pf[m.eMode] > 0.5f;
+        if (loop) {
+            double period = a + dc;
+            samples -= (int64_t)(samples / period) * period;
+        }
+        if (samples < a) return (float)samples / a;
+        float tail = expf(-((float)samples - a) / (dc * 0.4f));
+        if (!loop) return tail;
+        return tail > 0.082085f ? (tail - 0.082085f) / (1.0f - 0.082085f) : 0.0f;
+    }
+
     // Einen Steuertakt weiter (n Samples) und die Modulation auf pm anwenden.
     bool apply(const float* pf, float* pm, int n, float sr) {
         const ModSlots& m = modSlots();
@@ -131,6 +202,11 @@ struct ModState {
         for (int k = 0; k < 2; k++) {
             int d = (int)(pf[m.dest[k]] + 0.5f);
             int mode = (int)(pf[m.mode[k]] + 0.5f);
+            if (extended(pf, k)) {
+                if (d > 0 && d < MOD_NDEST && pf[m.depth[k]] != 64.0f)
+                    add(d, pBip(pf[m.depth[k]]) * newLfo(pf, k, origin, t, spb, sr, trackSeed + k));
+                continue;
+            }
             float per = (float)(spb * LFO_RATES[clampRate(pf[m.rate[k]])].beats);
             // Ohne Ziel (oder Tiefe 0) wird die Welle nicht gebraucht - die Phase laeuft trotzdem weiter.
             if (d > 0 && d < MOD_NDEST && pf[m.depth[k]] != 64.0f)
@@ -146,9 +222,8 @@ struct ModState {
         {   // Mod-Huellkurve: linear hinauf, exponentiell hinab
             int d = (int)(pf[m.eDest] + 0.5f);
             if (d > 0 && d < MOD_NDEST) {
-                float a = pTime(pf[m.eAtk]) * sr, dc = pTime(pf[m.eDec]) * sr;
-                float e = (float)t < a ? (float)t / a : expf(-((float)t - a) / (dc * 0.4f));
-                add(d, pBip(pf[m.eDepth]) * e);
+                double elapsed = (double)t + (pf[m.eMode] > 0.5f ? origin : 0);
+                add(d, pBip(pf[m.eDepth]) * envelope(pf, elapsed, sr));
             }
             t += (uint32_t)n;
         }
@@ -181,13 +256,21 @@ struct ModState {
     }
     // Versatz (in Werte-Einheiten) fuer ein Anschlag-Ziel - Summe aus beiden LFOs und der
     // Mod-Huellkurve (die beim Anschlag bei 0 steht, ausser ihr Attack ist 0).
-    static float trigOffset(const float* pf, int d, int64_t pos, double spb, uint32_t seed) {
+    static float trigOffset(const float* pf, int d, int64_t pos, double spb, uint32_t seed, float sr = 48000, int64_t globalTime = -1) {
         if (d <= 0 || d >= MOD_NDEST) return 0.0f;
         const ModSlots& m = modSlots();
+        int64_t phaseTime = globalTime >= 0 ? globalTime : (pos < 0 ? 0 : pos);
         float o = 0.0f;
         for (int k = 0; k < 2; k++)
-            if ((int)(pf[m.dest[k]] + 0.5f) == d) o += pBip(pf[m.depth[k]]) * lfoAt(pf, k, pos, spb, seed + k);
-        if ((int)(pf[m.eDest] + 0.5f) == d && pf[m.eAtk] < 0.5f) o += pBip(pf[m.eDepth]);
+            if ((int)(pf[m.dest[k]] + 0.5f) == d) {
+                float value = extended(pf, k) ? newLfo(pf, k, phaseTime, 0, spb, sr, seed + k)
+                                               : lfoAt(pf, k, pos, spb, seed + k);
+                o += pBip(pf[m.depth[k]]) * value;
+            }
+        if ((int)(pf[m.eDest] + 0.5f) == d) {
+            if (pf[m.eMode] > 0.5f) o += pBip(pf[m.eDepth]) * envelope(pf, phaseTime, sr);
+            else if (pf[m.eAtk] < 0.5f) o += pBip(pf[m.eDepth]);
+        }
         return o * MOD_DESTS[d].range;
     }
 };

@@ -9,6 +9,7 @@
 #include "mod.h"
 #include "fx.h"
 #include "insert.h"
+#include "master.h"
 
 enum { NVOICES = 32, CTL = 16, NRAMP = 8 };   // CTL: Steuerrate in Samples (Zweierpotenz)
 
@@ -27,6 +28,7 @@ struct Voice {
     float    pm[VOICE_PARAM_CAP];            // dieselben, nach LFOs und Mod-Huellkurve - daraus klingt es
     ModState mod;
     double   spb = 24000.0;     // vor start() gesetzt: Samples je Viertel
+    int64_t modTime = -1;
     int64_t  t0 = -1;           // vor start() gesetzt: Transport-Position des Anschlags
     uint64_t locked = 0;        // welche Slots dieser Step festgelegt hat - sie folgen nicht mehr
     Ramp     rmp[NRAMP];
@@ -92,7 +94,7 @@ struct Voice {
         bwHp.reset(); bwLp.reset(); bwHpR.reset(); bwLpR.reset();
         env.setup(pTime(pf[s.atk]), pTime(pf[s.dec]), pLevel(pf[s.sus]), pTime(pf[s.rel]), sr);
         env.kill(); env.gate();
-        mod.start(pf, spb, t0, (uint32_t)when);
+        mod.start(pf, spb, t0, (uint32_t)when, 0x51u + (uint32_t)tr * 977u, modTime);
         ctl(sr, live);
         ms.seed = (uint32_t)when * 2654435761u + 0x9E3779B9u;   // reproduzierbarer Zufall je Anschlag
         ms.step = (uint8_t)st;
@@ -178,10 +180,12 @@ struct Voice {
         float sa = pLevel(pm[slotSA]), sb = pLevel(pm[slotSB]);
         float buf[MACH_CHUNK], bufR[MACH_CHUNK], oL[MACH_CHUNK], oR[MACH_CHUNK];
         const bool st = mach->stereo(pf, *pool);
+        const bool aligned = ModState::extended(pf, 0) || ModState::extended(pf, 1) || pf[modSlots().eMode] > 0.5f;
         int done = 0;
         while (done < n) {
-            int c = n - done; if (c > MACH_CHUNK) c = MACH_CHUNK;
-            mach->render(ms, pm, hz, buf, st ? bufR : nullptr, c, sr, *pool);
+            int limit = aligned ? CTL - (age & (CTL - 1)) : MACH_CHUNK;
+            int c = n - done; if (c > limit) c = limit;
+            if (!aligned) mach->render(ms, pm, hz, buf, st ? bufR : nullptr, c, sr, *pool);
             for (int i = 0; i < c; i++) {
                 if (left > 0) { if (--left == 0) release(); }
                 float e = env.tick();
@@ -199,6 +203,12 @@ struct Voice {
                             if (st) { fltR.a1 = flt.a1; fltR.a2 = flt.a2; fltR.a3 = flt.a3; fltR.k = flt.k; }
                         }
                     }
+                }
+                // For the new modes, render only after the current voice control tick.
+                // Pitch and machine knobs then hold for the same samples in every host block.
+                if (aligned && i == 0) {
+                    mach->render(ms, pm, hz, buf, st ? bufR : nullptr, c, sr, *pool);
+                    sa = pLevel(pm[slotSA]); sb = pLevel(pm[slotSB]);
                 }
                 age++;
                 float eg = e * gain;
@@ -293,6 +303,9 @@ struct Engine : Sink {
     float bufD[2][4096], bufA[2][4096], bufB[2][4096];
     float bufD2[2][4096], bufA2[2][4096], bufB2[2][4096];   // die ungerade Haelfte der Stimmen
     StereoInsert inserts[NTRACKS][INSERT_STAGES];
+    MasterChain mastering;
+    bool masteringExport = false;
+    int64_t sampleClock = 0, modulationOffset = 0;
     float trackDry[2][NTRACKS][2][4096];
     unsigned trackCapture = 0;
     VoiceHelper* helper = nullptr;
@@ -371,7 +384,7 @@ struct Engine : Sink {
     static void warmTables() {
         float lo, hi;
         knobSlot(0); modDestSlot(1); modDestRange(1, lo, hi); modSlots();
-        Voice::liveSlots(); Voice::S(); insertParamSlot(0); StereoChorus::warm();
+        Voice::liveSlots(); Voice::S(); insertParamSlot(0); StereoChorus::warm(); MasterChain::slots();
         for (int i = 0; i < machineCount(); i++) machineAt(i);
     }
 
@@ -391,14 +404,16 @@ struct Engine : Sink {
         patNext = -1; switchAt = -1; songArmed = false;
         recStop();
         for (int i = 0; i < NVOICES; i++) { v[i].used = false; v[i].env.kill(); }
+        sampleClock = modulationOffset = 0;
         clock = 0;                                   // Zufall der Stimmen (Drift) beginnt gleich
-        delay.reset(); reverb.reset(); resetInserts();
+        delay.reset(); reverb.reset(); resetInserts(); mastering.reset();
         resetTrackValues();
     }
     void start() {
         if (songOn) { seq.stop(); songStart(); }         // der Song faengt vorn an
         seq.bpm = effTempo(pat);
         seq.start();
+        modulationOffset = sampleClock - seq.pos;
         if (songOn) enterRow(songPos);                   // Start-Step der Zeile nach dem Reset
     }
 
@@ -630,6 +645,7 @@ struct Engine : Sink {
             snap[knobSlot(MachChop::C_SLICE)] = (float)slice;
 
         }
+        v[i].modTime = sampleClock;
         v[i].start(machineAt(machine), 0, 0, snap, 0.85f, (int64_t)(sr * seconds), sr, clock++,
                    ~0ull, live[0], pool);
         v[i].preview = true;
@@ -686,13 +702,18 @@ struct Engine : Sink {
     }
 
     // Anschlag-Ziele der Modulation: der LFO-Wert im Moment des Trigs (siehe ModState::trigOffset).
+    int64_t modTimeFor(int64_t at) const {
+        if (!seq.running) return sampleClock;
+        int64_t t = at + modulationOffset;
+        return t < 0 ? 0 : t;
+    }
     float trigMod(int track, int step, int slot, int64_t at) override {
         int d = modDestOfSlot(slot);
         if (d < 0 || !MOD_DESTS[d].trig) return 0.0f;
         float snap[VOICE_PARAM_CAP];
         snapshot(track, step, snap);
         double spb = sr * 60.0 / (tempoOf(pat) > 1 ? tempoOf(pat) : 120.0);
-        return ModState::trigOffset(snap, d, at, spb, 0x51u + (uint32_t)track * 977u);
+        return ModState::trigOffset(snap, d, at, spb, 0x51u + (uint32_t)track * 977u, sr, modTimeFor(at));
     }
 
     // Geraet: Noten nach aussen (MIDI) und Tempo von aussen (MIDI-Clock). Beides bleibt im
@@ -711,7 +732,7 @@ struct Engine : Sink {
             double spb = sr * 60.0 / (tempoOf(pat) > 1 ? tempoOf(pat) : 120.0);
             for (const char* id : beimAnschlag) {
                 int pi = paramFind(id), sl = paramSlot(pi);
-                float o = ModState::trigOffset(snap, modDestOfSlot(sl), e.at, spb, 0x51u + (uint32_t)e.track * 977u);
+                float o = ModState::trigOffset(snap, modDestOfSlot(sl), e.at, spb, 0x51u + (uint32_t)e.track * 977u, sr, modTimeFor(e.at));
                 if (o == 0.0f) continue;
                 float v = (float)(int)(snap[sl] + o + (snap[sl] + o < 0 ? -0.5f : 0.5f));
                 snap[sl] = v < PARAMS[pi].lo ? PARAMS[pi].lo : (v > PARAMS[pi].hi ? PARAMS[pi].hi : v);
@@ -797,6 +818,7 @@ struct Engine : Sink {
             int i = pick();
             v[i].spb = sr * 60.0 / (tempoOf(pat) > 1 ? tempoOf(pat) : 120.0);
             v[i].t0 = e.at;
+            v[i].modTime = modTimeFor(e.at);
             v[i].start(machineAt(mi), e.track, e.step, snap, e.vel / 127.0f, e.len, sr, clock++,
                        lockMask, live[e.track], pool);
             for (int li = 0; li < tr.s[e.step].nLock; li++) {    // Slides: von dort, wo die Spur steht
@@ -905,9 +927,11 @@ struct Engine : Sink {
         fxStep = fs;
         seq.swing = swingOf(pat) / 100.0;
         machTempo() = (float)effTempo(pat);            // fuer den Sampler-Warp
+        modulationOffset = sampleClock - seq.pos;
         seq.process(P, pat, frames, *this);
         updateLive();
         configureInserts();
+        mastering.configure(P.g, sr);
         float master = pLevel(gNow(paramSlot(paramFind("master.vol")), fs));
 
         // Effekte: Einstellungen einmal je Block, nicht je Sample.
@@ -963,13 +987,17 @@ struct Engine : Sink {
             delay.run(bufA[0], bufA[1], bufD[0], bufD[1], c, fb, tone, aVol);
             reverb.run(bufB[0], bufB[1], bufD[0], bufD[1], c, dec, damp, bVol);
             for (int i = 0; i < c; i++) {
-                out[(done + i) * 2]     = softClip(bufD[0][i] * master);
-                out[(done + i) * 2 + 1] = softClip(bufD[1][i] * master);
+                float l = bufD[0][i] * master, r = bufD[1][i] * master;
+                if (mastering.enabled) mastering.run(l, r, masteringExport);
+                else { l = softClip(l); r = softClip(r); }
+                out[(done + i) * 2] = l;
+                out[(done + i) * 2 + 1] = r;
             }
             if (recOn && recSource == REC_INPUT && recTrigTrack >= 0) recInputLead += c;
             if (recOn && recSource == REC_MASTER) recWrite(out + done * 2, c);
             else if (recOn && recSource >= 0) recWrite(recStereo, c);
             done += c;
         }
+        sampleClock += frames;
     }
 };

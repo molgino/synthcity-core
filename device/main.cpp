@@ -788,7 +788,7 @@ static void buildRows() {
         int last = 0;
         for (int pass = 0; pass < 3; pass++)
             for (int i = 0; i < NPARAMS; i++) {
-                if (!fxLockable(i)) continue;
+                if (!fxLockable(i) && !masterSetting(i)) continue;
                 const char* id = PARAMS[i].id;
                 int k = !strncmp(id, "fx.a", 4) ? 0 : !strncmp(id, "fx.b", 4) ? 1 : 2;
                 if (k != pass) continue;
@@ -800,7 +800,8 @@ static void buildRows() {
     }
     bool smp = scMachUsesSmp(machOf(U.sel)) != 0;
     int lastHdr = 0;
-    for (int i = 0; i < NPARAMS && gNRows < 94; i++) {
+    const int passes = U.tab == TAB_MOD ? 3 : 1;
+    for (int pass = 0; pass < passes; pass++) for (int i = 0; i < NPARAMS && gNRows < 94; i++) {
         const ParamDef& d = PARAMS[i];
         if (d.scope != PS_TRACK || tabOf(d) != U.tab) continue;
         if (i == P_SMP && !smp) continue;
@@ -813,6 +814,7 @@ static void buildRows() {
         }
         if (U.tab == TAB_MOD) {
             int h = !strncmp(d.id, "trk.lfo1", 8) ? HDR_LFO1 : !strncmp(d.id, "trk.lfo2", 8) ? HDR_LFO2 : HDR_MENV;
+            if (h != HDR_LFO1 - pass) continue;
             if (h != lastHdr) { gRows[gNRows++] = h; lastHdr = h; }
         }
         gRows[gNRows++] = i;
@@ -921,7 +923,11 @@ static int stepValue(int p, int v, int dir, bool coarse) {
             do j += dir; while (j > 0 && j < n - 1 && !strcmp(scEnumGroup(p, j), g0));
             idx = j;
         } else idx += dir;
-        return scEnumValue(p, clampi(idx, 0, n - 1));
+        for (int j = clampi(idx, 0, n - 1); j >= 0 && j < n; j += dir) {
+            int value = scEnumValue(p, j);
+            if (scEnumAvailable(p, value, U.sel < FXT ? machOf(U.sel) : -1)) return value;
+        }
+        return v;
     }
     int k = srcKnob(d);
     int st = (k >= 0 && U.sel < FXT) ? scMachSteps(machOf(U.sel), k) : 0;
@@ -936,6 +942,11 @@ static int stepValue(int p, int v, int dir, bool coarse) {
 static void editParam(int p, int dir, bool coarse) {
     if (p < 0) return;
     const ParamDef& d = PARAMS[p];
+    if (U.aHeld && masterSetting(p)) {
+        U.aEdited = true;
+        toast("Mastering controls are project settings");
+        return;
+    }
     if (U.aHeld && isInsertParam(p)) {
         U.aEdited = true;
         toast("Inserts are track settings");
@@ -1165,8 +1176,18 @@ static void exportFinish(bool cancel) {
     gExp.f = nullptr;
     gExp.on = false;
     if (cancel) { remove(gExp.full); toast("Export cancelled"); return; }
+    float lufs = scExportLufs(), peak = scExportPeak();
+    char report[910];
+    snprintf(report, sizeof report, "%s.txt", gExp.full);
+    if (FILE* f = fopen(report, "w")) {
+        if (lufs > -120) fprintf(f, "Integrated loudness: %.1f LUFS\n", lufs);
+        else fprintf(f, "Integrated loudness: unavailable (silence or shorter than 400 ms)\n");
+        fprintf(f, "Interpolated peak (4x estimate): %.1f dBTP\n", peak);
+        fclose(f);
+    }
     sync();
-    toast("Exported %s (%.1f s)", gExp.rel, gExp.frames / (double)gRate);
+    if (lufs > -120) toast("Exported | %.1f LUFS | %.1f dBTP est.", lufs, peak);
+    else toast("Exported | %.1f dBTP est.", peak);
 }
 static void exportStep(int budget) {   // budget: Frames je Aufruf
     static float buf[4096 * 2];
@@ -2663,6 +2684,12 @@ static int selfTest(const char* shotDir) {
     CHECK(w && ch == 2 && fr > 48000 * 4 && epk > 0.01f, "Export-WAV lesbar, stereo, mit Ton");
     free(w);
     remove(gExp.full);
+    char report[910]; snprintf(report, sizeof report, "%s.txt", gExp.full);
+    FILE* met = fopen(report, "r");
+    char metric[160] = {};
+    if (met) { fgets(metric, sizeof metric, met); fclose(met); }
+    CHECK(strstr(metric, "LUFS") != nullptr, "Song WAV export writes its loudness report");
+    remove(report);
     // Sample laden: WAV schreiben, ueber die Auswahl in den Slot der Spur holen
     {
         static float tone[4800];

@@ -641,6 +641,7 @@ const ptext = (p, v) => {
 // Wie die beiden Quellregler heissen, sagt die Machine - nicht die Tabelle.
 // Im FX-Reiter stehen die Regler unter ihrem Effekt - dort reichen klare Namen.
 // (Die Tabelle behaelt die kurzen, eindeutigen Namen fuer den Plugin-Host.)
+const masterSetting = p => p.id.startsWith('master.') && p.id !== 'master.vol';
 const FXNAME = {'fx.a.div': 'TIME', 'fx.a.fb': 'FEEDBACK', 'fx.a.tone': 'TONE', 'fx.a.vol': 'LEVEL',
                 'fx.b.size': 'SIZE', 'fx.b.dec': 'DECAY', 'fx.b.damp': 'DAMPING', 'fx.b.vol': 'LEVEL',
                 'master.vol': 'VOLUME'};
@@ -1002,7 +1003,10 @@ function buildParams() {
   let group = '', modKopf = '', insertHead = '';
   const fxSpur = sel === FXT;                // FX-Spur: nur die Effekte, ohne Reiter
   tabs.hidden = fxSpur;
-  for (const p of P) {
+  const order = ['lfo1', 'lfo2', 'menv'];
+  const modOrder = p => order.indexOf(p.id.split('.')[1]);
+  const params = P.filter(p => modOrder(p) < 0).concat(P.filter(p => modOrder(p) >= 0).sort((a,b) => modOrder(a) - modOrder(b)));
+  for (const p of params) {
     if (p.scope !== 1 || fxSpur) continue;
     const key = p.id.split('.')[1];
     const g = GROUP[key] || key.toUpperCase();
@@ -1109,7 +1113,7 @@ function zeigeGruppe() {
 }
 const valueOf = p => {
   if (p.scope !== 1) {                     // Projektwerte: gelockt nur auf der FX-Spur
-    if (sel === FXT && lockStep >= 0) {
+    if (sel === FXT && lockStep >= 0 && !masterSetting(p)) {
       const l = X.scLockGet(FXT, lockStep, p.slot);
       if (l !== -32768) return {v: l, locked: true};
     }
@@ -1130,7 +1134,7 @@ const valueOf = p => {
 function writeValue(p, v) {
   v = Math.max(p.lo, Math.min(p.hi, Math.round(v)));
   if (p.scope !== 1) {
-    if (sel === FXT && lockStep >= 0) cmd('scLockSet', FXT, lockStep, p.slot, v, 0);
+    if (sel === FXT && lockStep >= 0 && !masterSetting(p)) cmd('scLockSet', FXT, lockStep, p.slot, v, 0);
     else cmd('scSet', -1, p.slot, v);
     return;
   }
@@ -1166,6 +1170,7 @@ function openPick(p) {
   let group = '';
   for (let i = 0; i < n; i++) {
     const v = stufeV(i);
+    if (!X.scEnumAvailable(p.i, v, machOf(sel))) continue;
     const g = ks ? '' : str(X.scEnumGroup(p.i, i));
     if (g && g !== group) {
       group = g;
@@ -1301,7 +1306,7 @@ function openFineParam(p) {
   const stufen = istNote && X.scPatScale(X.scPattern()) > 0 && X.scGet(sel, qSlot) > 0;
   const projekt = p.scope !== 1;
   const insert = p.insert >= 0;
-  const lockMode = !insert && lockStep >= 0 && (!projekt || sel === FXT), sceneMode = !insert && sceneEdit >= 0 && !projekt;
+  const lockMode = !insert && !masterSetting(p) && lockStep >= 0 && (!projekt || sel === FXT), sceneMode = !insert && sceneEdit >= 0 && !projekt;
   openFine({
     title: rowName(p) + (sceneMode ? '  \u00b7  SCENE ' + 'AB'[sceneEdit]
                                    : lockMode ? '  \u00b7  LOCK STEP ' + (lockStep + 1) : '') + '   ' + p.id,
@@ -2297,9 +2302,11 @@ el('songExport').onclick = () => {
     }
     el('recState').textContent = 'rendering \u2026 ' + (frames / 48000).toFixed(1) + ' s';
     if (k > 0) { setTimeout(schritt, 0); return; }
+    const lufs = X.scExportLufs(), peak = X.scExportPeak();
     X.scExportEnd();
     rec.laeuft = false;
-    bereitZumSpeichern('synthcity-song-' + zeitName() + '.wav', wavTeile(chunks, frames, 48000), frames / 48000);
+    const meters = (lufs > -120 ? lufs.toFixed(1) + ' LUFS · ' : '') + peak.toFixed(1) + ' dBTP est.';
+    bereitZumSpeichern('synthcity-song-' + zeitName() + '.wav', wavTeile(chunks, frames, 48000), frames / 48000, meters);
   };
   schritt();
 };
@@ -2337,7 +2344,7 @@ function liveNachricht(m) {
   }
 }
 // Fertig gerechnet/aufgenommen: der Knopf SAVE WAV speichert - im Tipp, wie iOS es verlangt.
-function bereitZumSpeichern(name, teile, sek) {
+function bereitZumSpeichern(name, teile, sek, meters = "") {
   const wav = new Blob(teile, {type: 'audio/wav'});
   rec.fertig = {name, wav, zip: zipStore(name, teile), file: null};
   try { rec.fertig.file = new File([wav], name, {type: 'audio/wav'}); } catch (e) {}
@@ -2345,7 +2352,7 @@ function bereitZumSpeichern(name, teile, sek) {
   el('songSave').hidden = false;
   el('songSave').textContent = (dlCap ? 'SAVE ZIP' : 'SAVE WAV') + ' (' + sek.toFixed(1) + ' s)';
   el('songShare').hidden = !teilen;
-  el('recState').textContent = 'Ready \u00b7 24-bit WAV' + (dlCap ? ' (in a ZIP - Claude allows no .wav download)' : '');
+  el('recState').textContent = 'Ready \u00b7 24-bit WAV' + (meters ? ' · ' + meters : '') + (dlCap ? ' (in a ZIP - Claude allows no .wav download)' : '');
   recPaint();
 }
 const sampleRateNow = () => (ctx ? ctx.sampleRate : 48000);

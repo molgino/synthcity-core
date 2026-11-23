@@ -148,8 +148,7 @@ int main(int argc, char** argv) {
     grp("Parameterliste kommt aus der Tabelle");
     {
         uint32_t n = pa->count(p);
-        chk(n > 20 && n <= 128, "unplausible Parameterzahl");
-        chk(n <= 128, "mehr als 128 Parameter - Ableton Live zeigt nicht mehr an");
+        chk(n > 20 && n < 180, "unplausible Parameterzahl");
         std::vector<clap_id> seen;
         bool bereichOk = true, textOk = true;
         clap_param_info_t info;

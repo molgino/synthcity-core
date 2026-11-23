@@ -677,6 +677,25 @@ Audio-Last laufend (CPU %).
 * SYSTEM: AUDIO BUFFER (128–1024), AUDIO CORES (1/2), AUDIO STATS (zu späte Blöcke, schwerster
   Block in % – zu späte Blöcke hört man als Klick).
 
+## Modulation und Mastering
+
+**MOD** zeigt die Namen der gewählten Machine als SRC-Ziele, etwa **SLICE** bei CHOP.
+Die beiden LFOs bieten **Free**, **Trig**, **Hold**, **One** und **Half**, Startphase,
+bipolaren Fade und rückwärts laufende Wellenformen. **Speed** mit **Mult** kann ans Tempo
+gekoppelt sein oder bei 120 BPM laufen. **Note Rate** im Speed-Regler lässt die bisherigen
+Notenwerte weiter gelten. Der Mod-Envelope kann pro Trig starten oder mit **Free Loop**
+seine Attack- und Decay-Phasen unabhängig von den Noten wiederholen.
+[Digitakt-Handbuch, Abschnitt 11.7](https://www.elektron.se/wp-content/uploads/2025/07/Digitakt-User-Manual_ENG_OS1.52A_250708.pdf)
+
+Auf der **FX-Spur** unter **Master → Chain** lässt sich die Mastering-Kette einschalten.
+Sie enthält Trim, einen Drei-Band-EQ, Stereo-Bus-Kompressor, optionales Soft Clipping
+und einen latenzfreien Limiter. **A/B Dry** schaltet beim Abhören RMS-pegelangepasst auf
+das unbearbeitete Signal. Der 24-Bit-Song-Export nutzt den bearbeiteten Mix und zeigt
+Integrated LUFS und den vierfach interpolierten, geschätzten Spitzenpegel. Auf dem
+Gerät liegt der Messbericht zusätzlich neben der WAV-Datei. Der Limiter verwendet
+Sicherheitsreserve für diese Interpolation. Ältere Projekte starten mit ausgeschalteter
+Mastering-Kette.
+
 ## Insert-Effekte
 
 Auf jeder Audiospur stehen im Reiter **INS** zwei serielle Stereo-Inserts zur Verfügung.
