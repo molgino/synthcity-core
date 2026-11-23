@@ -722,7 +722,7 @@ enum { V_TRACK, V_SONG, V_PROJECT, V_SYSTEM, V_N };
 static const char* VIEWNAME[V_N] = {"TRACK", "SONG", "PROJ", "SYSTEM"};
 enum { TAB_TRIG, TAB_CHRD, TAB_SRC, TAB_FLTR, TAB_AMP, TAB_MIX, TAB_MOD, TAB_INSERT, TAB_N };
 static const char* TABNAME[TAB_N] = {"TRIG", "CHRD", "SRC", "FLTR", "AMP", "MIX", "MOD", "INS"};
-enum { M_NONE, M_MENU, M_SAMPLES, M_HELP, M_KEYS, M_SLICE, M_RECORDER, M_LENGTH, M_PATTERNS, M_SECTIONS };
+enum { M_NONE, M_MENU, M_SAMPLES, M_HELP, M_KEYS, M_SLICE, M_RECORDER, M_LENGTH, M_PATTERNS, M_SECTIONS, M_VALUE };
 static constexpr int PATTERN_COLUMNS = 4;
 static const int FXT = NTRACKS;   // die FX-Spur des Patterns
 
@@ -934,7 +934,17 @@ static int stepValue(int p, int v, int dir, bool coarse) {
     int n = scEnumCount(p);
     if (n > 0) {                                   // Auswahl: in Listenreihenfolge, grob = naechste Gruppe
         int idx = 0;
-        for (int i = 0; i < n; i++) if (scEnumValue(p, i) == v) { idx = i; break; }
+        while (idx < n && scEnumValue(p, idx) != v) idx++;
+        if (idx == n && d.kind == PK_COND) {
+            // The picker includes values between the usual X/Y steps.
+            int upper = 0;
+            while (upper < n && scEnumValue(p, upper) < v) upper++;
+            if (!coarse) return scEnumValue(p, clampi(upper - (dir < 0), 0, n - 1));
+            const char* group = v < CND_PROB1 ? "Fixed" : v <= CND_PROB100 ? "Probability"
+                              : v < CND_NAB0 ? "Every A-th of B" : "All but every A-th of B";
+            idx = clampi(upper, 0, n - 1);
+            if (idx > 0 && strcmp(scEnumGroup(p, idx), group)) idx--;
+        } else if (idx == n) idx = 0;
         if (coarse) {
             const char* g0 = scEnumGroup(p, idx);
             int j = idx;
@@ -1042,10 +1052,94 @@ static void openPatterns() {
     U.modal = M_PATTERNS;
 }
 
+// Grouped editor for conditions and modulation destinations.
+enum { PICK_ROWS = 9 };
+struct ValuePicker {
+    struct Group { const char* label; int begin, end; };
+    Group groups[6];
+    int values[CND_MAX + 1];
+    int param, pattern, nGroups, nValues, group, selected, scroll;
+    bool step;
+};
+static ValuePicker gValuePick;
+
+static bool canPickValue(int p) {
+    return U.view == V_TRACK && U.sel < FXT && p >= 0
+        && (PARAMS[p].kind == PK_COND || isModDestination(PARAMS[p]));
+}
+static int destinationGroup(int value) {
+    if (!value) return 0;
+    const auto& dest = MOD_DESTS[value];
+    if (dest.trig) return 5;
+    if (!strncmp(dest.id, "trk.flt.", 8) || !strncmp(dest.id, "trk.bw.", 7)) return 2;
+    if (!strncmp(dest.id, "trk.amp.", 8)) return 3;
+    if (!strncmp(dest.id, "trk.vol", 7) || !strncmp(dest.id, "trk.pan", 7)
+        || !strncmp(dest.id, "trk.send.", 9)) return 4;
+    return 1;
+}
+static void finishValueGroup(const char* label, int begin) {
+    auto& p = gValuePick;
+    if (begin < p.nValues) p.groups[p.nGroups++] = {label, begin, p.nValues};
+}
+static void buildConditionValues() {
+    auto& p = gValuePick;
+    int begin = p.nValues;
+    for (int c = CND_NONE; c <= CND_N1ST; c++) p.values[p.nValues++] = c;
+    finishValueGroup("Fixed", begin);
+    begin = p.nValues;
+    for (int percent = 1; percent <= 100; percent++) p.values[p.nValues++] = condProb(percent);
+    finishValueGroup("Probability", begin);
+    for (int inverted = 0; inverted < 2; inverted++) {
+        begin = p.nValues;
+        for (int cycle = 2; cycle <= 8; cycle++)
+            for (int turn = 1; turn <= cycle; turn++)
+                p.values[p.nValues++] = condAB(turn, cycle, inverted != 0);
+        finishValueGroup(inverted ? "Inverse cycles" : "Cycles", begin);
+    }
+}
+static void buildDestinationValues() {
+    auto& p = gValuePick;
+    const char* labels[] = {"Off", "Source / pitch", "Filter", "Amp envelope", "Mixer / sends", "At trig"};
+    for (int group = 0; group < (int)(sizeof labels / sizeof labels[0]); group++) {
+        int begin = p.nValues;
+        for (int v = 0; v < MOD_NDEST; v++)
+            if (destinationGroup(v) == group && scEnumAvailable(p.param, v, machOf(U.sel)))
+                p.values[p.nValues++] = v;
+        finishValueGroup(labels[group], begin);
+    }
+}
+static int valueInScope() {
+    int p = gValuePick.param;
+    int value = gValuePick.step ? lockValue(p, U.cur) : sceneValue(p);
+    return value != -32768 ? value : baseValue(p);
+}
+static void focusPickedValue(int value) {
+    auto& p = gValuePick;
+    p.group = p.selected = p.scroll = 0;
+    for (int g = 0; g < p.nGroups; g++)
+        for (int i = p.groups[g].begin; i < p.groups[g].end; i++)
+            if (p.values[i] == value) {
+                p.group = g; p.selected = i; p.scroll = p.groups[g].begin;
+                return;
+            }
+}
+static void openValuePicker(int param) {
+    auto& p = gValuePick;
+    p.param = param;
+    p.pattern = scPattern();
+    p.nGroups = p.nValues = 0;
+    p.step = U.aHeld;
+    U.aHeld = false;
+    if (PARAMS[param].kind == PK_COND) buildConditionValues();
+    else buildDestinationValues();
+    focusPickedValue(valueInScope());
+    U.modal = M_VALUE;
+}
+
 // --- Menue (SELECT) -------------------------------------------------------------------------
-enum { MI_PATTERN, MI_SECTIONS, MI_SAVE, MI_COPYPAT, MI_PASTEPAT, MI_CLEARPAT, MI_COPYTRK, MI_PASTETRIG, MI_PASTEALL, MI_CLEARTRIG,
+enum { MI_PATTERN, MI_SECTIONS, MI_VALUE, MI_SAVE, MI_COPYPAT, MI_PASTEPAT, MI_CLEARPAT, MI_COPYTRK, MI_PASTETRIG, MI_PASTEALL, MI_CLEARTRIG,
        MI_COPYSTEP, MI_PASTESTEP, MI_LOADSMP, MI_LENGTH, MI_SCENE_A, MI_SCENE_B, MI_SCENE_CLR, MI_HELP, MI_SLICE, MI_RECORD, MI_N };
-static const char* MENU[MI_N] = {"Select pattern...", "Parameter sections...", "Save project", "Copy pattern", "Paste pattern", "Clear pattern",
+static const char* MENU[MI_N] = {"Select pattern...", "Parameter sections...", "Choose value...", "Save project", "Copy pattern", "Paste pattern", "Clear pattern",
     "Copy track", "Paste trigs", "Paste track (with sound)", "Clear trigs", "Copy step", "Paste step",
     "Load sample into slot...", "Track length...",
     "Edit scene A (on/off)", "Edit scene B (on/off)", "Clear the scene being edited", "Help", "Sample editor...", "Recorder..."};
@@ -1057,6 +1151,12 @@ static void menuDo(int i) {
     switch (i) {
     case MI_PATTERN: openPatterns(); return;
     case MI_SECTIONS: openSections(); return;
+    case MI_VALUE: {
+        int param = curParam();
+        if (canPickValue(param)) openValuePicker(param);
+        else toast("Select Condition or a modulation destination first");
+        return;
+    }
     case MI_SAVE: { bool ok = prjSave();
                     if (ok) U.dirty = false;
                     toast(ok ? "Saved %s" : "Could not save %s", gPrjName); return; }
@@ -1792,7 +1892,45 @@ static void handleSections() {
     curParam();
     U.modal = M_NONE;
 }
+static void handleValuePicker() {
+    auto& p = gValuePick;
+    if (IN.pressed(BT_B)) { U.modal = M_NONE; return; }
+    if (p.pattern != scPattern()) {
+        U.modal = M_NONE;
+        toast("Pattern changed. Reopen the value picker.");
+        return;
+    }
+    if (IN.pressed(BT_X)) p.step = !p.step;
+    int group = p.group;
+    if (IN.repeat(BT_LEFT, U.now) && group > 0) group--;
+    if (IN.repeat(BT_RIGHT, U.now) && group + 1 < p.nGroups) group++;
+    if (group != p.group) {
+        p.group = group;
+        p.selected = p.scroll = p.groups[group].begin;
+    }
+    const auto& g = p.groups[group];
+    int delta = 0;
+    if (IN.repeat(BT_UP, U.now)) delta--;
+    if (IN.repeat(BT_DOWN, U.now)) delta++;
+    if (IN.repeat(BT_L1, U.now)) delta -= PICK_ROWS;
+    if (IN.repeat(BT_R1, U.now)) delta += PICK_ROWS;
+    p.selected = clampi(p.selected + delta, g.begin, g.end - 1);
+    if (!IN.pressed(BT_A)) return;
+    int slot = slotOf(p.param), value = p.values[p.selected];
+    if (p.step) {
+        if (lockValue(p.param, U.cur) == -32768 && scNLocks(U.sel, U.cur) >= NLOCKS) {
+            toast("This step has no room for more locks");
+            return;
+        }
+        if (!scStepGet(U.sel, U.cur)) scStepSet(U.sel, U.cur, 2);
+        scLockSet(U.sel, U.cur, slot, value, 0);
+    } else if (U.scene >= 0) scSceneSet(U.scene, U.sel, slot, value);
+    else scSet(U.sel, slot, value);
+    touched();
+    U.modal = M_NONE;
+}
 static void handleModal() {
+    if (U.modal == M_VALUE) { handleValuePicker(); return; }
     if (U.modal == M_PATTERNS) { handlePatterns(); return; }
     if (U.modal == M_SECTIONS) { handleSections(); return; }
     if (U.modal == M_LENGTH) { handleLength(); return; }
@@ -1842,6 +1980,9 @@ static void handleInput() {
     if (U.modal != M_NONE) { handleModal(); return; }
     if (U.view == V_TRACK && IN.down[BT_B] && IN.pressed(BT_SELECT) && !U.aHeld) {
         openSections(); selUsed = true; return;
+    }
+    if (IN.down[BT_SELECT] && IN.pressed(BT_X) && canPickValue(curParam())) {
+        openValuePicker(curParam()); selUsed = true; return;
     }
     if (IN.down[BT_SELECT] && IN.heldMs(BT_SELECT, U.now) > 500) { U.modal = M_HELP; selUsed = true; return; }
     if (IN.released(BT_SELECT) && !selUsed) { U.modal = M_MENU; return; }
@@ -2261,12 +2402,14 @@ static const char* helpLine() {
     if (U.modal == M_KEYS) return "D-pad choose  A type  B delete  START done  SELECT cancel";
     if (U.modal == M_MENU) return "UP/DOWN choose   A do it   B close";
     if (U.modal == M_PATTERNS || U.modal == M_SECTIONS) return "";
+    if (U.modal == M_VALUE) return "";
     if (U.modal == M_SAMPLES) return "A open/load  LEFT up  RIGHT into  L1/R1 page  X hear  B close";
     if (U.modal == M_HELP) return "any of A / B / SELECT closes";
     if (U.modal == M_SLICE || U.modal == M_RECORDER) return "";
     if (U.view == V_SONG) return "X/Y value  A dup row  B+A delete  B+UP/DN move  START play song";
     if (U.view == V_PROJECT) return "UP/DOWN item   X/Y value / browse projects   A action";
     if (U.view == V_SYSTEM) return "UP/DOWN item   X/Y change   A apply / action";
+    if (canPickValue(curParam())) return "SELECT+X choose value   X/Y adjust   Hold A for step locks";
     if (U.aHeld) return "A held: X/Y lock value on this step   B clear locks";
     return "X/Y value  A trig / hold to lock  B+UP/DN track  B+SELECT sections";
 }
@@ -2314,6 +2457,47 @@ static void drawSections() {
     }
     text(x + 12, y + h - 24, "Up/down choose   A jump   B cancel", C_TXT);
 }
+static void drawValuePicker() {
+    auto& p = gValuePick;
+    const int x = 65, y = 67, w = 510, h = 346;
+    box(x, y, w, h, PARAMS[p.param].name);
+    char scope[52];
+    if (p.step) snprintf(scope, sizeof scope, "STEP %d LOCK", U.cur + 1);
+    else if (U.scene >= 0) snprintf(scope, sizeof scope, "SCENE %c", 'A' + U.scene);
+    else snprintf(scope, sizeof scope, "TRACK VALUE");
+    text(x + 12, y + 33, scope, p.step ? C_LOCK : C_TXT);
+    const auto& group = p.groups[p.group];
+    int top = y + 62;
+    for (int i = 0; i < p.nGroups; i++) {
+        int ry = top + 24 * i;
+        if (i == p.group) fill(x + 10, ry, 170, 22, C_SEL);
+        text(x + 17, ry + 3, p.groups[i].label, i == p.group ? C_TXT : C_DIM);
+    }
+    fill(x + 190, top, 1, PICK_ROWS * 24, C_LINE);
+    if (p.selected < p.scroll) p.scroll = p.selected;
+    if (p.selected >= p.scroll + PICK_ROWS) p.scroll = p.selected - PICK_ROWS + 1;
+    const int maxScroll = group.end - PICK_ROWS > group.begin ? group.end - PICK_ROWS : group.begin;
+    p.scroll = clampi(p.scroll, group.begin, maxScroll);
+    const int stored = valueInScope();
+    for (int i = p.scroll; i < group.end && i < p.scroll + PICK_ROWS; i++) {
+        int ry = top + 24 * (i - p.scroll);
+        if (i == p.selected) fill(x + 200, ry, w - 210, 22, C_SEL);
+        bool current = p.values[i] == stored;
+        if (current) fill(x + 200, ry, 3, 22, C_PLAY);
+        const char* label = PARAMS[p.param].kind == PK_COND && p.values[i] == CND_NONE
+                          ? "NONE" : valueText(p.param, p.values[i]);
+        text(x + 211, ry + 3, label, current ? C_PLAY : i == p.selected ? C_TXT : C_DIM);
+    }
+    if (group.end - group.begin > PICK_ROWS) {
+        int total = group.end - group.begin;
+        fill(x + w - 7, top, 2, PICK_ROWS * 24, C_LINE);
+        fill(x + w - 7, top + (p.scroll - group.begin) * PICK_ROWS * 24 / total, 2,
+             PICK_ROWS * PICK_ROWS * 24 / total, C_TXT);
+    }
+    text(x + 12, y + h - 54, "Left/right group   Up/down value   L1/R1 page", C_TXT);
+    text(x + 12, y + h - 30, U.scene >= 0 ? "X scene/step   A apply   B cancel"
+                                        : "X track/step   A apply   B cancel", C_TXT);
+}
 static void drawLength() {
     const int w = 350, h = 112, x = (SW - w) / 2, y = (SH - h) / 2;
     char value[40];
@@ -2324,12 +2508,13 @@ static void drawLength() {
     textC(SW / 2, y + 82, "A or B to close", C_DIM);
 }
 static void drawMenu() {
-    int w = 340, h = 30 + MI_N * 20 + 8, x = (SW - w) / 2, y = (SH - h) / 2;
+    const int rowH = 19;
+    int w = 340, h = 30 + MI_N * rowH + 8, x = (SW - w) / 2, y = (SH - h) / 2;
     char t[64]; snprintf(t, sizeof t, "MENU - %s", U.sel == FXT ? "FX TRACK" : "TRACK");
     box(x, y, w, h, t);
     for (int i = 0; i < MI_N; i++) {
-        int ry = y + 30 + i * 20;
-        if (i == U.menuSel) fill(x + 4, ry - 1, w - 8, 19, C_LINE);
+        int ry = y + 30 + i * rowH;
+        if (i == U.menuSel) fill(x + 4, ry - 1, w - 8, rowH - 1, C_LINE);
         text(x + 14, ry, MENU[i], i == U.menuSel ? C_TXT : C_DIM);
     }
 }
@@ -2489,6 +2674,7 @@ static void drawAll() {
     else if (U.modal == M_LENGTH) drawLength();
     else if (U.modal == M_PATTERNS) drawPatterns();
     else if (U.modal == M_SECTIONS) drawSections();
+    else if (U.modal == M_VALUE) drawValuePicker();
     if (gExp.on) {
         box(120, 180, 400, 110, "EXPORTING SONG");
         char b[96]; snprintf(b, sizeof b, "%s", gExp.rel);
@@ -2725,6 +2911,54 @@ static int selfTest(const char* shotDir) {
     CHECK(scPattern() == 5 && scPatNext() == 6, "Cancelling the pattern picker keeps the queue");
     scStop(); scSetPattern(0);
     U.rowSel[TAB_N] = 0;
+    auto selectParam = [&](int tab, const char* id) {
+        U.tab = tab;
+        buildRows();
+        int param = pIndex(id);
+        for (int row = 0; row < gNRows; row++)
+            if (gRows[row] == param) { rowSelRef() = row; break; }
+        return param;
+    };
+    int cond = selectParam(TAB_TRIG, "trk.cond");
+    U.cur = 7;
+    tap(BT_X, 1u << BT_SELECT);
+    simFrame(0);
+    CHECK(U.modal == M_VALUE && gValuePick.nGroups == 4, "SELECT + X opens grouped Conditions");
+    tap(BT_RIGHT); tap(BT_R1); tap(BT_DOWN); tap(BT_DOWN);
+    CHECK(gValuePick.values[gValuePick.selected] == condProb(12), "Probability page and single-value controls combine");
+    tap(BT_X);
+    CHECK(gValuePick.step && gValuePick.values[gValuePick.selected] == condProb(12),
+          "X switches to step scope and keeps the highlighted value");
+    CHECK(stepValue(cond, condProb(12), 1, false) == condProb(15)
+          && stepValue(cond, condProb(12), -1, false) == condProb(10), "Direct adjustment preserves the probability range");
+    shot("01c-conditions");
+    tap(BT_A);
+    CHECK(scStepGet(0, 7) == 2 && scLockGet(0, 7, slotOf(cond)) == condProb(12)
+          && baseValue(cond) == CND_NONE, "Condition selection stores a step lock");
+    clearStepLocks();
+    U.cur = 0;
+
+    scSetMachine(0, 4);
+    int dest = selectParam(TAB_MOD, "trk.lfo1.dest");
+    tap(BT_SELECT); U.menuSel = MI_VALUE; tap(BT_A);
+    CHECK(U.modal == M_VALUE, "SELECT menu opens the destination value picker");
+    tap(BT_RIGHT); tap(BT_DOWN); tap(BT_DOWN);
+    int slice = modDestOfSlot(slotOf(pIndex("trk.src.b")));
+    CHECK(gValuePick.values[gValuePick.selected] == slice && !strcmp(valueText(dest, slice), "SLICE"),
+          "LFO picker shows the selected Machine's control name");
+    shot("01d-destinations");
+    tap(BT_A);
+    CHECK(baseValue(dest) == slice && scNLocks(0, 0) == 0, "Destination selection stores a track value");
+    tap(BT_X, 1u << BT_SELECT); simFrame(0);
+    tap(BT_RIGHT); tap(BT_B);
+    CHECK(U.modal == M_NONE && baseValue(dest) == slice, "Cancelling a value picker preserves the value");
+    tap(BT_X, 1u << BT_SELECT); simFrame(0);
+    scSetPattern(1); tap(BT_A);
+    CHECK(U.modal == M_NONE && baseValue(dest) == 0, "A pattern change cannot redirect an open value picker");
+    scSetPattern(0);
+    scSet(0, slotOf(dest), 0);
+    scSetMachine(0, 0);
+    U.tab = TAB_TRIG; U.rowSel[TAB_TRIG] = 0; U.rowSel[TAB_MOD] = 0;
     // Trig setzen und wieder loeschen
     tap(BT_A); CHECK(scStepGet(0, 0) == 1, "A setzt Trig auf Step 1");
     tap(BT_RIGHT); tap(BT_RIGHT); tap(BT_A); CHECK(scStepGet(0, 2) == 1, "Cursor rechts + A: Trig auf Step 3");
