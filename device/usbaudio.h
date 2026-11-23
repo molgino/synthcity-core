@@ -26,7 +26,7 @@ bool pcInIsMic();                             // laeuft gerade der eigene Eingan
 void pcInStop();
 bool pcInActive();
 int pcInStatus();                             // 0 aus, 1 PC spielt nichts, 2 PC spielt
-void pcInMix(float* stereo, int frames, float gain);   // aus dem Audio-Callback
+void pcInMix(float* stereo, int frames, float gain, float* capture = nullptr);   // aus dem Audio-Callback
 bool pcRecStart(float thr);                   // wartet auf das erste Signal ueber thr (linear, < 0 = sofort), dann max. 60 s
 void pcRecStop();
 int pcRecState();                             // 0 aus, 1 wartet, 2 nimmt auf, 3 fertig

@@ -414,7 +414,7 @@ int   scSmpCh(int i)      { return (i >= 0 && i < SMP_SLOTS) ? gEng.pool.s[i].ch
 const float* scSmpData(int i) {
     return (i >= 0 && i < SMP_SLOTS) ? gEng.pool.data + gEng.pool.s[i].at : gEng.pool.data;
 }
-void  scSmpClear()        { gEng.pool.clear(); }
+void  scSmpClear()        { gEng.recStop(); gEng.pool.clear(); }
 int   scSmpSet(int slot, const float* d, int n, float rate, const char* name, int loop, int ch) {
     return gEng.pool.set(slot, d, n, rate, name, loop != 0, ch) ? 1 : 0;
 }
@@ -427,6 +427,93 @@ int   scSmpZero(int i, int f) { return gEng.pool.zeroCross(i, f); }
 void  scSmpPreview(int i)     { gEng.preview(i); }
 void  scSmpPreviewStop()      { gEng.previewStop(); }
 int   scSmpPreviewing()       { return gEng.previewing() ? 1 : 0; }
+
+int scSmpCutCount(int slot) { return scSmpFrames(slot) ? gEng.pool.s[slot].cutCount : 0; }
+int scSmpCut(int slot, int i) {
+    return i >= 0 && i < scSmpCutCount(slot) ? gEng.pool.s[slot].cuts[i] : 0;
+}
+int scSmpCutAdd(int slot, int frame) { return gEng.pool.addCut(slot, frame); }
+int scSmpCutMove(int slot, int i, int frame) { return gEng.pool.setCut(slot, i, frame); }
+int scSmpCutRemove(int slot, int i) { return gEng.pool.removeCut(slot, i); }
+void scSmpCutsClear(int slot) { if (scSmpFrames(slot)) gEng.pool.s[slot].cutCount = 0; }
+void scSmpSliceGrid(int slot, int count) { gEng.pool.sliceGrid(slot, count); }
+int scSmpSliceTransients(int slot) {
+    int32_t cuts[SMP_SLICES - 1];
+    int count = gEng.pool.detectTransients(slot, cuts);
+    gEng.pool.setCuts(slot, cuts, count);
+    return count;
+}
+int scSmpSliceAt(int slot, int frame) {
+    if (!scSmpFrames(slot)) return 0;
+    const auto& sl = gEng.pool.s[slot];
+    int index = 0;
+    for (int i = 0; i < sl.cutCount; i++)
+        if (sl.cuts[i] > sl.a && sl.cuts[i] < sl.end() && sl.cuts[i] <= frame) index++;
+    return index;
+}
+void scSmpSlicePreview(int slot, int slice) { gEng.preview(slot, 6.0f, slice); }
+
+static Track sliceUndoTrack;
+static int16_t sliceUndoApplied[NSTEPS];
+static int sliceUndoPat = -1, sliceUndoIndex = -1;
+
+int scSliceLocks(int track, uint32_t seed) {
+    if (track < 0 || track >= NTRACKS) return -1;
+    const int machine = paramSlot(paramFind("trk.machine"));
+    const int sample = MachSmpl::slotSmp(), slice = knobSlot(MachChop::C_SLICE);
+    const int follow = knobSlot(MachChop::C_FOLLOW), grid = knobSlot(MachChop::C_SLICES);
+    Track& tr = gEng.P.pat[gEng.pat].t[track];
+    if (tr.p[machine] != 4) return -1;
+    int counts[NSTEPS] = {};
+    int written = 0;
+    for (int i = 0; i < tr.len; i++) {
+        const Step& st = tr.s[i];
+        if (st.on != 1) continue;
+        const Lock* smp = st.findLock(sample);
+        const Lock* size = st.findLock(grid);
+        int slot = smp ? smp->val : tr.p[sample];
+        if (gEng.pool.empty(slot)) continue;
+        if (st.nLock + !st.findLock(slice) + !st.findLock(follow) > NLOCKS) return -2;
+        counts[i] = gEng.pool.s[slot].sliceCount(MachChop::nSlices(size ? size->val : tr.p[grid]));
+        written++;
+    }
+    if (!written) return 0;
+    sliceUndoTrack = tr;
+    for (int16_t& value : sliceUndoApplied) value = -1;
+    sliceUndoPat = gEng.pat;
+    sliceUndoIndex = track;
+    uint32_t rng = seed;
+    int ordinal = 0;
+    for (int i = 0; i < tr.len; i++) {
+        if (!counts[i]) continue;
+        int value = seed ? (int)(machRng(rng) % (uint32_t)counts[i]) : ordinal % counts[i];
+        sliceUndoApplied[i] = (int16_t)value;
+        tr.s[i].setLock(slice, (int16_t)value);
+        tr.s[i].setLock(follow, 0);
+        ordinal++;
+    }
+    W();
+    return written;
+}
+int scSliceLocksUndo(int track) {
+    if (sliceUndoPat != gEng.pat || sliceUndoIndex != track || sliceUndoPat < 0) return 0;
+    Track& tr = W().t[track];
+    const int slice = knobSlot(MachChop::C_SLICE), follow = knobSlot(MachChop::C_FOLLOW);
+    for (int i = 0; i < NSTEPS; i++) {
+        if (sliceUndoApplied[i] < 0) continue;
+        const Lock* currentSlice = tr.s[i].findLock(slice);
+        const Lock* currentFollow = tr.s[i].findLock(follow);
+        if (!currentSlice || currentSlice->val != sliceUndoApplied[i] || currentSlice->slide
+            || !currentFollow || currentFollow->val != 0 || currentFollow->slide) continue;
+        for (int slot = slice; slot <= follow; slot++) {
+            const Lock* before = sliceUndoTrack.s[i].findLock(slot);
+            if (before) tr.s[i].setLock(slot, before->val, before->slide);
+            else scLockClear(track, i, slot);
+        }
+    }
+    sliceUndoPat = -1;
+    return 1;
+}
 
 // Aufnahme: nimmt auf, was hinten herauskommt.
 int   scRecStart(int slot, float seconds, const char* name, int ch) {
@@ -474,6 +561,8 @@ static bool readProjectText(const char* text, Doc& d) {
 }
 
 static void applyProjectDoc(const Doc& d) {
+    gEng.recStop();
+    sliceUndoPat = -1;
     projectFromDoc(d, gEng.P);
     poolFromDoc(d, gEng.pool);
     int p0 = d.get("prj.pat", 0);

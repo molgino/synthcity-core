@@ -556,13 +556,14 @@ struct MachChop : MachSmpl {
         if (pool.empty(k)) return;
         const SamplePool::Slot& sl = pool.s[k];
         int a = sl.a, e = sl.end(), len = e - a;
-        int ns = nSlices(knob(p, C_SLICES));
+        int grid = nSlices(knob(p, C_SLICES));
+        int ns = sl.sliceCount(grid);
         int follow = stufe(knob(p, C_FOLLOW), 3);
         int i = (int)(knob(p, C_SLICE) + 0.5f);
         if (follow == 1) i = m.step;
         else if (follow == 2) { uint32_t r = m.seed | 1u; i = (int)(machRng(r) % (uint32_t)ns); }
         i = ((i % ns) + ns) % ns;
-        int s0 = a + (int)((int64_t)len * i / ns), e0 = a + (int)((int64_t)len * (i + 1) / ns);
+        int s0 = sl.sliceBoundary(i, grid), e0 = sl.sliceBoundary(i + 1, grid);
         bereich(st, sl, p, s0, e0, len);
         (void)vel; (void)hz; (void)sr;
     }

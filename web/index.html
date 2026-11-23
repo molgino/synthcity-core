@@ -499,6 +499,7 @@ textarea {
       <button data-m="a" class="on">START</button>
       <button data-m="b">END</button>
       <button data-m="la">LOOP</button>
+      <button data-m="cursor">SLICE CURSOR</button>
     </div>
     <div class="finebtns">
       <button data-d="-100">&minus;100ms</button><button data-d="-1">&minus;1ms</button>
@@ -511,6 +512,22 @@ textarea {
       <button id="seZero" class="on">ZERO CROSS</button>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <select id="seGridCount" aria-label="Number of slices">
+        <option>2</option><option>4</option><option selected>8</option>
+        <option>16</option><option>32</option><option>64</option>
+      </select>
+      <button id="seGrid">CREATE GRID</button>
+      <button id="seTransients">TRANSIENTS</button>
+      <select id="seMarker" aria-label="Slice marker"></select>
+      <button id="seAdd">ADD AT CURSOR</button>
+      <button id="seMove">MOVE TO CURSOR</button>
+      <button id="seRemove">REMOVE MARKER</button>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button id="seChop">USE IN CHOP</button>
+      <button id="seLinear">CREATE LINEAR LOCKS</button>
+      <button id="seRandom">CREATE RANDOM LOCKS</button>
+      <button id="seUndo">UNDO LOCKS</button>
       <button id="sePlay">&#9654; PREVIEW</button>
       <div class="spacer"></div>
       <button id="seClose">DONE</button>
@@ -532,6 +549,7 @@ textarea {
       <button class="rec" data-takte="1">1 BAR</button>
       <button class="rec" data-takte="2">2 BARS</button>
       <button class="rec" data-takte="4">4 BARS</button>
+      <button class="rec" data-takte="8">8 BARS</button>
       <span class="hint" id="recInfo" style="align-self:center"></span>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -1773,7 +1791,9 @@ const se = {slot: -1, mark: 'a', zoom: 1, zero: true, a: 0, b: 0, la: 0, loop: 0
 function seLoad(slot) {
   se.slot = slot; se.n = X.scSmpFrames(slot); se.rate = X.scSmpRate(slot);
   se.a = X.scSmpA(slot); se.b = X.scSmpB(slot); se.la = X.scSmpLA(slot); se.loop = X.scSmpLoop(slot);
-  se.zoom = 1;
+  se.zoom = 1; se.mark = "cursor";
+  se.cursor = Math.floor((se.a + se.b) / 2);
+  se.marker = 0;
 }
 function seApply() {
   cmd('scSmpSetTrim', se.slot, se.a, se.b, se.la, se.loop);
@@ -1783,6 +1803,7 @@ function seApply() {
 function seSet(mark, f) {
   f = Math.max(0, Math.min(se.n, Math.round(f)));
   if (se.zero && f > 0 && f < se.n) f = X.scSmpZero(se.slot, f);
+  if (mark === 'cursor') { se.cursor = f; seDraw(); return; }
   if (mark === 'a') se.a = Math.min(f, se.b - 2);
   else if (mark === 'b') se.b = Math.max(f, se.a + 2);
   else se.la = Math.max(se.a, Math.min(f, se.b - 2));
@@ -1827,9 +1848,22 @@ function seDraw() {
   strich(se.a, css.getPropertyValue('--ok'));
   strich(se.b, css.getPropertyValue('--lock'));
   if (se.loop) strich(se.la, css.getPropertyValue('--amber'));
+  const count = X.scSmpCutCount(se.slot);
+  const markers = el('seMarker');
+  if (markers.options.length !== count) {
+    markers.replaceChildren();
+    for (let i = 0; i < count; i++) markers.add(new Option('Marker ' + (i + 1), i));
+  }
+  se.marker = Math.max(0, Math.min(count - 1, se.marker));
+  markers.value = se.marker;
+  markers.disabled = el('seMove').disabled = el('seRemove').disabled = !count;
+  for (let i = 0; i < count; i++)
+    strich(X.scSmpCut(se.slot, i), i === se.marker ? '#fbd38d' : '#ae8cff');
+  if (se.mark === 'cursor') strich(se.cursor, '#ffffff');
   const sek = f => (f / se.rate).toFixed(3);
   el('seInfo').textContent = `Start ${sek(se.a)} s \u00b7 End ${sek(se.b)} s \u00b7 Length ${sek(se.b - se.a)} s`
-    + (se.loop ? ` \u00b7 Loop from ${sek(se.la)} s` : '') + `  \u00b7  Zoom ${se.zoom}\u00d7`;
+    + (se.loop ? ` \u00b7 Loop from ${sek(se.la)} s` : '') + `  \u00b7  Zoom ${se.zoom}\u00d7`
+    + (se.mark === 'cursor' ? ` · Cursor ${sek(se.cursor)} s` : '');
   el('seLoop').textContent = se.loop ? 'LOOP ON' : 'LOOP OFF';
   el('seLoop').classList.toggle('on', !!se.loop);
   for (const b of document.querySelectorAll('.semark button')) b.classList.toggle('on', b.dataset.m === se.mark);
@@ -1881,10 +1915,81 @@ el('seLoop').onclick = () => {
   seApply();
 };
 el('seZero').onclick = () => { se.zero = !se.zero; el('seZero').classList.toggle('on', se.zero); };
+// Der Worklet bekommt die fertigen Marker, ohne die Transientensuche im Audiopfad.
+function seSendCuts(slot) {
+  if (!node) return;
+  node.port.postMessage({fn: 'scSmpCutsClear', args: [slot]});
+  for (let i = 0; i < X.scSmpCutCount(slot); i++)
+    node.port.postMessage({fn: 'scSmpCutAdd', args: [slot, X.scSmpCut(slot, i)]});
+}
+el('seMarker').onchange = () => {
+  se.marker = +el('seMarker').value;
+  se.mark = 'cursor'; se.cursor = X.scSmpCut(se.slot, se.marker); seDraw();
+};
+el('seGrid').onclick = () => { cmd('scSmpSliceGrid', se.slot, +el('seGridCount').value); seDraw(); };
+el('seTransients').onclick = () => {
+  X.scSmpSliceTransients(se.slot);
+  seSendCuts(se.slot);
+  seDraw();
+};
+el('seAdd').onclick = () => {
+  const i = X.scSmpCutAdd(se.slot, se.cursor);
+  if (i < 0) return;
+  se.marker = i;
+  if (node) node.port.postMessage({fn: 'scSmpCutAdd', args: [se.slot, se.cursor]});
+  seDraw();
+};
+el('seMove').onclick = () => { cmd('scSmpCutMove', se.slot, se.marker, se.cursor); seDraw(); };
+el('seRemove').onclick = () => { cmd('scSmpCutRemove', se.slot, se.marker); seDraw(); };
+el('seChop').onclick = () => {
+  if (sel >= FXT) return;
+  if (machOf(sel) !== 4) cmd('scSetMachine', sel, 4);
+  cmd('scSet', sel, smpSlot(), se.slot);
+  buildParams();
+  el('seInfo').textContent = 'Assigned to track ' + (sel + 1) + ' as CHOP.';
+};
+function seLocks(seed) {
+  if (sel >= FXT || machOf(sel) !== 4 || X.scGet(sel, smpSlot()) !== se.slot) {
+    el('seInfo').textContent = 'Use this sample in CHOP on the selected track first.';
+    return;
+  }
+  const count = X.scSliceLocks(sel, seed);
+  if (count > 0) {
+    if (node) node.port.postMessage({fn: 'scSliceLocks', args: [sel, seed]});
+    buildPads(); buildParams();
+  }
+  el('seInfo').textContent = count > 0 ? count + ' trigs locked.'
+    : count === -2 ? 'A step has no room for more locks.' : 'No trigs with loaded samples.';
+}
+el('seLinear').onclick = () => seLocks(0);
+el('seRandom').onclick = () => seLocks((Math.random() * 4294967296 >>> 0) || 1);
+el('seUndo').onclick = () => {
+  if (!X.scSliceLocksUndo(sel)) return;
+  if (node) {
+    // Audio may have been started after locks were created, so sync the actual restored values.
+    for (let i = 0; i < X.scTrackLen(sel); i++) {
+      for (const id of ['trk.src.b', 'trk.src.c']) {
+        const slot = P.find(p => p.id === id).slot;
+        const value = X.scLockGet(sel, i, slot);
+        let slide = 0;
+        for (let j = 0; j < X.scNLocks(sel, i); j++)
+          if (X.scLockSlot(sel, i, j) === slot) slide = X.scLockSlide(sel, i, j);
+        node.port.postMessage(value === -32768
+          ? {fn: 'scLockClear', args: [sel, i, slot]}
+          : {fn: 'scLockSet', args: [sel, i, slot, value, slide]});
+      }
+    }
+  }
+  buildPads(); buildParams();
+  el('seInfo').textContent = 'Slice locks restored.';
+};
 el('sePlay').onclick = async () => {
   try { await audioOn(); } catch (e) { return; }
   if (ctx.state === 'suspended') await ctx.resume();
-  node.port.postMessage({fn: 'scSmpPreview', args: [se.slot]});
+  const sliced = se.mark === 'cursor' && X.scSmpCutCount(se.slot);
+  node.port.postMessage(sliced
+    ? {fn: 'scSmpSlicePreview', args: [se.slot, X.scSmpSliceAt(se.slot, se.cursor)]}
+    : {fn: 'scSmpPreview', args: [se.slot]});
 };
 el('seClose').onclick = () => {
   if (node) node.port.postMessage({fn: 'scSmpPreviewStop', args: []});

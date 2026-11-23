@@ -7,7 +7,7 @@
 #include <stdio.h>
 #include "doc.h"
 
-enum { SMP_SLOTS = 64, SMP_POOL = 1 << 21, SMP_NAME = 24 };   // 2 Mio. Samples = rund 44 s
+enum { SMP_SLOTS = 64, SMP_POOL = 1 << 21, SMP_NAME = 24, SMP_SLICES = 64 };   // 2 Mio. Samples = rund 44 s
 
 struct SamplePool {
     struct Slot {
@@ -19,6 +19,23 @@ struct SamplePool {
         // Ausschnitt, samplegenau: gespielt wird von a bis b; mit Loop springt es von b
         // nach la zurueck. b = 0 heisst "bis zum Ende".
         int32_t a = 0, b = 0, la = 0;
+        int32_t cuts[SMP_SLICES - 1] = {};
+        int cutCount = 0;
+
+        // Markers outside the current trim are retained for later edits.
+        int sliceCount(int grid) const {
+            if (!cutCount) return grid;
+            int count = 1;
+            for (int i = 0; i < cutCount; i++) if (cuts[i] > a && cuts[i] < end()) count++;
+            return count;
+        }
+        int sliceBoundary(int index, int grid) const {
+            if (index <= 0) return a;
+            if (!cutCount) return a + (int)((int64_t)(end() - a) * index / grid);
+            for (int i = 0; i < cutCount; i++)
+                if (cuts[i] > a && cuts[i] < end() && --index == 0) return cuts[i];
+            return end();
+        }
         int32_t end() const { return (b > a && b <= n) ? b : n; }
         int32_t loopStart() const { return (la >= a && la < end()) ? la : a; }
     };
@@ -28,7 +45,7 @@ struct SamplePool {
 
     void clear() {
         used = 0;
-        for (int i = 0; i < SMP_SLOTS; i++) { s[i].n = 0; s[i].at = 0; s[i].name[0] = 0; }
+        for (int i = 0; i < SMP_SLOTS; i++) { s[i] = Slot{}; }
     }
     bool empty(int i) const { return i < 0 || i >= SMP_SLOTS || s[i].n <= 0; }
 
@@ -53,6 +70,7 @@ struct SamplePool {
         s[slot].a = 0; s[slot].b = 0; s[slot].la = 0;
         snprintf(s[slot].name, SMP_NAME, "%s", name ? name : "");
         used += n * ch;
+        if (!wunsch) s[slot].cutCount = 0;
         if (wunsch) setTrim(slot, wa, wb, wla, wl != 0 || loop);
         return true;
     }
@@ -67,6 +85,77 @@ struct SamplePool {
         if (la < a) la = a;
         if (la > b - 2) la = b - 2 < a ? a : b - 2;
         sl.a = a; sl.b = (b == sl.n) ? 0 : b; sl.la = la; sl.loop = loop ? 1 : 0;
+    }
+
+    bool setCut(int slot, int index, int frame) {
+        if (empty(slot)) return false;
+        Slot& sl = s[slot];
+        if (index < 0 || index >= sl.cutCount) return false;
+        int lo = index ? sl.cuts[index - 1] : 0;
+        int hi = index + 1 < sl.cutCount ? sl.cuts[index + 1] : sl.n;
+        if (frame - lo < 2 || hi - frame < 2) return false;
+        sl.cuts[index] = frame;
+        return true;
+    }
+    int addCut(int slot, int frame) {
+        if (empty(slot)) return -1;
+        Slot& sl = s[slot];
+        if (frame <= 0 || frame >= sl.n || sl.cutCount == SMP_SLICES - 1) return -1;
+        int i = 0;
+        while (i < sl.cutCount && sl.cuts[i] < frame) i++;
+        int lo = i ? sl.cuts[i - 1] : 0;
+        int hi = i < sl.cutCount ? sl.cuts[i] : sl.n;
+        if (frame - lo < 2 || hi - frame < 2) return -1;
+        for (int j = sl.cutCount++; j > i; j--) sl.cuts[j] = sl.cuts[j - 1];
+        sl.cuts[i] = frame;
+        return i;
+    }
+    bool removeCut(int slot, int index) {
+        if (empty(slot) || index < 0 || index >= s[slot].cutCount) return false;
+        Slot& sl = s[slot];
+        for (int i = index + 1; i < sl.cutCount; i++) sl.cuts[i - 1] = sl.cuts[i];
+        sl.cutCount--;
+        return true;
+    }
+    void sliceGrid(int slot, int count) {
+        if (empty(slot) || count < 2 || count > SMP_SLICES) return;
+        Slot& sl = s[slot];
+        sl.cutCount = 0;
+        for (int i = 1; i < count; i++) {
+            int f = sl.a + (int)((int64_t)(sl.end() - sl.a) * i / count);
+            if (f > sl.a) addCut(slot, f);
+        }
+    }
+    int detectTransients(int slot, int32_t* cuts) const {
+        if (empty(slot)) return 0;
+        const Slot& sl = s[slot];
+        const int window = (int)(sl.rate * 0.005f) + 1;
+        const int spacing = window * 6;
+        float peak = 0.0f;
+        int last = sl.a;
+        int count = 0;
+        for (int f = sl.a; f < sl.end() - 1 && count < SMP_SLICES - 1; f += window) {
+            float energy = 0.0f;
+            for (int j = f; j < sl.end() && j < f + window; j++) {
+                for (int c = 0; c < sl.ch; c++) {
+                    float v = data[sl.at + j * sl.ch + c];
+                    energy += v * v;
+                }
+            }
+            energy /= window * sl.ch;
+            if (f - last >= spacing && energy > 0.001f && energy > peak * 4.0f) {
+                cuts[count++] = f;
+                last = f;
+            }
+            peak = energy > peak ? energy : peak * 0.75f;
+        }
+        return count;
+    }
+    void setCuts(int slot, const int32_t* cuts, int count) {
+        if (empty(slot)) return;
+        Slot& sl = s[slot];
+        memcpy(sl.cuts, cuts, (size_t)count * sizeof sl.cuts[0]);
+        sl.cutCount = count;
     }
 
     // Naechster Nulldurchgang nach oben in der Naehe von f - an solchen Stellen knackt es
@@ -96,6 +185,7 @@ struct SamplePool {
         if (ch > 2) ch = 2;
         if (used + frames * ch > SMP_POOL) return -1;
         int at = used;
+        s[slot] = Slot{};
         s[slot].at = at; s[slot].n = 0; s[slot].ch = (uint8_t)ch;
         s[slot].rate = rate > 1.0f ? rate : 48000.0f; s[slot].loop = 0;
         snprintf(s[slot].name, SMP_NAME, "%s", name ? name : "");
@@ -119,6 +209,10 @@ inline void poolToDoc(const SamplePool& p, Doc& d) {
         snprintf(k, sizeof k, "smp.%d.name", i);   d.setStr(k, p.s[i].name);
         snprintf(k, sizeof k, "smp.%d.rate", i);   d.set(k, (int32_t)p.s[i].rate);
         snprintf(k, sizeof k, "smp.%d.ch", i);     d.set(k, p.s[i].ch);
+        for (int j = 0; j < p.s[i].cutCount; j++) {
+            snprintf(k, sizeof k, "smp.%d.cut.%d", i, j);
+            d.set(k, p.s[i].cuts[j]);
+        }
         if (p.s[i].loop) { snprintf(k, sizeof k, "smp.%d.loop", i); d.set(k, 1); }
         if (p.s[i].a)    { snprintf(k, sizeof k, "smp.%d.a", i);    d.set(k, p.s[i].a); }
         if (p.s[i].b)    { snprintf(k, sizeof k, "smp.%d.b", i);    d.set(k, p.s[i].b); }
@@ -132,9 +226,17 @@ inline void poolFromDoc(const Doc& d, SamplePool& p) {
     for (int i = 0; i < SMP_SLOTS; i++) {
         snprintf(k, sizeof k, "smp.%d.name", i);
         const char* nm = d.getStr(k, "");
+        p.s[i].cutCount = 0;
         if (!nm[0]) {
             if (p.s[i].n <= 0) p.s[i].name[0] = 0;
             continue;
+        }
+        for (int j = 0, prev = 0; j < SMP_SLICES - 1; j++) {
+            snprintf(k, sizeof k, "smp.%d.cut.%d", i, j);
+            int frame = d.get(k, 0);
+            if (frame <= prev) break;
+            p.s[i].cuts[p.s[i].cutCount++] = frame;
+            prev = frame;
         }
         if (p.s[i].n > 0 && !strcmp(p.s[i].name, nm)) {             // schon da: nur Ausschnitt
             snprintf(k, sizeof k, "smp.%d.a", i);  int32_t a = d.get(k, 0);

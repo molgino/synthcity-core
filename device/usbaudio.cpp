@@ -543,7 +543,7 @@ bool pcInActive() { return g_iactive; }
 bool pcInIsMic() { return g_iactive && g_imic; }
 int pcInStatus() { return g_iactive ? g_istatus : 0; }
 
-void pcInMix(float* st, int frames, float gain) {   // nur aus dem Audio-Callback
+void pcInMix(float* st, int frames, float gain, float* capture) {   // nur aus dem Audio-Callback
     if (!g_iactive) return;
     unsigned w = g_iw, r = g_ir, fill = w - r;
     const double base = g_ibase;
@@ -564,6 +564,7 @@ void pcInMix(float* st, int frames, float gain) {   // nur aus dem Audio-Callbac
         unsigned ip = (unsigned)pos;
         float f = (float)(pos - ip);
         float L = hermite(g_iring, r + ip, f, 0, IMASK), R = hermite(g_iring, r + ip, f, 1, IMASK);   // kubisch statt linear
+        if (capture) { capture[i * 2] = L; capture[i * 2 + 1] = R; }
         st[i * 2] += L * gain;
         st[i * 2 + 1] += R * gain;
         if (rs == 1 && (fabsf(L) > thr || fabsf(R) > thr)) rs = 2;   // Aufnahme beginnt mit dem ersten Signal ueber der Schwelle
@@ -611,7 +612,7 @@ bool pcInIsMic() { return false; }
 void pcInStop() {}
 bool pcInActive() { return false; }
 int pcInStatus() { return 0; }
-void pcInMix(float*, int, float) {}
+void pcInMix(float*, int, float, float*) {}
 bool pcRecStart(float) { return false; }
 void pcRecStop() {}
 int pcRecState() { return 0; }
