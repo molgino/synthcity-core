@@ -74,9 +74,12 @@ struct Pattern {
     // globale Werte (Delay, Reverb, Master) - Lock-Slots sind hier GLOBALE Slots.
     Track fx;
 };
+inline bool masterSetting(int i) {
+    return PARAMS[i].scope == PS_GLOBAL && !strncmp(PARAMS[i].id, "master.", 7) && strcmp(PARAMS[i].id, "master.vol");
+}
 // Darf die FX-Spur diesen Projektwert locken? Effekte und Master ja, Tempo und Swing nicht.
 inline bool fxLockable(int i) {
-    return PARAMS[i].scope == PS_GLOBAL && (!strncmp(PARAMS[i].id, "fx.", 3) || !strncmp(PARAMS[i].id, "master.", 7));
+    return PARAMS[i].scope == PS_GLOBAL && (!strncmp(PARAMS[i].id, "fx.", 3) || !strcmp(PARAMS[i].id, "master.vol"));
 }
 inline void fxTrackClear(Track& f) {
     f.len = 16; f.speed = 4;
@@ -104,7 +107,7 @@ struct Song {
 };
 
 struct Project {
-    int16_t g[32];              // globale Parameter nach Slot
+    int16_t g[GLOBAL_PARAM_CAP];              // globale Parameter nach Slot
     Pattern pat[NPATTERNS];
     Song    song;
 };
@@ -302,7 +305,10 @@ inline void projectFromDoc(const Doc& d, Project& P) {
     }
     for (int i = 0; i < NPARAMS; i++) {
         if (PARAMS[i].scope != PS_GLOBAL) continue;
-        P.g[paramSlot(i)] = (int16_t)d.get(PARAMS[i].id, PARAMS[i].def);
+        const ParamDef& p = PARAMS[i];
+        int value = d.get(p.id, p.def);
+        if (masterSetting(i)) value = value < p.lo ? p.lo : value > p.hi ? p.hi : value;
+        P.g[paramSlot(i)] = (int16_t)value;
     }
     for (int pi = 0; pi < NPATTERNS; pi++) {
         snprintf(k, sizeof k, "pat.%d.used", pi);

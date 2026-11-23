@@ -68,6 +68,22 @@ inline const char* modField(const char* id) {
     for (const char* c = id; *c; c++) if (*c == '.') f = c + 1;
     return f;
 }
+inline bool isModDestination(const ParamDef& d) {
+    return (!strncmp(d.id, "trk.lfo", 7) || !strncmp(d.id, "trk.menv.", 9))
+        && !strcmp(modField(d.id), "dest");
+}
+inline const char* modDestinationName(int v, int mach) {
+    if (v < 0 || v >= MOD_NDEST) return "NONE";
+    const char* id = MOD_DESTS[v].id;
+    if (id && mach >= 0) {
+        if (!strncmp(id, "trk.src.", 8)) {
+            const char* name = machineAt(mach)->label(id[8] - 'a');
+            return name[0] ? name : nullptr;
+        }
+        if (!strcmp(id, "trk.smp") && !machineAt(mach)->usesSample()) return nullptr;
+    }
+    return MOD_DESTS[v].name;
+}
 inline int enumCount(const ParamDef& d) {
     if (!strncmp(d.id, "trk.ins", 7) && d.kind == PK_ENUM) return d.hi + 1;
     if (!strcmp(d.id, "trk.machine"))  return machineCount();
@@ -78,7 +94,8 @@ inline int enumCount(const ParamDef& d) {
         if (!strcmp(f, "wave")) return LFO_WAVES;
         if (!strcmp(f, "rate")) return LFO_NRATES;
         if (!strcmp(f, "dest")) return MOD_NDEST;
-        if (!strcmp(f, "mode")) return LFO_MODES;
+        if (!strcmp(f, "mode")) return !strncmp(d.id, "trk.menv.", 9) ? 2 : LFO_MODES;
+        if (!strcmp(f, "mult")) return 24;
     }
     if (!strcmp(d.id, "trk.flt.type")) return FLT_N;
     if (d.kind == PK_COND)             return 9 + 19 + 34;
@@ -158,6 +175,8 @@ inline void paramText(const ParamDef& d, float v, char* out, int n, int mach = -
             machineAt(mach)->text(d.id[8] - 'a', v, out, n); return;
         }
     }
+    if (!strcmp(d.id, "master.ceiling")) { snprintf(out, n, "%.1f dBTP est.", v * 0.1); return; }
+    if (!strcmp(d.id, "master.ratio")) { snprintf(out, n, "%.0f:1", (double)v); return; }
     if (!strcmp(d.id, "fx.a.div")) {
         int i = (int)(v + 0.5f);
         snprintf(out, n, "%s", DELAY_DIV[i < 0 ? 0 : (i >= DELAY_DIV_N ? DELAY_DIV_N - 1 : i)].name);
@@ -192,8 +211,26 @@ inline void paramText(const ParamDef& d, float v, char* out, int n, int mach = -
         int i = (int)(v + 0.5f);
         if (!strcmp(f, "wave")) { snprintf(out, n, "%s", lfoWaveName(i)); return; }
         if (!strcmp(f, "rate")) { snprintf(out, n, "%s", LFO_RATES[ModState::clampRate(v)].name); return; }
-        if (!strcmp(f, "mode")) { snprintf(out, n, "%s", lfoModeName(i)); return; }
-        if (!strcmp(f, "dest")) { snprintf(out, n, "%s", MOD_DESTS[i < 0 ? 0 : (i >= MOD_NDEST ? 0 : i)].name); return; }
+        if (!strcmp(f, "mode")) {
+            const char* name = !strncmp(d.id, "trk.menv.", 9) ? (i ? "FREE LOOP" : "TRIG") : lfoModeName(i);
+            snprintf(out, n, "%s", name); return;
+        }
+        if (!strcmp(f, "spd")) {
+            if (v < -64.5f) snprintf(out, n, "NOTE RATE");
+            else snprintf(out, n, "%+.0f", (double)v);
+            return;
+        }
+        if (!strcmp(f, "mult")) {
+            int m = i < 0 ? 0 : i > 23 ? 23 : i;
+            snprintf(out, n, "%s x%d", m >= 12 ? "120 BPM" : "SYNC", 1 << (m % 12));
+            return;
+        }
+        if (!strcmp(f, "phase")) { snprintf(out, n, "%.0f deg", v * 360.0 / 128.0); return; }
+        if (!strcmp(f, "fade")) { snprintf(out, n, "%+.0f", (double)v); return; }
+        if (!strcmp(f, "dest")) {
+            const char* name = modDestinationName(i, mach);
+            snprintf(out, n, "%s", name ? name : "UNAVAILABLE"); return;
+        }
         if (!strcmp(f, "depth")) { snprintf(out, n, "%+.0f %%", (double)pBip(v) * 100.0); return; }
     }
     if (d.kind == PK_COND)             { condText((int)(v + 0.5f), out, n); return; }

@@ -1635,6 +1635,113 @@ int main() {
             && fx[INS_CH_DEPTH] == 78 && fx[INS_CH_WIDTH] == 0, "chorus settings do not survive project save and load");
     }
 
+    grp("Digitakt-style modulation and machine destination labels");
+    {
+        const ModSlots& m = modSlots();
+        const int dest = modDestOfSlot(SL("trk.src.a"));
+        const int p = paramFind("trk.lfo1.dest");
+        char text[64];
+        paramText(PARAMS[p], (float)dest, text, sizeof text, 4);
+        chk(!strcmp(text, machineAt(4)->label(0)), "CHOP destination does not show its real control name");
+        paramText(PARAMS[paramFind("trk.menv.dest")], (float)dest, text, sizeof text, 0);
+        chk(!strcmp(text, machineAt(0)->label(0)), "Envelope destination does not show POLY's real control name");
+
+        float values[VOICE_PARAM_CAP] = {};
+        values[m.wave[0]] = LFO_RAMP;
+        values[m.speed[0]] = 32;
+        values[m.mult[0]] = 4;
+        values[m.mode[0]] = LFO_TRIG;
+        const double beat = 24000;
+        auto at = [&](uint64_t samples, int64_t origin = 0) {
+            return ModState::newLfo(values, 0, origin, samples, beat, 48000, 42);
+        };
+        chk(at(6000) == 0.25f, "speed 32 x 16 does not take one beat per cycle");
+        values[m.speed[0]] = -32;
+        chk(at(6000) == 0.75f, "negative speed does not reverse the cycle");
+        values[m.speed[0]] = 32;
+        values[m.phase[0]] = 32;
+        chk(at(0) == 0.25f, "start phase does not offset the trigger");
+        values[m.phase[0]] = 0;
+        values[m.mode[0]] = LFO_HOLD;
+        chk(at(2000, 6000) == 0.25f && at(21000, 6000) == 0.25f, "HOLD changes after the trigger");
+        values[m.mode[0]] = LFO_FREE;
+        chk(at(2000, 4000) == at(1000, 5000), "FREE resets phase at the trigger");
+        values[m.mode[0]] = LFO_HALF;
+        chk(at(18000) == 0.5f && at(48000) == 0.5f, "HALF does not stop halfway");
+        values[m.mode[0]] = LFO_ONE;
+        chk(at(48000) > 0.999f && at(96000) == at(48000), "ONE does not stop after one cycle");
+        values[m.mode[0]] = LFO_TRIG;
+        values[m.fade[0]] = -16;
+        chk(at(12000) == 0.25f, "negative fade does not fade in over one beat");
+        values[m.mult[0]] = 16;
+        chk(fabs(ModState::cyclesPerSample(values, 0, 12000, 48000) - 1.0 / 24000) < 1e-10,
+            "fixed 120 BPM follows the song tempo");
+        values[m.eMode] = 1;
+        values[m.eAtk] = values[m.eDec] = 0;
+        const double period = 2.0 * pTime(0) * 48000;
+        chk(fabsf(ModState::envelope(values, 24, 48000) - ModState::envelope(values, period + 24, 48000)) < 1e-5f,
+            "FREE envelope does not loop independently of trigs");
+        values[m.eMode] = 0;
+        chk(ModState::envelope(values, period + 24, 48000) < ModState::envelope(values, 24, 48000),
+            "TRIG envelope loops instead of decaying");
+
+        const int frames = 48000;
+        static float a[frames * 2], b[frames * 2];
+        auto render = [&](float* out, int block) {
+            e.prepare(48000);
+            e.pat = 0;
+            setupBeat(e);
+            auto* p = e.P.pat[0].t[0].p;
+            p[m.speed[0]] = 32; p[m.mult[0]] = 4; p[m.mode[0]] = LFO_FREE;
+            p[m.phase[0]] = 19; p[m.depth[0]] = 96; p[m.dest[0]] = 1;
+            p[m.eMode] = 1; p[m.eDest] = 7; p[m.eDepth] = 95;
+            p[m.eAtk] = 20; p[m.eDec] = 79;
+            e.start();
+            for (int i = 0; i < frames; i += block)
+                e.render(out + 2 * i, block < frames - i ? block : frames - i);
+        };
+        render(a, 64); render(b, 977);
+        chk(!memcmp(a, b, sizeof a) && rms(a, frames) > 0.01f, "free modulation depends on audio block boundaries");
+    }
+
+    grp("Master chain and offline meters");
+    {
+        static MasterChain chain;
+        static MasterMeter meter;
+        static Project config;
+        projectInit(config);
+        const auto* g = MasterChain::slots();
+        config.g[g[MasterChain::ON]] = 1;
+        config.g[g[MasterChain::TRIM]] = 18;
+        config.g[g[MasterChain::CEILING]] = -10;
+        config.g[g[MasterChain::AB]] = 1;
+        chain.reset();
+        chain.configure(config.g, 48000);
+        meter.reset(48000);
+        for (int i = 0; i < 48000; i++) {
+            float l = 0.8f * sinf(i * 1.5707963268f + 0.7853981634f), r = l;
+            chain.run(l, r, true);
+            meter.add(l, r);
+        }
+        chk(meter.peak.db() <= -0.99f && meter.peak.db() > -4.0f,
+            "offline output exceeds its 4x estimated peak ceiling or is silent");
+        printf("  Master peak %.2f dBTP est., loudness %.2f LUFS\n", meter.peak.db(), meter.integrated());
+        chk(meter.integrated() > -10 && meter.integrated() < 4,
+            "master output loudness is implausible");
+        chk(chain.mix == 0, "offline render uses A/B audition");
+
+        meter.reset(48000);
+        for (int i = 0; i < 48000; i++) {
+            const float tone = 0.1f * sinf(i * (6.283185307f * 1000 / 48000));
+            meter.add(tone, tone);
+        }
+        chk(fabsf(meter.integrated() + 20.0f) < 0.5f, "K-weighted 1 kHz stereo tone is not near -20 LUFS");
+        chk(fabsf(meter.peak.db() + 20.0f) < 0.02f, "1 kHz tone peak is not -20 dBTP");
+        const float loud = meter.integrated();
+        for (int i = 0; i < 48000; i++) meter.add(0, 0);
+        chk(fabsf(meter.integrated() - loud) < 0.8f, "gating did not exclude silence");
+    }
+
     grp("Referenz-Aufnahme");
     {
         const int N = 96000;                         // zwei Sekunden

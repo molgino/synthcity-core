@@ -62,6 +62,9 @@ int  scGet(int track, int slot) {
 }
 void scSet(int track, int slot, int v) {
     if (track < 0) {
+        int index = paramOfSlot(PS_GLOBAL, slot);
+        if (index < 0) return;
+        if (masterSetting(index)) v = v < PARAMS[index].lo ? PARAMS[index].lo : v > PARAMS[index].hi ? PARAMS[index].hi : v;
         gEng.P.g[slot] = (int16_t)v;
         // Das Projekttempo gilt nur, wo das Pattern kein eigenes hat.
         if (slot == paramSlot(paramFind("bpm"))) gEng.setTempo(gEng.effTempo(gEng.pat));
@@ -97,6 +100,10 @@ int  scLockGet(int t, int s, int slot) {
 }
 void scLockSet(int t, int s, int slot, int v, int slide) {
     if (t < NTRACKS && slot >= insertParamSlot(0)) return;
+    if (t == NTRACKS) {
+        int p = paramOfSlot(PS_GLOBAL, slot);
+        if (p < 0 || !fxLockable(p)) return;
+    }
     Step& st = TRW(t).s[s];
     st.setLock(slot, (int16_t)v, (uint8_t)(t == NTRACKS ? 0 : slide));
     if (t == NTRACKS) st.on = 2;
@@ -255,6 +262,7 @@ int  scSongMuteNow()    { return gEng.songOn ? gEng.songMute : 0; }
 // Haeppchen (scExportRender), damit die Oberflaeche dazwischen atmen kann.
 static int gExpBis = -1, gExpTail = 0, gExpPhase = 0, gExpPatVor = 0; static bool gExpDrin = false; static int64_t gExpUrsprung = 0;
 static int64_t gExpMax = 0, gExpDone = 0;
+static MasterMeter gExpMeter;
 int scExportBegin(int von, int bis, int tailSec, int maxSec) {
     if (!gEng.P.song.n) return 0;
     gExpPatVor = gEng.pat;
@@ -270,6 +278,8 @@ int scExportBegin(int von, int bis, int tailSec, int maxSec) {
     gExpTail = (int)(tailSec * gEng.sr);
     gExpMax = (int64_t)maxSec * (int64_t)gEng.sr;
     gExpPhase = 0; gExpDone = 0; gExpDrin = false;
+    gExpMeter.reset(gEng.sr);
+    gEng.masteringExport = true;
     return 1;
 }
 // Rechnet hoechstens 'frames' Bilder nach out (stereo verschraenkt). Rueckgabe: gerechnete Bilder;
@@ -295,12 +305,19 @@ int scExportRender(float* out, int frames) {
             gExpTail -= c;
         }
         gEng.render(out + done * 2, c);
+        for (int i = 0; i < c; i++) {
+            float l = out[2 * (done + i)], r = out[2 * (done + i) + 1];
+            gExpMeter.add(l < -1 ? -1 : l > 1 ? 1 : l, r < -1 ? -1 : r > 1 ? 1 : r);
+        }
         done += c; gExpDone += c;
     }
     return done;
 }
 int  scExportSeconds() { return (int)(gExpDone / (int64_t)gEng.sr); }
+float scExportLufs() { return gExpMeter.integrated(); }
+float scExportPeak() { return gExpMeter.peak.db(); }
 void scExportEnd() {
+    gEng.masteringExport = false;
     gEng.songStop(); gEng.stop(); gEng.prepare(gEng.sr);
     gEng.pat = gExpPatVor; gEng.resetTrackValues();
 }
@@ -410,6 +427,9 @@ void scPlayNote(int t, int note, int vel) {
     gEng.fire(e);
 }
 
+int scEnumAvailable(int p, int value, int mach) {
+    return p >= 0 && p < NPARAMS && (!isModDestination(PARAMS[p]) || modDestinationName(value, mach));
+}
 int scInsertStage(int p) { return isInsertParam(p) ? insertStage(p) : -1; }
 int scInsertVisible(int track, int p) {
     if (track < 0 || track >= NTRACKS || !isInsertParam(p)) return 0;
@@ -588,6 +608,7 @@ static void applyProjectDoc(const Doc& d) {
     sliceUndoPat = -1;
     projectFromDoc(d, gEng.P);
     gEng.resetInserts();
+    gEng.mastering.reset();
     poolFromDoc(d, gEng.pool);
     int p0 = d.get("prj.pat", 0);
     gEng.pat = (p0 >= 0 && p0 < NPATTERNS) ? p0 : 0;
@@ -605,7 +626,7 @@ int scLoad(const char* text) {
 }
 
 // --- Ein Pattern zum Anfangen (steht in src/demo.h) -------------------------------------------
-void scDemo() { demoProject(gEng); gEng.resetInserts(); }
+void scDemo() { demoProject(gEng); gEng.resetInserts(); gEng.mastering.reset(); }
 
 // Speicher fuer die Oberflaeche (Audio-Puffer, Text) - einmal angefordert, nie im Render.
 void* scAlloc(int bytes) { return malloc((size_t)bytes); }

@@ -25,7 +25,7 @@ struct ParamDef {
     uint8_t flags;
 };
 
-enum { VOICE_PARAM_CAP = 64, TRACK_PARAM_CAP = 96, INSERT_STAGES = 2 };
+enum { VOICE_PARAM_CAP = 64, TRACK_PARAM_CAP = 112, GLOBAL_PARAM_CAP = 32, INSERT_STAGES = 2 };
 enum InsertType { INS_OFF, INS_CRUSH, INS_COMPRESS, INS_CHORUS, INS_TYPE_COUNT };
 enum InsertField {
     INS_TYPE, INS_MIX, INS_TRIM, INS_RATE, INS_BITS, INS_DRIVE, INS_TONE, INS_PREFILTER,
@@ -113,20 +113,44 @@ static constexpr ParamDef PARAMS[] = {
     {"trk.send.a",   "SEND A",    PS_TRACK,  PK_LEVEL,   0, 127,   0, "dB",  PF_LOCK | PF_MOD},
     {"trk.send.b",   "SEND B",    PS_TRACK,  PK_LEVEL,   0, 127,   0, "dB",  PF_LOCK | PF_MOD},
     // --- Spur: Modulation - zwei LFOs und eine Mod-Huellkurve, je mit einem Ziel ---
-    {"trk.lfo1.wave",  "LFO1 WAVE",  PS_TRACK, PK_ENUM,    0,   4,   0, "",    PF_LOCK},
+    {"trk.lfo1.wave",  "LFO1 WAVE",  PS_TRACK, PK_ENUM,    0,   6,   0, "",    PF_LOCK},
     {"trk.lfo1.rate",  "LFO1 RATE",  PS_TRACK, PK_ENUM,    0,  14,   7, "",    PF_LOCK | PF_MOD},
     {"trk.lfo1.depth", "LFO1 DEPTH", PS_TRACK, PK_BIP,     0, 127,  64, "",    PF_LOCK | PF_MOD},
     {"trk.lfo1.dest",  "LFO1 DEST",  PS_TRACK, PK_ENUM,    0,  33,   0, "",    PF_LOCK},
-    {"trk.lfo1.mode",  "LFO1 MODE",  PS_TRACK, PK_ENUM,    0,   2,   0, "",    0},
-    {"trk.lfo2.wave",  "LFO2 WAVE",  PS_TRACK, PK_ENUM,    0,   4,   1, "",    PF_LOCK},
+    {"trk.lfo1.mode",  "LFO1 MODE",  PS_TRACK, PK_ENUM,    0,   4,   0, "",    0},
+    {"trk.lfo2.wave",  "LFO2 WAVE",  PS_TRACK, PK_ENUM,    0,   6,   1, "",    PF_LOCK},
     {"trk.lfo2.rate",  "LFO2 RATE",  PS_TRACK, PK_ENUM,    0,  14,   4, "",    PF_LOCK | PF_MOD},
     {"trk.lfo2.depth", "LFO2 DEPTH", PS_TRACK, PK_BIP,     0, 127,  64, "",    PF_LOCK | PF_MOD},
     {"trk.lfo2.dest",  "LFO2 DEST",  PS_TRACK, PK_ENUM,    0,  33,   0, "",    PF_LOCK},
-    {"trk.lfo2.mode",  "LFO2 MODE",  PS_TRACK, PK_ENUM,    0,   2,   0, "",    0},
+    {"trk.lfo2.mode",  "LFO2 MODE",  PS_TRACK, PK_ENUM,    0,   4,   0, "",    0},
     {"trk.menv.atk",   "MENV ATK",   PS_TRACK, PK_TIME,    0, 127,   0, "s",   PF_LOCK},
     {"trk.menv.dec",   "MENV DEC",   PS_TRACK, PK_TIME,    0, 127,  60, "s",   PF_LOCK},
     {"trk.menv.depth", "MENV DEPTH", PS_TRACK, PK_BIP,     0, 127,  64, "",    PF_LOCK | PF_MOD},
     {"trk.menv.dest",  "MENV DEST",  PS_TRACK, PK_ENUM,    0,  33,   0, "",    PF_LOCK},
+    {"trk.lfo1.spd", "LFO1 SPEED", PS_TRACK, PK_NUM, -65, 63, -65, "", PF_LOCK},
+    {"trk.lfo1.mult", "LFO1 MULT", PS_TRACK, PK_ENUM, 0, 23, 4, "", PF_LOCK},
+    {"trk.lfo1.fade", "LFO1 FADE", PS_TRACK, PK_NUM, -64, 63, 0, "", PF_LOCK},
+    {"trk.lfo1.phase", "LFO1 PHASE", PS_TRACK, PK_NUM, 0, 127, 0, "", PF_LOCK},
+    {"trk.lfo2.spd", "LFO2 SPEED", PS_TRACK, PK_NUM, -65, 63, -65, "", PF_LOCK},
+    {"trk.lfo2.mult", "LFO2 MULT", PS_TRACK, PK_ENUM, 0, 23, 4, "", PF_LOCK},
+    {"trk.lfo2.fade", "LFO2 FADE", PS_TRACK, PK_NUM, -64, 63, 0, "", PF_LOCK},
+    {"trk.lfo2.phase", "LFO2 PHASE", PS_TRACK, PK_NUM, 0, 127, 0, "", PF_LOCK},
+    {"trk.menv.mode", "MENV MODE", PS_TRACK, PK_ENUM, 0, 1, 0, "", PF_LOCK},
+    {"master.on", "CHAIN", PS_GLOBAL, PK_ONOFF, 0, 1, 0, "", 0},
+    {"master.trim", "TRIM", PS_GLOBAL, PK_NUM, -24, 24, 0, "dB", 0},
+    {"master.low", "LOW EQ", PS_GLOBAL, PK_NUM, -12, 12, 0, "dB", 0},
+    {"master.mid", "MID EQ", PS_GLOBAL, PK_NUM, -12, 12, 0, "dB", 0},
+    {"master.freq", "MID FREQ", PS_GLOBAL, PK_NUM, 250, 4000, 1000, "Hz", 0},
+    {"master.high", "HIGH EQ", PS_GLOBAL, PK_NUM, -12, 12, 0, "dB", 0},
+    {"master.threshold", "THRESHOLD", PS_GLOBAL, PK_NUM, -60, 0, -18, "dB", 0},
+    {"master.ratio", "RATIO", PS_GLOBAL, PK_NUM, 1, 8, 1, ":1", 0},
+    {"master.attack", "ATTACK", PS_GLOBAL, PK_NUM, 1, 100, 20, "ms", 0},
+    {"master.release", "RELEASE", PS_GLOBAL, PK_NUM, 10, 1000, 150, "ms", 0},
+    {"master.makeup", "MAKEUP", PS_GLOBAL, PK_NUM, -12, 18, 0, "dB", 0},
+    {"master.clip", "CLIP", PS_GLOBAL, PK_NUM, 0, 18, 0, "dB", 0},
+    {"master.limit", "LIMITER", PS_GLOBAL, PK_ONOFF, 0, 1, 1, "", 0},
+    {"master.ceiling", "CEILING", PS_GLOBAL, PK_NUM, -60, -1, -10, "", 0},
+    {"master.ab", "A/B DRY", PS_GLOBAL, PK_ONOFF, 0, 1, 0, "", 0},
     INSERT_PARAMS("trk.ins1"),
     INSERT_PARAMS("trk.ins2"),
 };
@@ -159,13 +183,13 @@ inline int paramCount(PScope s) {
     return k;
 }
 constexpr bool trackParamLayoutFits() {
-    int voice = 0, track = 0;
+    int voice = 0, track = 0, global = 0;
     for (int i = 0; i < NPARAMS; i++) {
-        if (PARAMS[i].scope != PS_TRACK) continue;
+        if (PARAMS[i].scope != PS_TRACK) { global++; continue; }
         track++;
         if (i < INSERT_FIRST) voice++;
     }
-    return voice <= VOICE_PARAM_CAP && track <= TRACK_PARAM_CAP;
+    return voice <= VOICE_PARAM_CAP && track <= TRACK_PARAM_CAP && global <= GLOBAL_PARAM_CAP;
 }
 static_assert(trackParamLayoutFits(), "Track parameter storage overflow");
 inline int paramFind(const char* id) {

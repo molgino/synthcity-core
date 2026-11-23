@@ -9,7 +9,7 @@
 
 // --- Welche Parameter sieht der Host? ----------------------------------------------------
 // Nicht alle 8 Spuren auf einmal: Ableton Live blendet oberhalb von 32 Parametern nicht mehr
-// automatisch ein und zeigt hoechstens 128. Darum wie an der Hardware: die globalen Werte,
+// automatisch ein. Darum wie an der Hardware: die globalen Werte,
 // die Performance-Ebene und die Regler der GEWAEHLTEN Spur.
 enum PKindX { PX_GLOBAL, PX_TRACK, PX_MORPH, PX_FILL, PX_MUTE, PX_FOCUS };
 
@@ -23,14 +23,14 @@ struct PParam {
     int16_t     pidx;     // Index in PARAMS (fuer Einheit und Text)
 };
 
-static PParam gPar[128];
+static PParam gPar[NPARAMS + NTRACKS + 3];
 static int    gNPar = 0;
 
 static void buildParams() {
     if (gNPar) return;
     for (int i = 0; i < NPARAMS; i++) {
         if (PARAMS[i].scope != PS_GLOBAL) continue;
-        gPar[gNPar++] = {pidHash(PARAMS[i].id), PARAMS[i].name, "Global",
+        gPar[gNPar++] = {pidHash(PARAMS[i].id), PARAMS[i].name, !strncmp(PARAMS[i].id, "master.", 7) ? "Master" : "Global",
                          (double)PARAMS[i].lo, (double)PARAMS[i].hi, (double)PARAMS[i].def,
                          PX_GLOBAL, (int16_t)paramSlot(i), (int16_t)i};
     }
@@ -44,7 +44,7 @@ static void buildParams() {
                          PX_MUTE, (int16_t)t, -1};
     }
     gPar[gNPar++] = {pidHash("ui.track"), "SPUR", "Spur", 1, NTRACKS, 1, PX_FOCUS, 0, -1};
-    for (int i = 0; i < NPARAMS && gNPar < 128; i++) {
+    for (int i = 0; i < NPARAMS; i++) {
         if (PARAMS[i].scope != PS_TRACK) continue;
         const char* module = "Spur";
         if (isInsertParam(i)) {
@@ -86,7 +86,7 @@ struct Plug {
     void set(const PParam& p, double v) {
         switch (p.kind) {
         case PX_GLOBAL:
-            eng.P.g[p.slot] = (int16_t)(v + 0.5);
+            eng.P.g[p.slot] = (int16_t)(v < p.lo ? p.lo : v > p.hi ? p.hi : v + (v < 0 ? -0.5 : 0.5));
             if (!strcmp(PARAMS[p.pidx].id, "bpm")) eng.setTempo(eng.effTempo(eng.pat));
             break;
         case PX_TRACK:
@@ -218,6 +218,7 @@ static bool stLoad(const clap_plugin_t* pl, const clap_istream_t* is) {
     if (d.overflow) return false;
     projectFromDoc(d, P->eng.P);
     P->eng.resetInserts();
+    P->eng.mastering.reset();
     P->focus = d.get("ui.track", 0);
     P->eng.seq.bpm = P->eng.effTempo(P->eng.pat);
     P->eng.resetTrackValues();
