@@ -25,8 +25,33 @@ struct ParamDef {
     uint8_t flags;
 };
 
+enum { VOICE_PARAM_CAP = 64, TRACK_PARAM_CAP = 96, INSERT_STAGES = 2 };
+enum InsertType { INS_OFF, INS_CRUSH, INS_COMPRESS, INS_TYPE_COUNT };
+enum InsertField {
+    INS_TYPE, INS_MIX, INS_TRIM, INS_RATE, INS_BITS, INS_DRIVE, INS_TONE, INS_PREFILTER,
+    INS_THRESHOLD, INS_RATIO, INS_ATTACK, INS_RELEASE, INS_KNEE, INS_SOURCE, INS_SC_HPF,
+    INSERT_FIELDS
+};
+
+#define INSERT_PARAMS(id) \
+    {id ".type",      "TYPE",       PS_TRACK, PK_ENUM,   0, INS_TYPE_COUNT - 1, 0, "", 0}, \
+    {id ".mix",       "MIX",        PS_TRACK, PK_NUM,    0, 100, 100, "%", 0}, \
+    {id ".trim",      "OUTPUT",     PS_TRACK, PK_NUM,  -24,  24,   0, "dB", 0}, \
+    {id ".rate",      "RATE",       PS_TRACK, PK_NUM,    0, 127,   0, "", 0}, \
+    {id ".bits",      "BITS",       PS_TRACK, PK_NUM,    0,  16,   0, "", 0}, \
+    {id ".drive",     "DRIVE",      PS_TRACK, PK_NUM,    0,  30,   0, "dB", 0}, \
+    {id ".tone",      "TONE",       PS_TRACK, PK_NUM,  500, 20000, 20000, "Hz", 0}, \
+    {id ".prefilter", "PRE FILTER", PS_TRACK, PK_ONOFF,  0,   1,   1, "", 0}, \
+    {id ".threshold", "THRESHOLD",  PS_TRACK, PK_NUM,  -60,   0, -18, "dB", 0}, \
+    {id ".ratio",     "RATIO",      PS_TRACK, PK_NUM,    1,  20,   4, ":1", 0}, \
+    {id ".attack",    "ATTACK",     PS_TRACK, PK_NUM,    1, 100,  10, "ms", 0}, \
+    {id ".release",   "RELEASE",    PS_TRACK, PK_NUM,   10, 1000, 120, "ms", 0}, \
+    {id ".knee",      "KNEE",       PS_TRACK, PK_NUM,    0,  24,   6, "dB", 0}, \
+    {id ".source",    "SIDECHAIN",  PS_TRACK, PK_ENUM,   0,   8,   0, "", 0}, \
+    {id ".sc.hpf",    "SC HPF",     PS_TRACK, PK_NUM,    0, 500,   0, "Hz", 0}
+
 // Reihenfolge ist Anzeigereihenfolge; sie darf sich aendern, ohne Dateien zu brechen.
-static const ParamDef PARAMS[] = {
+static constexpr ParamDef PARAMS[] = {
     // --- global ---
     {"bpm",          "TEMPO",  PS_GLOBAL, PK_NUM,    30, 300, 120, "BPM", 0},
     {"swing",        "SWING",  PS_GLOBAL, PK_NUM,    50,  80,  50, "%",   0},
@@ -98,20 +123,46 @@ static const ParamDef PARAMS[] = {
     {"trk.menv.dec",   "MENV DEC",   PS_TRACK, PK_TIME,    0, 127,  60, "s",   PF_LOCK},
     {"trk.menv.depth", "MENV DEPTH", PS_TRACK, PK_BIP,     0, 127,  64, "",    PF_LOCK | PF_MOD},
     {"trk.menv.dest",  "MENV DEST",  PS_TRACK, PK_ENUM,    0,  33,   0, "",    PF_LOCK},
+    INSERT_PARAMS("trk.ins1"),
+    INSERT_PARAMS("trk.ins2"),
 };
+#undef INSERT_PARAMS
 enum { NPARAMS = (int)(sizeof PARAMS / sizeof *PARAMS) };
 
+enum { INSERT_FIRST = NPARAMS - INSERT_STAGES * INSERT_FIELDS };
+inline bool isInsertParam(int index) { return index >= INSERT_FIRST && index < NPARAMS; }
+inline int insertStage(int index) { return (index - INSERT_FIRST) / INSERT_FIELDS; }
+inline int insertField(int index) { return (index - INSERT_FIRST) % INSERT_FIELDS; }
+inline bool insertFieldVisible(int type, int field) {
+    if (field == INS_TYPE) return true;
+    if (type == INS_CRUSH) return field <= INS_PREFILTER;
+    return type == INS_COMPRESS && (field <= INS_TRIM || field >= INS_THRESHOLD);
+}
 // Index innerhalb des Gueltigkeitsbereichs (global bzw. Spur) - so liegen die Werte im Modell.
 inline int paramSlot(int i) {
     int k = 0;
     for (int j = 0; j < i; j++) if (PARAMS[j].scope == PARAMS[i].scope) k++;
     return k;
 }
+inline int insertParamSlot(int stage) {
+    const static int first = paramSlot(INSERT_FIRST);
+    return first + stage * INSERT_FIELDS;
+}
 inline int paramCount(PScope s) {
     int k = 0;
     for (int i = 0; i < NPARAMS; i++) if (PARAMS[i].scope == s) k++;
     return k;
 }
+constexpr bool trackParamLayoutFits() {
+    int voice = 0, track = 0;
+    for (int i = 0; i < NPARAMS; i++) {
+        if (PARAMS[i].scope != PS_TRACK) continue;
+        track++;
+        if (i < INSERT_FIRST) voice++;
+    }
+    return voice <= VOICE_PARAM_CAP && track <= TRACK_PARAM_CAP;
+}
+static_assert(trackParamLayoutFits(), "Track parameter storage overflow");
 inline int paramFind(const char* id) {
     for (int i = 0; i < NPARAMS; i++) if (!strcmp(PARAMS[i].id, id)) return i;
     return -1;

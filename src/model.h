@@ -33,7 +33,7 @@ struct Step {
 };
 
 struct Track {
-    int16_t p[64];              // Spurparameter nach Slot
+    int16_t p[TRACK_PARAM_CAP] = {};              // Spurparameter nach Slot
     uint8_t len = 16;           // Steps je Durchlauf (Polymetrik)
     uint8_t speed = 4;          // Taktteiler: 4 = 16tel, 2 = 8tel, 8 = 32stel
     Step s[NSTEPS];
@@ -330,7 +330,12 @@ inline void projectFromDoc(const Doc& d, Project& P) {
             for (int i = 0; i < NPARAMS; i++) {
                 if (PARAMS[i].scope != PS_TRACK) continue;
                 docKeyTrack(k, sizeof k, pi, t, PARAMS[i].id);
-                tr.p[paramSlot(i)] = (int16_t)d.get(k, PARAMS[i].def);
+                int v = d.get(k, PARAMS[i].def);
+                if (isInsertParam(i)) {
+                    const ParamDef& p = PARAMS[i];
+                    v = v < p.lo ? p.lo : v > p.hi ? p.hi : v;
+                }
+                tr.p[paramSlot(i)] = (int16_t)v;
             }
             for (int k2i = 0; k2i < NSCENES; k2i++) {
                 SceneTrack& sct = pt.sc[k2i][t];

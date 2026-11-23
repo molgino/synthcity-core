@@ -113,7 +113,10 @@ class SynthCityNode extends AudioWorkletProcessor {
       this.lastPost = currentTime;
       const steps = [];
       for (let t = 0; t <= 8; t++) steps.push(this.x.scPlayStep(t));   // 8 = FX-Spur
-      this.port.postMessage({type: 'pos', steps, peak: this.peak,
+      const insertReduction = [];
+      for (let t = 0; t < 8; t++)
+        for (let slot = 0; slot < 2; slot++) insertReduction.push(this.x.scInsertReduction(t, slot));
+      this.port.postMessage({type: 'pos', steps, peak: this.peak, insertReduction,
                              pat: this.x.scPattern(), next: this.x.scPatNext(),
                              songOn: this.x.scSongOn(), songPos: this.x.scSongPos(),
                              songMute: this.x.scSongMuteNow(), morph: this.x.scMorph()});

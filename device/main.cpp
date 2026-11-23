@@ -720,8 +720,8 @@ NoLock::~NoLock() { for (int i = 0; i < d; i++) lockA(); }
 // ============================================================================================
 enum { V_TRACK, V_SONG, V_PROJECT, V_SYSTEM, V_N };
 static const char* VIEWNAME[V_N] = {"TRACK", "SONG", "PROJ", "SYSTEM"};
-enum { TAB_TRIG, TAB_CHRD, TAB_SRC, TAB_FLTR, TAB_AMP, TAB_MIX, TAB_MOD, TAB_N };
-static const char* TABNAME[TAB_N] = {"TRIG", "CHRD", "SRC", "FLTR", "AMP", "MIX", "MOD"};
+enum { TAB_TRIG, TAB_CHRD, TAB_SRC, TAB_FLTR, TAB_AMP, TAB_MIX, TAB_MOD, TAB_INSERT, TAB_N };
+static const char* TABNAME[TAB_N] = {"TRIG", "CHRD", "SRC", "FLTR", "AMP", "MIX", "MOD", "INS"};
 enum { M_NONE, M_MENU, M_SAMPLES, M_HELP, M_KEYS, M_SLICE, M_RECORDER };
 static const int FXT = NTRACKS;   // die FX-Spur des Patterns
 
@@ -770,7 +770,7 @@ static int tabOf(const ParamDef& d) {
         {"nt2", TAB_CHRD}, {"nt3", TAB_CHRD}, {"nt4", TAB_CHRD}, {"vmode", TAB_CHRD},
         {"machine", TAB_SRC}, {"smp", TAB_SRC}, {"src", TAB_SRC}, {"flt", TAB_FLTR}, {"bw", TAB_FLTR},
         {"amp", TAB_AMP}, {"vol", TAB_MIX}, {"pan", TAB_MIX}, {"send", TAB_MIX},
-        {"lfo1", TAB_MOD}, {"lfo2", TAB_MOD}, {"menv", TAB_MOD}};
+        {"lfo1", TAB_MOD}, {"lfo2", TAB_MOD}, {"menv", TAB_MOD}, {"ins1", TAB_INSERT}, {"ins2", TAB_INSERT}};
     for (auto& m : M) if (!strcmp(m.k, key)) return m.t;
     return TAB_MIX;
 }
@@ -780,7 +780,7 @@ static int srcKnob(const ParamDef& d) {   // trk.src.a..h -> 0..7, sonst -1
     return d.id[8] - 'a';
 }
 // Zeilen der aktuellen Liste: Parameterindex, oder -1-k = Ueberschrift k
-enum { HDR_LFO1 = -1, HDR_LFO2 = -2, HDR_MENV = -3, HDR_DELAY = -4, HDR_REVERB = -5, HDR_MASTER = -6 };
+enum { HDR_LFO1 = -1, HDR_LFO2 = -2, HDR_MENV = -3, HDR_DELAY = -4, HDR_REVERB = -5, HDR_MASTER = -6, HDR_INSERT1 = -7, HDR_INSERT2 = -8 };
 static int gRows[96], gNRows = 0;
 static void buildRows() {
     gNRows = 0;
@@ -806,6 +806,11 @@ static void buildRows() {
         if (i == P_SMP && !smp) continue;
         int k = srcKnob(d);
         if (k >= 0 && !scMachLabel(machOf(U.sel), k)[0]) continue;
+        if (isInsertParam(i)) {
+            if (!scInsertVisible(U.sel, i)) continue;
+            int h = insertStage(i) ? HDR_INSERT2 : HDR_INSERT1;
+            if (h != lastHdr) { gRows[gNRows++] = h; lastHdr = h; }
+        }
         if (U.tab == TAB_MOD) {
             int h = !strncmp(d.id, "trk.lfo1", 8) ? HDR_LFO1 : !strncmp(d.id, "trk.lfo2", 8) ? HDR_LFO2 : HDR_MENV;
             if (h != lastHdr) { gRows[gNRows++] = h; lastHdr = h; }
@@ -815,6 +820,7 @@ static void buildRows() {
 }
 static const char* hdrName(int h) {
     switch (h) { case HDR_LFO1: return "LFO 1"; case HDR_LFO2: return "LFO 2"; case HDR_MENV: return "MOD ENVELOPE";
+                 case HDR_INSERT1: return "INSERT 1"; case HDR_INSERT2: return "INSERT 2";
                  case HDR_DELAY: return "DELAY (SEND A)"; case HDR_REVERB: return "REVERB (SEND B)"; default: return "MASTER"; }
 }
 static int& rowSelRef() { return U.rowSel[U.sel == FXT ? TAB_N : U.tab]; }
@@ -861,7 +867,7 @@ static bool lockable(int p) {
 }
 static int baseValue(int p) { return PARAMS[p].scope == PS_GLOBAL ? scGet(-1, slotOf(p)) : scGet(U.sel, slotOf(p)); }
 static int sceneValue(int p) {   // -32768 = die Scene laesst den Regler in Ruhe
-    if (U.scene < 0 || U.sel >= FXT || PARAMS[p].scope != PS_TRACK) return -32768;
+    if (U.scene < 0 || U.sel >= FXT || PARAMS[p].scope != PS_TRACK || isInsertParam(p)) return -32768;
     return scSceneGet(U.scene, U.sel, slotOf(p));
 }
 static int lockValue(int p, int step) {   // -32768 = kein Lock
@@ -930,8 +936,13 @@ static int stepValue(int p, int v, int dir, bool coarse) {
 static void editParam(int p, int dir, bool coarse) {
     if (p < 0) return;
     const ParamDef& d = PARAMS[p];
+    if (U.aHeld && isInsertParam(p)) {
+        U.aEdited = true;
+        toast("Inserts are track settings");
+        return;
+    }
     bool asLock = U.aHeld && lockable(p);
-    bool asScene = !asLock && U.scene >= 0 && U.sel < FXT && d.scope == PS_TRACK && p != P_MACHINE;
+    bool asScene = !asLock && U.scene >= 0 && U.sel < FXT && d.scope == PS_TRACK && p != P_MACHINE && !isInsertParam(p);
     int lv = asLock ? lockValue(p, U.cur) : asScene ? sceneValue(p) : -32768;
     int v = lv != -32768 ? lv : baseValue(p);
     int nv = stepValue(p, v, dir, coarse);
@@ -1815,6 +1826,12 @@ static void drawList() {
         text(x0 + 4, y + 2, b, U.aHeld ? C_LOCK : C_DIM);
     }
     y += 26;
+    float reduction[INSERT_STAGES] = {};
+    if (U.sel < FXT && U.tab == TAB_INSERT) {
+        lockA();
+        for (int stage = 0; stage < INSERT_STAGES; stage++) reduction[stage] = scInsertReduction(U.sel, stage);
+        unlockA();
+    }
     int rowH = 22, vis = (STEPS_Y - 8 - y) / rowH;
     int cp = curParam();
     int sr = rowSelRef();
@@ -1824,7 +1841,18 @@ static void drawList() {
     if (U.listScroll < 0) U.listScroll = 0;
     for (int r = U.listScroll; r < gNRows && r < U.listScroll + vis; r++, y += rowH) {
         int p = gRows[r];
-        if (p < 0) { text(x0 + 4, y + 4, hdrName(p), hue); fill(x0 + 4, y + 20, w - 8, 1, C_LINE); continue; }
+        if (p < 0) {
+            text(x0 + 4, y + 4, hdrName(p), hue);
+            if (p == HDR_INSERT1 || p == HDR_INSERT2) {
+                int stage = p == HDR_INSERT1 ? 0 : 1;
+                if (scGet(U.sel, insertParamSlot(stage)) == INS_COMPRESS) {
+                    char meter[32]; snprintf(meter, sizeof meter, "GR %.1f dB", reduction[stage]);
+                    text(x0 + 160, y + 4, meter, C_DIM);
+                }
+            }
+            fill(x0 + 4, y + 20, w - 8, 1, C_LINE);
+            continue;
+        }
         bool s = p == cp;
         fill(x0, y, w, rowH - 2, s ? C_SEL : C_PANEL);
         if (s) fill(x0, y, 3, rowH - 2, hue);
@@ -2511,6 +2539,19 @@ static int selfTest(const char* shotDir) {
     CHECK(scLockGet(FXT, U.cur, slotOf(fxp)) != -32768, "FX-Lock auf dem Step");
     shot("04-fx");
     tap(BT_R1); CHECK(U.sel == 0, "R1: zurueck zu Spur 1");
+    U.tab = TAB_INSERT;
+    buildRows();
+    int type = pIndex("trk.ins1.type");
+    CHECK(curParam() == type && gNRows == 4, "INS shows both insert slots with their types");
+    tap(BT_X);
+    CHECK(scGet(0, slotOf(type)) == INS_CRUSH && scInsertVisible(0, pIndex("trk.ins1.bits"))
+          && !scInsertVisible(0, pIndex("trk.ins1.threshold")), "INS: crusher controls appear");
+    tap(BT_X);
+    CHECK(scGet(0, slotOf(type)) == INS_COMPRESS && scInsertVisible(0, pIndex("trk.ins1.source"))
+          && !scInsertVisible(0, pIndex("trk.ins1.bits")), "INS: compressor and sidechain controls appear");
+    shot("04a-inserts");
+    tap(BT_Y); tap(BT_Y);
+    U.tab = TAB_SRC;
     // Scene B bearbeiten: der Wert landet in der Scene, nicht im Grundwert
     tap(BT_LEFT, 1u << BT_B); tap(BT_LEFT, 1u << BT_B);   // Reiter TRIG
     U.scene = 1;
@@ -2572,16 +2613,32 @@ static int selfTest(const char* shotDir) {
     // Zwei Rechenkerne: Ergebnis bitgleich mit einem (die Haelften werden fest zugeteilt)
     {
         static float one[48000 * 2], two[48000 * 2];
-        scInit(48000); scDemo(); scStart();
-        for (int i = 0; i + 256 <= 48000; i += 256) scRender(one + i * 2, 256);
         bool ok = gHelper.on || gHelper.start();
-        scInit(48000); scDemo(); scStart();
-        for (int i = 0; i + 256 <= 48000; i += 256) {
-            gEng.helper = &gHelper; gHelper.enter();
-            scRender(two + i * 2, 256);
-            gHelper.leave(); gEng.helper = nullptr;
+        const bool modes[] = {false, true};
+        for (bool active : modes) {
+            auto start = [active]() {
+                scInit(48000); scDemo();
+                if (active) {
+                    int slot = insertParamSlot(0);
+                    scSet(0, slot + INS_TYPE, INS_COMPRESS);
+                    scSet(0, slot + INS_SOURCE, 2);
+                    scSet(1, slot + INS_TYPE, INS_CRUSH);
+                    scSet(1, slot + INS_RATE, 56);
+                }
+                scStart();
+            };
+            start();
+            for (int i = 0; i + 256 <= 48000; i += 256) scRender(one + i * 2, 256);
+            start();
+            for (int i = 0; i + 256 <= 48000; i += 256) {
+                if (ok) { gEng.helper = &gHelper; gHelper.enter(); }
+                scRender(two + i * 2, 256);
+                if (ok) { gHelper.leave(); gEng.helper = nullptr; }
+            }
+            CHECK(ok && !memcmp(one, two, sizeof one), active
+                  ? "two cores: active inserts and sidechain are bit identical"
+                  : "zwei Rechenkerne: bitgleich mit einem");
         }
-        CHECK(ok && !memcmp(one, two, sizeof one), "zwei Rechenkerne: bitgleich mit einem");
     }
     U.view = V_TRACK; U.tab = TAB_TRIG; idle(3);
     shot("09-demo");

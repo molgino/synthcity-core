@@ -65,7 +65,15 @@ void scSet(int track, int slot, int v) {
         gEng.P.g[slot] = (int16_t)v;
         // Das Projekttempo gilt nur, wo das Pattern kein eigenes hat.
         if (slot == paramSlot(paramFind("bpm"))) gEng.setTempo(gEng.effTempo(gEng.pat));
-    } else if (track < NTRACKS) W().t[track].p[slot] = (int16_t)v;
+    } else if (track < NTRACKS && slot >= 0 && slot < TRACK_PARAM_CAP) {
+        const int first = insertParamSlot(0);
+        if (slot >= first) {
+            int p = INSERT_FIRST + slot - first;
+            if (p >= NPARAMS) return;
+            v = v < PARAMS[p].lo ? PARAMS[p].lo : v > PARAMS[p].hi ? PARAMS[p].hi : v;
+        }
+        W().t[track].p[slot] = (int16_t)v;
+    }
 }
 
 // Machine wechseln: die beiden Quellregler fangen bei den Grundwerten DIESER Machine an.
@@ -88,6 +96,7 @@ int  scLockGet(int t, int s, int slot) {
     return l ? l->val : -32768;
 }
 void scLockSet(int t, int s, int slot, int v, int slide) {
+    if (t < NTRACKS && slot >= insertParamSlot(0)) return;
     Step& st = TRW(t).s[s];
     st.setLock(slot, (int16_t)v, (uint8_t)(t == NTRACKS ? 0 : slide));
     if (t == NTRACKS) st.on = 2;
@@ -373,7 +382,10 @@ int   scIsFill()            { return gEng.seq.fill ? 1 : 0; }
 void  scStepLoop(int on, int from, int len) {
     gEng.seq.loopOn = on != 0; gEng.seq.loopFrom = from; gEng.seq.loopLen = len;
 }
-void  scSceneSet(int scene, int t, int slot, int v) { W().sc[scene][t].set(slot, (int16_t)v); }
+void scSceneSet(int scene, int t, int slot, int v) {
+    if (slot >= insertParamSlot(0)) return;
+    W().sc[scene][t].set(slot, (int16_t)v);
+}
 void  scSceneClear(int scene, int t, int slot) {
     if (scene < 0 || scene >= NSCENES || t < 0 || t >= NTRACKS) return;
     W().sc[scene][t].clear(slot);
@@ -396,6 +408,17 @@ int   scSceneGet(int scene, int t, int slot) {
 void scPlayNote(int t, int note, int vel) {
     Ev e{gEng.seq.pos, (uint8_t)t, EV_TRIG, 0, (int16_t)note, (int16_t)vel, (int32_t)(gEng.sr * 0.3f)};
     gEng.fire(e);
+}
+
+int scInsertStage(int p) { return isInsertParam(p) ? insertStage(p) : -1; }
+int scInsertVisible(int track, int p) {
+    if (track < 0 || track >= NTRACKS || !isInsertParam(p)) return 0;
+    int type = scGet(track, insertParamSlot(insertStage(p)));
+    return insertFieldVisible(type, insertField(p));
+}
+float scInsertReduction(int track, int stage) {
+    if (track < 0 || track >= NTRACKS || stage < 0 || stage >= INSERT_STAGES) return 0.0f;
+    return gEng.inserts[track][stage].reductionDb();
 }
 
 // --- Sample-Vorrat ------------------------------------------------------------------------------
@@ -564,6 +587,7 @@ static void applyProjectDoc(const Doc& d) {
     gEng.recStop();
     sliceUndoPat = -1;
     projectFromDoc(d, gEng.P);
+    gEng.resetInserts();
     poolFromDoc(d, gEng.pool);
     int p0 = d.get("prj.pat", 0);
     gEng.pat = (p0 >= 0 && p0 < NPATTERNS) ? p0 : 0;
@@ -581,7 +605,7 @@ int scLoad(const char* text) {
 }
 
 // --- Ein Pattern zum Anfangen (steht in src/demo.h) -------------------------------------------
-void scDemo() { demoProject(gEng); }
+void scDemo() { demoProject(gEng); gEng.resetInserts(); }
 
 // Speicher fuer die Oberflaeche (Audio-Puffer, Text) - einmal angefordert, nie im Render.
 void* scAlloc(int bytes) { return malloc((size_t)bytes); }

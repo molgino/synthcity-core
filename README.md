@@ -677,6 +677,20 @@ Audio-Last laufend (CPU %).
 * SYSTEM: AUDIO BUFFER (128–1024), AUDIO CORES (1/2), AUDIO STATS (zu späte Blöcke, schwerster
   Block in % – zu späte Blöcke hört man als Klick).
 
+## Insert-Effekte
+
+Auf jeder Audiospur stehen im Reiter **INS** zwei serielle Stereo-Inserts zur Verfügung.
+**Crush / Drive** hat getrennte Regler für Abtastrate und Bit-Tiefe, einen optionalen Filter
+vor der Abtastratenreduktion, Drive, Tone, Output und Mix. **Compressor** bietet Threshold,
+Ratio, Attack, Release, Knee, Output, Mix und einen Sidechain-Hochpass. **Sidechain** wählt
+SELF oder eine der acht Spuren. Die Anzeige GR zeigt die Gain Reduction in dB.
+
+Die Inserts bearbeiten die Summe der Stimmen einer Spur. Eine externe Sidechain greift
+vor den Inserts ihrer Quellspur ab. Die Sends bleiben vor den Inserts, damit bestehende
+Send-Locks pro Stimme erhalten bleiben. Der Einzelspur-Recorder nimmt hinter den Inserts
+und ohne Send-Effekte auf. Einstellungen sind pro Pattern und Spur gespeichert. Beide
+Inserts sind beim Laden alter Projekte aus.
+
 ## Sample-Editor und Recorder
 
 **R36S:** Im SELECT-Menü öffnet **Sample editor** den Sample-Slot der gewählten Spur.
