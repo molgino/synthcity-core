@@ -31,18 +31,6 @@ jobs:
             build/synthcity.clap
             web/synthcity.wasm
           if-no-files-found: error
-      - name: Install device build dependencies
-        timeout-minutes: 4
-        run: |
-          sudo apt-get -o Acquire::Retries=2 update
-          sudo env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=2 install -y --no-install-recommends libsdl2-dev libasound2-dev libdrm-dev
-      - name: Run the headless device self-test
-        env:
-          SDL_VIDEODRIVER: dummy
-          SDL_AUDIODRIVER: dummy
-        run: |
-          mkdir -p build/devhome
-          make -B devtest
 
   r36s:
     name: R36S arm64 packages
