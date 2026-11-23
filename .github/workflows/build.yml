@@ -1,0 +1,61 @@
+name: Build Synth City Core
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Linux, CLAP and WebAssembly
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use the runner's Clang toolchain
+        run: |
+          clang_dir="$(dirname "$(readlink -f "$(command -v clang-18)")")"
+          test -x "$clang_dir/wasm-ld"
+          echo "$clang_dir" >> "$GITHUB_PATH"
+      - name: Build and test Core
+        run: make -B -j2 test
+      - name: Upload CLAP and WebAssembly builds
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthcity-core-linux-web
+          path: |
+            build/synthcity.clap
+            web/synthcity.wasm
+          if-no-files-found: error
+
+  r36s:
+    name: R36S arm64 packages
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cross-build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++-aarch64-linux-gnu curl zip unzip
+      - name: Build and package
+        run: |
+          bash tools/r36s-build.sh
+          bash tools/r36s-package.sh
+      - name: Validate the packages
+        run: |
+          LC_ALL=C aarch64-linux-gnu-readelf -h build/synthcity-aarch64 | grep -E 'Machine:.*AArch64'
+          unzip -t dist/synthcity-arkos.zip
+          tar -tzf dist/synthcity-os-update.tgz
+      - name: Upload R36S packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthcity-core-r36s
+          path: |
+            dist/synthcity-arkos.zip
+            dist/synthcity-os-update.tgz
+          if-no-files-found: error

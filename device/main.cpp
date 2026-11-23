@@ -722,7 +722,7 @@ enum { V_TRACK, V_SONG, V_PROJECT, V_SYSTEM, V_N };
 static const char* VIEWNAME[V_N] = {"TRACK", "SONG", "PROJ", "SYSTEM"};
 enum { TAB_TRIG, TAB_CHRD, TAB_SRC, TAB_FLTR, TAB_AMP, TAB_MIX, TAB_MOD, TAB_INSERT, TAB_N };
 static const char* TABNAME[TAB_N] = {"TRIG", "CHRD", "SRC", "FLTR", "AMP", "MIX", "MOD", "INS"};
-enum { M_NONE, M_MENU, M_SAMPLES, M_HELP, M_KEYS, M_SLICE, M_RECORDER };
+enum { M_NONE, M_MENU, M_SAMPLES, M_HELP, M_KEYS, M_SLICE, M_RECORDER, M_LENGTH };
 static const int FXT = NTRACKS;   // die FX-Spur des Patterns
 
 struct UI {
@@ -989,10 +989,10 @@ static void clearStepLocks() {
 
 // --- Menue (SELECT) -------------------------------------------------------------------------
 enum { MI_SAVE, MI_COPYPAT, MI_PASTEPAT, MI_CLEARPAT, MI_COPYTRK, MI_PASTETRIG, MI_PASTEALL, MI_CLEARTRIG,
-       MI_COPYSTEP, MI_PASTESTEP, MI_LOADSMP, MI_LEN_DN, MI_LEN_UP, MI_SCENE_A, MI_SCENE_B, MI_SCENE_CLR, MI_HELP, MI_SLICE, MI_RECORD, MI_N };
+       MI_COPYSTEP, MI_PASTESTEP, MI_LOADSMP, MI_LENGTH, MI_SCENE_A, MI_SCENE_B, MI_SCENE_CLR, MI_HELP, MI_SLICE, MI_RECORD, MI_N };
 static const char* MENU[MI_N] = {"Save project", "Copy pattern", "Paste pattern", "Clear pattern",
     "Copy track", "Paste trigs", "Paste track (with sound)", "Clear trigs", "Copy step", "Paste step",
-    "Load sample into slot...", "Track length -16", "Track length +16",
+    "Load sample into slot...", "Track length...",
     "Edit scene A (on/off)", "Edit scene B (on/off)", "Clear the scene being edited", "Help", "Sample editor...", "Recorder..."};
 static void openSamples();
 static int smpTargetSlot();
@@ -1013,8 +1013,7 @@ static void menuDo(int i) {
     case MI_COPYSTEP: scClipStep(U.sel, U.cur); toast("Step %d copied", U.cur + 1); return;
     case MI_PASTESTEP: if (!scHasClipStep()) { toast("Nothing copied"); return; } scPasteStep(U.sel, U.cur); toast("Pasted on step %d", U.cur + 1); break;
     case MI_LOADSMP: openSamples(); return;
-    case MI_LEN_DN: scSetTrackLen(U.sel, trackLen() - 16 < 1 ? 1 : trackLen() - 16); toast("Length %d", trackLen()); break;
-    case MI_LEN_UP: scSetTrackLen(U.sel, trackLen() + 16); toast("Length %d", trackLen()); break;
+    case MI_LENGTH: U.modal = M_LENGTH; return;
     case MI_SCENE_A: case MI_SCENE_B: {
         int sc = i - MI_SCENE_A;
         U.scene = U.scene == sc ? -1 : sc;
@@ -1686,7 +1685,24 @@ static void finishTake() {
     toast("Recorded to slot %d", slot + 1);
 }
 
+static void handleLength() {
+    if (IN.pressed(BT_A) || IN.pressed(BT_B) || IN.pressed(BT_SELECT)) {
+        U.modal = M_NONE;
+        return;
+    }
+    int delta = 0;
+    if (IN.repeat(BT_X, U.now)) delta++;
+    if (IN.repeat(BT_Y, U.now)) delta--;
+    if (IN.repeat(BT_RIGHT, U.now)) delta += 16;
+    if (IN.repeat(BT_LEFT, U.now)) delta -= 16;
+    int len = clampi(trackLen() + delta, 1, NSTEPS);
+    if (len == trackLen()) return;
+    scSetTrackLen(U.sel, len);
+    if (U.cur >= len) U.cur = len - 1;
+    touched();
+}
 static void handleModal() {
+    if (U.modal == M_LENGTH) { handleLength(); return; }
     if (U.modal == M_SLICE) { handleSlices(); return; }
     if (U.modal == M_RECORDER) { handleRecorder(); return; }
     if (U.modal == M_KEYS) { handleKeys(); return; }
@@ -2161,6 +2177,15 @@ static void box(int x, int y, int w, int h, const char* title) {
     fill(x, y, w, 24, C_SEL);
     text(x + 10, y + 4, title, C_TXT);
 }
+static void drawLength() {
+    const int w = 350, h = 112, x = (SW - w) / 2, y = (SH - h) / 2;
+    char value[40];
+    snprintf(value, sizeof value, "%d steps", trackLen());
+    box(x, y, w, h, U.sel == FXT ? "FX TRACK LENGTH" : "TRACK LENGTH");
+    textC(SW / 2, y + 32, value, C_TXT);
+    textC(SW / 2, y + 58, "X/Y +/-1    RIGHT/LEFT +/-16", C_DIM);
+    textC(SW / 2, y + 82, "A or B to close", C_DIM);
+}
 static void drawMenu() {
     int w = 340, h = 30 + MI_N * 20 + 8, x = (SW - w) / 2, y = (SH - h) / 2;
     char t[64]; snprintf(t, sizeof t, "MENU - %s", U.sel == FXT ? "FX TRACK" : "TRACK");
@@ -2323,6 +2348,7 @@ static void drawAll() {
     else if (U.modal == M_KEYS) drawKeys();
     else if (U.modal == M_SLICE) drawSlices();
     else if (U.modal == M_RECORDER) drawRecorder();
+    else if (U.modal == M_LENGTH) drawLength();
     if (gExp.on) {
         box(120, 180, 400, 110, "EXPORTING SONG");
         char b[96]; snprintf(b, sizeof b, "%s", gExp.rel);
@@ -2614,6 +2640,19 @@ static int selfTest(const char* shotDir) {
     CHECK(U.modal == M_MENU, "SELECT antippen: Menue");
     shot("07-menu");
     tap(BT_B); CHECK(U.modal == M_NONE, "B: Menue zu");
+    tap(BT_SELECT); U.menuSel = MI_LENGTH; tap(BT_A);
+    CHECK(U.modal == M_LENGTH && trackLen() == 16, "Track length opens from SELECT");
+    tap(BT_X); CHECK(trackLen() == 17, "X adds one step");
+    tap(BT_RIGHT); CHECK(trackLen() == 33, "Right adds sixteen steps");
+    U.cur = 32;
+    tap(BT_Y); CHECK(trackLen() == 32 && U.cur == 31, "Y removes one step and clamps the cursor");
+    tap(BT_LEFT); CHECK(trackLen() == 16, "Left removes sixteen steps");
+    tap(BT_LEFT); tap(BT_Y); CHECK(trackLen() == 1, "Length stops at one step");
+    scSetTrackLen(U.sel, 127);
+    tap(BT_X); tap(BT_RIGHT); CHECK(trackLen() == 128, "Length stops at 128 steps");
+    scSetTrackLen(U.sel, 16);
+    tap(BT_B); CHECK(U.modal == M_NONE, "B closes the track length editor");
+
     for (int i = 0; i < 40; i++) simFrame(1u << BT_SELECT);
     CHECK(U.modal == M_HELP, "SELECT halten: Hilfe");
     shot("08-help");

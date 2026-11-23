@@ -549,6 +549,13 @@ läuft dabei ungerührt weiter.
 Last (x86, ein Kern): 580× Echtzeit mit einer Spur, 33× im schlimmsten Fall mit allen
 32 Stimmen und 32stel-Noten auf acht Spuren — die Effekte laufen dabei mit.
 
+## Builds auf GitHub
+
+Der Workflow **Build Synth City Core** läuft bei Pull Requests und bei Pushes auf `main`.
+Er lässt sich unter **Actions** auch manuell starten. Unter **Artifacts** des Laufs findest
+du die beiden R36S-Pakete `synthcity-arkos.zip` und `synthcity-os-update.tgz` sowie den
+Linux-CLAP-Build und die WebAssembly-Datei.
+
 ## Das Gerät: R36S
 
 Die dritte Hülle liegt in `device/`. Sie bindet die Brücke (`web/bridge.cpp`) direkt ein und
@@ -579,7 +586,8 @@ Gerät und umgekehrt.
 | A halten + X/Y | Lock auf dem Step (auf leerem Step: trigless) · A halten + B: Locks des Steps löschen |
 | B + A | Spur stumm · B + ▲▼ Pattern wechseln (läuft es, wird es vorgemerkt) |
 | START | Play/Stop (in SONG: Song) · B + START: FILL, solange gehalten |
-| SELECT | Menü: kopieren/einfügen (Pattern, Spur, Step), Sample laden, Scene A/B bearbeiten |
+| SELECT | Menü: kopieren/einfügen (Pattern, Spur, Step), Sample laden, Spurlänge, Scene A/B bearbeiten |
+| Track length | X/Y ändern die Länge der gewählten Spur um 1, Rechts/Links um 16 Steps. Bereich 1–128. |
 | rechter Stick ◀▶ | Scene-Crossfader A ↔ B |
 
 **Ansichten** (L2/R2): TRACK, SONG, PROJ, SYSTEM.

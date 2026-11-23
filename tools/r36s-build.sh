@@ -8,7 +8,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 SYSROOT=${SYSROOT:-$PWD/.sysroot}
-MIRROR=http://ports.ubuntu.com/ubuntu-ports
+MIRROR=https://ports.ubuntu.com/ubuntu-ports
 PKGS=(
   pool/main/g/glibc/libc6_2.27-3ubuntu1.6_arm64.deb
   pool/main/g/glibc/libc6-dev_2.27-3ubuntu1.6_arm64.deb
