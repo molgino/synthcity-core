@@ -119,12 +119,19 @@ struct MasterMeter {
 struct MasterChain {
     enum Field { ON, TRIM, LOW, MID, FREQ, HIGH, THRESHOLD, RATIO, ATTACK, RELEASE,
                  MAKEUP, CLIP, LIMIT, CEILING, AB, FIELDS };
+    static constexpr int LOW_HZ = 100, HIGH_HZ = 9000;
     int16_t values[FIELDS] = {};
     float sr = 0, inputTrim = 1, clip = 1, ceiling = 1, gain = 1, release = 1, mix = 0;
     float audPower = 0, dspPower = 0, smooth = 0;
     bool enabled = false;
     StereoInsert compressor;
     MasterBiquad eq[3];
+
+    static void configureEq(MasterBiquad (&bands)[3], float rate, int low, int mid, int freq, int high) {
+        bands[0].eq(LOW_HZ, low, rate, 0);
+        bands[1].eq(freq, mid, rate, 1);
+        bands[2].eq(HIGH_HZ, high, rate, 2);
+    }
 
     static const int* slots() {
         static int index[FIELDS] = {};
@@ -166,9 +173,7 @@ struct MasterChain {
         ceiling = 0.8f * StereoInsert::dbGain(values[CEILING] * 0.1f);
         release = 1 - expf(-1 / (0.08f * rate));
         smooth = 1 - expf(-1 / (0.3f * rate));
-        eq[0].eq(100, values[LOW], rate, 0);
-        eq[1].eq(values[FREQ], values[MID], rate, 1);
-        eq[2].eq(9000, values[HIGH], rate, 2);
+        configureEq(eq, rate, values[LOW], values[MID], values[FREQ], values[HIGH]);
         int16_t p[INSERT_FIELDS] = {};
         p[INS_TYPE] = INS_COMPRESS; p[INS_MIX] = 100; p[INS_TRIM] = values[MAKEUP];
         p[INS_THRESHOLD] = values[THRESHOLD]; p[INS_RATIO] = values[RATIO];

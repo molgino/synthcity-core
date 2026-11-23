@@ -13,6 +13,7 @@
 #include "input.h"
 #include "drm.h"
 #include "midi.h"
+#include "master_eq.h"
 #include "usbaudio.h"
 #include "web.h"
 #include <ifaddrs.h>
@@ -612,6 +613,7 @@ static volatile float gWorkMax = 0;       // laengste Rechenzeit eines Blocks (A
 
 static volatile int gToneLeft = 0;        // Testton: verbleibende Frames
 static double gTonePh = 0;
+static MasterSpectrum gMasterSpectrum;
 static void audioCb(void*, Uint8* stream, int len) {
     float* out = (float*)stream;
     int frames = len / (int)(2 * sizeof(float));
@@ -640,6 +642,7 @@ static void audioCb(void*, Uint8* stream, int len) {
     scRender(out, frames);
     if (two) gHelper.leave();
     gEng.helper = nullptr;                 // ausserhalb des Callbacks (Export) rechnet die Engine allein
+    gMasterSpectrum.capture(out, frames);
     flushOffs(gClock + frames);
     gClock += frames;
     if (gToneLeft > 0) {   // 440 Hz, -12 dB - zeigt, ob der Weg zum Ohr ueberhaupt offen ist
@@ -722,7 +725,7 @@ enum { V_TRACK, V_SONG, V_PROJECT, V_SYSTEM, V_N };
 static const char* VIEWNAME[V_N] = {"TRACK", "SONG", "PROJ", "SYSTEM"};
 enum { TAB_TRIG, TAB_CHRD, TAB_SRC, TAB_FLTR, TAB_AMP, TAB_MIX, TAB_MOD, TAB_INSERT, TAB_N };
 static const char* TABNAME[TAB_N] = {"TRIG", "CHRD", "SRC", "FLTR", "AMP", "MIX", "MOD", "INS"};
-enum { M_NONE, M_MENU, M_SAMPLES, M_HELP, M_KEYS, M_SLICE, M_RECORDER, M_LENGTH, M_PATTERNS, M_SECTIONS, M_VALUE };
+enum { M_NONE, M_MENU, M_SAMPLES, M_HELP, M_KEYS, M_SLICE, M_RECORDER, M_LENGTH, M_PATTERNS, M_SECTIONS, M_VALUE, M_MASTER_EQ };
 static constexpr int PATTERN_COLUMNS = 4;
 static const int FXT = NTRACKS;   // die FX-Spur des Patterns
 
@@ -733,6 +736,8 @@ struct UI {
     bool aHeld = false, aEdited = false;
     int modal = M_NONE, menuSel = 0, smpSel = 0, smpScroll = 0;
     int patternSel = 0, sectionSel = 0;
+    int eqBand = 0;
+    uint32_t eqSpectrumAt = 0;
     int cutAction = 0, cutMarker = 0, cutFrame = 0, cutGrid = 2;
     int recRow = 0, recSource = 0, recLength = 1, recTarget = -1, recLast = -1;
     int recStartMode = 0;
@@ -1136,10 +1141,67 @@ static void openValuePicker(int param) {
     U.modal = M_VALUE;
 }
 
+// --- Master-EQ ------------------------------------------------------------------------------
+static constexpr MasterChain::Field EQ_GAINS[] = {MasterChain::LOW, MasterChain::MID, MasterChain::HIGH};
+static int masterValue(MasterChain::Field field) { return scGet(-1, MasterChain::slots()[field]); }
+static void setMasterValue(MasterChain::Field field, int value) {
+    int slot = MasterChain::slots()[field];
+    const int before = scGet(-1, slot);
+    if (before == value) return;
+    scSet(-1, slot, value);
+    if (scGet(-1, slot) != before) touched();
+}
+static bool eqShortcut(int param) {
+    return U.view == V_TRACK && U.sel == FXT && param >= 0
+        && masterSetting(param) && fxHeading(PARAMS[param].id) == HDR_EQ;
+}
+static void openMasterEq(int param = -1) {
+    if (param >= 0) {
+        int slot = slotOf(param);
+        const int* fields = MasterChain::slots();
+        U.eqBand = slot == fields[MasterChain::LOW] ? 0 : slot == fields[MasterChain::HIGH] ? 2 : 1;
+    }
+    U.aHeld = false;
+    U.eqSpectrumAt = U.now;
+    gMasterSpectrum.reset(true);
+    U.modal = M_MASTER_EQ;
+}
+static void handleMasterEq() {
+    if (IN.pressed(BT_B) || IN.pressed(BT_SELECT)) {
+        gMasterSpectrum.reset(false);
+        U.modal = M_NONE;
+        return;
+    }
+    const int band = IN.pressed(BT_RIGHT) - IN.pressed(BT_LEFT);
+    U.eqBand = clampi(U.eqBand + band, 0, 2);
+    const int frequency = IN.repeat(BT_R1, U.now) - IN.repeat(BT_L1, U.now);
+    if (frequency) {
+        const float step = frequency > 0 ? 1.122462f : 1.0f / 1.122462f; // two semitones
+        const int hz = (int)lroundf(masterValue(MasterChain::FREQ) * step);
+        setMasterValue(MasterChain::FREQ, hz);
+        U.eqBand = 1;
+    }
+    const MasterChain::Field gain = EQ_GAINS[U.eqBand];
+    const int delta = IN.repeat(BT_UP, U.now) - IN.repeat(BT_DOWN, U.now);
+    if (delta) setMasterValue(gain, masterValue(gain) + delta);
+    if (IN.pressed(BT_Y)) setMasterValue(gain, 0);
+    if (IN.pressed(BT_A)) setMasterValue(MasterChain::ON, !masterValue(MasterChain::ON));
+    if (IN.pressed(BT_X)) setMasterValue(MasterChain::AB, !masterValue(MasterChain::AB));
+}
+
+static void togglePlayback() {
+    if (scIsRunning()) { scStop(); if (scSongOn()) scSongStop(); }
+    else if (U.view == V_SONG && scSongN()) {
+        if (U.songRow < scSongN()) scSongSetF(U.songRow, 0, scSongGet(U.songRow, 0));
+        scSongStart(); scStart();
+    }
+    else scStart();
+}
+
 // --- Menue (SELECT) -------------------------------------------------------------------------
-enum { MI_PATTERN, MI_SECTIONS, MI_VALUE, MI_SAVE, MI_COPYPAT, MI_PASTEPAT, MI_CLEARPAT, MI_COPYTRK, MI_PASTETRIG, MI_PASTEALL, MI_CLEARTRIG,
+enum { MI_PATTERN, MI_SECTIONS, MI_VALUE, MI_MASTER_EQ, MI_SAVE, MI_COPYPAT, MI_PASTEPAT, MI_CLEARPAT, MI_COPYTRK, MI_PASTETRIG, MI_PASTEALL, MI_CLEARTRIG,
        MI_COPYSTEP, MI_PASTESTEP, MI_LOADSMP, MI_LENGTH, MI_SCENE_A, MI_SCENE_B, MI_SCENE_CLR, MI_HELP, MI_SLICE, MI_RECORD, MI_N };
-static const char* MENU[MI_N] = {"Select pattern...", "Parameter sections...", "Choose value...", "Save project", "Copy pattern", "Paste pattern", "Clear pattern",
+static const char* MENU[MI_N] = {"Select pattern...", "Parameter sections...", "Choose value...", "Visual Master EQ...", "Save project", "Copy pattern", "Paste pattern", "Clear pattern",
     "Copy track", "Paste trigs", "Paste track (with sound)", "Clear trigs", "Copy step", "Paste step",
     "Load sample into slot...", "Track length...",
     "Edit scene A (on/off)", "Edit scene B (on/off)", "Clear the scene being edited", "Help", "Sample editor...", "Recorder..."};
@@ -1151,6 +1213,7 @@ static void menuDo(int i) {
     switch (i) {
     case MI_PATTERN: openPatterns(); return;
     case MI_SECTIONS: openSections(); return;
+    case MI_MASTER_EQ: openMasterEq(); return;
     case MI_VALUE: {
         int param = curParam();
         if (canPickValue(param)) openValuePicker(param);
@@ -1930,6 +1993,12 @@ static void handleValuePicker() {
     U.modal = M_NONE;
 }
 static void handleModal() {
+    if (U.modal == M_MASTER_EQ) {
+        handleMasterEq();
+        if (U.modal == M_MASTER_EQ && IN.pressed(BT_START)) togglePlayback();
+        if (scIsFill() && !IN.down[BT_START]) scFill(0);
+        return;
+    }
     if (U.modal == M_VALUE) { handleValuePicker(); return; }
     if (U.modal == M_PATTERNS) { handlePatterns(); return; }
     if (U.modal == M_SECTIONS) { handleSections(); return; }
@@ -1976,24 +2045,23 @@ static void handleInput() {
     buildRows();
     // SELECT antippen = Menue, halten = Hilfe solange gehalten
     static bool selUsed = false;
-    if (IN.pressed(BT_SELECT) && U.modal == M_NONE) selUsed = false;
+    if (IN.pressed(BT_SELECT) && (U.modal == M_NONE || U.modal == M_MASTER_EQ))
+        selUsed = U.modal == M_MASTER_EQ;
     if (U.modal != M_NONE) { handleModal(); return; }
     if (U.view == V_TRACK && IN.down[BT_B] && IN.pressed(BT_SELECT) && !U.aHeld) {
         openSections(); selUsed = true; return;
     }
-    if (IN.down[BT_SELECT] && IN.pressed(BT_X) && canPickValue(curParam())) {
-        openValuePicker(curParam()); selUsed = true; return;
+    if (IN.down[BT_SELECT] && IN.pressed(BT_X)) {
+        const int param = curParam();
+        if (eqShortcut(param)) { openMasterEq(param); selUsed = true; return; }
+        if (canPickValue(param)) { openValuePicker(param); selUsed = true; return; }
     }
     if (IN.down[BT_SELECT] && IN.heldMs(BT_SELECT, U.now) > 500) { U.modal = M_HELP; selUsed = true; return; }
     if (IN.released(BT_SELECT) && !selUsed) { U.modal = M_MENU; return; }
     // START: Play/Stop (im Song: Song), B+START gehalten = FILL
     if (IN.pressed(BT_START)) {
         if (IN.down[BT_B]) scFill(1);
-        else if (U.view == V_SONG && scSongN()) {
-            if (scIsRunning()) { scStop(); scSongStop(); }
-            else { if (U.songRow < scSongN()) scSongSetF(U.songRow, 0, scSongGet(U.songRow, 0)); scSongStart(); scStart(); }
-        } else if (scIsRunning()) { scStop(); if (scSongOn()) scSongStop(); }
-        else scStart();
+        else togglePlayback();
     }
     if (scIsFill() && !IN.down[BT_START]) scFill(0);
     // L2/R2: Ansicht, L1/R1: Spur
@@ -2125,6 +2193,7 @@ static void drawList() {
         int p = gRows[r];
         if (p < 0) {
             text(x0 + 4, y + 4, hdrName(p), hue);
+            if (p == HDR_EQ) textR(x0 + w - 8, y + 4, "SELECT+X  GRAPH", C_DIM);
             if (p == HDR_INSERT1 || p == HDR_INSERT2) {
                 int stage = p == HDR_INSERT1 ? 0 : 1;
                 if (scGet(U.sel, insertParamSlot(stage)) == INS_COMPRESS) {
@@ -2409,6 +2478,7 @@ static const char* helpLine() {
     if (U.view == V_SONG) return "X/Y value  A dup row  B+A delete  B+UP/DN move  START play song";
     if (U.view == V_PROJECT) return "UP/DOWN item   X/Y value / browse projects   A action";
     if (U.view == V_SYSTEM) return "UP/DOWN item   X/Y change   A apply / action";
+    if (eqShortcut(curParam())) return "SELECT+X visual EQ   X/Y adjust   B+SELECT sections";
     if (canPickValue(curParam())) return "SELECT+X choose value   X/Y adjust   Hold A for step locks";
     if (U.aHeld) return "A held: X/Y lock value on this step   B clear locks";
     return "X/Y value  A trig / hold to lock  B+UP/DN track  B+SELECT sections";
@@ -2654,10 +2724,116 @@ static void drawHelp() {
     char b[160]; snprintf(b, sizeof b, "files: %s  (projects/, samples/)", gBase);
     text(48, y + 8, b, C_DIM, 68);
 }
+
+static void drawMasterEq() {
+    constexpr uint32_t EQ_COLOR = 0x58e0bd, SPEC_COLOR = 0xa998f7;
+    constexpr uint32_t GRAPH_BG = 0x111419, SPEC_FILL = 0x26213b;
+    constexpr int LEFT = 55, RIGHT = 581, TOP = 106, BOTTOM = 336;
+    constexpr int W = RIGHT - LEFT, H = BOTTOM - TOP;
+    const double maxHz = fmin(20000.0, gRate * 0.5);
+    const double logSpan = log(maxHz / 20.0);
+    auto xOf = [&](double hz) { return LEFT + (int)lround(W * log(hz / 20.0) / logSpan); };
+    auto yOf = [&](double db) { return clampi(TOP + (int)lround((24.0 - db) * H / 48.0), TOP + 1, BOTTOM - 1); };
+    auto segment = [](int x, int y, int prev, uint32_t color) {
+        fill(x, y < prev ? y : prev, 1, abs(y - prev) + 1, color);
+    };
+
+    if (U.now - U.eqSpectrumAt >= 50) {
+        U.eqSpectrumAt = U.now;
+        lockA();
+        const bool ready = gMasterSpectrum.snapshot();
+        unlockA();
+        if (ready) gMasterSpectrum.analyze();
+    }
+    const bool chain = masterValue(MasterChain::ON), dry = masterValue(MasterChain::AB);
+    const bool audible = chain && !dry;
+    const int gains[] = {masterValue(MasterChain::LOW), masterValue(MasterChain::MID), masterValue(MasterChain::HIGH)};
+    const int hz[] = {MasterChain::LOW_HZ, masterValue(MasterChain::FREQ), MasterChain::HIGH_HZ};
+    MasterBiquad bands[3];
+    MasterChain::configureEq(bands, (float)gRate, gains[0], gains[1], hz[1], gains[2]);
+
+    text(22, 43, "MASTER EQ", C_TXT);
+    textR(616, 43, !chain ? "CHAIN OFF" : dry ? "A/B DRY" : "CHAIN ON", audible ? EQ_COLOR : C_LOCK);
+    fill(22, 77, 12, 2, audible ? EQ_COLOR : C_DIM);
+    text(42, 70, "EQ response (dB)", C_TXT);
+    fill(194, 77, 12, 2, SPEC_COLOR);
+    text(214, 70, "Output spectrum (dBFS)", C_TXT);
+    if (!gAudio) textR(616, 70, "Audio output closed", C_DIM);
+    fill(LEFT, TOP, W + 1, H + 1, GRAPH_BG);
+
+    double hzAtX[W + 2];
+    const double ratio = exp(logSpan / W);
+    const float bin = (float)MasterSpectrum::N / gRate;
+    int last = BOTTOM - 1;
+    hzAtX[0] = 20.0;
+    for (int i = 0; i <= W; i++) {
+        hzAtX[i + 1] = hzAtX[i] * ratio;
+        const float db = gMasterSpectrum.db(hzAtX[i] * bin, hzAtX[i + 1] * bin);
+        const int y = clampi(BOTTOM - (int)lroundf((db - MasterSpectrum::FLOOR_DB) * H / -MasterSpectrum::FLOOR_DB), TOP + 1, BOTTOM - 1);
+        if (y < BOTTOM - 1) {
+            fill(LEFT + i, y, 1, BOTTOM - y, SPEC_FILL);
+            segment(LEFT + i, y, last, SPEC_COLOR);
+        }
+        last = y;
+    }
+    char value[40];
+    for (int db = -24; db <= 24; db += 6) {
+        const int y = yOf(db);
+        fill(LEFT, y, W, 1, db ? 0x343643 : 0x596070);
+        snprintf(value, sizeof value, db ? "%+d" : "%d", db);
+        textR(LEFT - 8, y - 8, value, C_DIM);
+        if (db % 12 == 0) {
+            snprintf(value, sizeof value, "%d", (db - 24) * 3 / 2);
+            text(RIGHT + 8, y - 8, value, C_DIM);
+        }
+    }
+    const int ticks[] = {20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000};
+    for (int f : ticks) {
+        if (f > maxHz) break;
+        const int x = xOf(f);
+        fill(x, TOP, 1, H, 0x343643);
+        snprintf(value, sizeof value, f >= 1000 ? "%dk" : "%d", f >= 1000 ? f / 1000 : f);
+        textC(x, BOTTOM + 9, value, C_DIM);
+    }
+    frame(LEFT, TOP, W + 1, H + 1, C_LINE);
+    last = yOf(masterEqResponseDb(bands, 20.0, gRate));
+    for (int i = 0; i <= W; i++) {
+        const int y = yOf(masterEqResponseDb(bands, hzAtX[i], gRate));
+        segment(LEFT + i, y, last, audible ? EQ_COLOR : C_DIM);
+        if (y < BOTTOM - 1) fill(LEFT + i, y + 1, 1, 1, audible ? EQ_COLOR : C_DIM);
+        last = y;
+    }
+    static const char* names[] = {"LOW SHELF", "MID BELL", "HIGH SHELF"};
+    for (int i = 0; i < 3; i++) {
+        const double center = fmin(hz[i], gRate * 0.45);
+        const int x = xOf(center), y = yOf(masterEqResponseDb(bands, center, gRate));
+        const bool selected = U.eqBand == i;
+        const uint32_t accent = selected ? EQ_COLOR : C_DIM;
+        const int radius = selected ? 7 : 5;
+        for (int dy = -radius; dy <= radius; dy++) {
+            const int width = (int)sqrtf((float)(radius * radius - dy * dy));
+            fill(x - width, y + dy, 2 * width + 1, 1, accent);
+        }
+        fill(x - 2, y - 2, 5, 5, GRAPH_BG);
+        const int card = 22 + i * 201;
+        fill(card, 373, 194, 47, selected ? C_SEL : C_PANEL);
+        frame(card, 373, 194, 47, selected ? accent : C_LINE);
+        text(card + 9, 378, names[i], selected ? C_TXT : C_DIM);
+        snprintf(value, sizeof value, "%+d dB", gains[i]);
+        textR(card + 184, 378, value, accent);
+        snprintf(value, sizeof value, "%d Hz", hz[i]);
+        text(card + 9, 398, value, C_TXT);
+    }
+    fill(0, 433, SW, SH - 433, C_PANEL);
+    text(22, 437, "LEFT/RIGHT Band   UP/DOWN Gain   L1/R1 Mid Freq   Y Reset Gain", C_TXT);
+    text(22, 457, "A Chain On/Off    X A/B Dry     START Play/Stop  B Close", C_DIM);
+}
+
 static void drawAll() {
     buildRows();
     fill(0, 0, SW, SH, C_BG);
     drawHeader();
+    if (U.modal == M_MASTER_EQ) { drawMasterEq(); return; }
     drawRail();
     if (U.view == V_TRACK) drawList();
     else if (U.view == V_SONG) drawSong();
@@ -2885,6 +3061,61 @@ static int selfTest(const char* shotDir) {
     for (int i = 0; i < 3; i++) tap(BT_DOWN);
     tap(BT_A);
     CHECK(U.modal == M_NONE && curParam() == pIndex("master.low"), "FX sections jump directly to Master EQ");
+    tap(BT_X, 1u << BT_SELECT); idle();
+    CHECK(U.modal == M_MASTER_EQ && U.eqBand == 0 && gMasterSpectrum.active,
+          "SELECT + X opens the visual EQ on the highlighted band");
+    tap(BT_A);
+    for (int i = 0; i < 5; i++) tap(BT_UP);
+    tap(BT_RIGHT); tap(BT_R1);
+    for (int i = 0; i < 6; i++) tap(BT_DOWN);
+    CHECK(masterValue(MasterChain::ON) && masterValue(MasterChain::LOW) == 5 &&
+          masterValue(MasterChain::MID) == -6 && masterValue(MasterChain::FREQ) == 1122,
+          "Graph controls write the existing master EQ parameters");
+    tap(BT_RIGHT);
+    for (int i = 0; i < 3; i++) tap(BT_UP);
+    tap(BT_START); CHECK(scIsRunning(), "START plays while the graph is open");
+    tap(BT_START); CHECK(!scIsRunning(), "START stops while the graph is open");
+    MasterBiquad checkBands[3];
+    MasterChain::configureEq(checkBands, 48000, 0, -6, 1122, 0);
+    CHECK(fabs(masterEqResponseDb(checkBands, 1122, 48000) + 6) < 0.01,
+          "The graph uses the mastering filter coefficients");
+    {
+        float block[173 * 2];
+        const int fftSize = MasterSpectrum::N;
+        for (int frame = 0; frame < fftSize + 113; frame += 173) {
+            const int frames = clampi(fftSize + 113 - frame, 0, 173);
+            for (int i = 0; i < frames; i++) {
+                const float phase = 6.283185307f * (frame + i) / fftSize;
+                const float tone = 0.25f * sinf(phase * 85);
+                const float lows = 0.12f * sinf(phase * 6) + 0.06f * sinf(phase * 16);
+                const float highs = 0.035f * sinf(phase * 359) + 0.025f * sinf(phase * 892);
+                block[2 * i] = tone + lows + highs;
+                block[2 * i + 1] = -tone + lows + highs;
+            }
+            gMasterSpectrum.capture(block, frames);
+        }
+        CHECK(gMasterSpectrum.snapshot(), "Analyzer reads a complete frame across a ring wrap");
+        gMasterSpectrum.analyze();
+        CHECK(fabsf(gMasterSpectrum.db(85, 85) + 12.0412f) < 0.05f,
+              "Analyzer shows the correct level for a stereo tone in opposite phase");
+        CHECK(gMasterSpectrum.db(130, 130) < -65, "Analyzer keeps an empty frequency bin quiet");
+    }
+    drawAll(); shot("01e-master-eq");
+    tap(BT_X);
+    CHECK(masterValue(MasterChain::AB), "X switches to the existing mastering A/B");
+    tap(BT_X); tap(BT_Y);
+    CHECK(masterValue(MasterChain::HIGH) == 0, "Y resets the selected gain");
+    tap(BT_B);
+    CHECK(U.modal == M_NONE && !gMasterSpectrum.active && masterValue(MasterChain::MID) == -6,
+          "B closes the graph, stops analysis and keeps the edits");
+    tap(BT_SELECT); U.menuSel = MI_MASTER_EQ; tap(BT_A);
+    CHECK(U.modal == M_MASTER_EQ, "The SELECT menu also opens the visual EQ");
+    tap(BT_SELECT);
+    CHECK(U.modal == M_NONE, "SELECT closes the graph without reopening the menu");
+    setMasterValue(MasterChain::ON, 0);
+    setMasterValue(MasterChain::LOW, 0);
+    setMasterValue(MasterChain::MID, 0);
+    setMasterValue(MasterChain::FREQ, 1000);
     tap(BT_DOWN, 1u << BT_B);
     CHECK(U.sel == 0, "B + down wraps from FX to track 1");
     tap(BT_SELECT, 1u << BT_B);
