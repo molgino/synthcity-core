@@ -16,19 +16,13 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - name: Install build dependencies
+      - name: Use the runner's Clang toolchain
         run: |
-          sudo apt-get update
-          sudo apt-get install -y clang lld libsdl2-dev libasound2-dev libdrm-dev
+          clang_dir="$(dirname "$(readlink -f "$(command -v clang-18)")")"
+          test -x "$clang_dir/wasm-ld"
+          echo "$clang_dir" >> "$GITHUB_PATH"
       - name: Build and test Core
-        run: make -j2 test device
-      - name: Run the headless device self-test
-        env:
-          SDL_VIDEODRIVER: dummy
-          SDL_AUDIODRIVER: dummy
-        run: |
-          mkdir -p build/devhome
-          make devtest
+        run: make -j2 test
       - name: Upload CLAP and WebAssembly builds
         uses: actions/upload-artifact@v4
         with:
@@ -37,6 +31,18 @@ jobs:
             build/synthcity.clap
             web/synthcity.wasm
           if-no-files-found: error
+      - name: Install device build dependencies
+        timeout-minutes: 4
+        run: |
+          sudo apt-get -o Acquire::Retries=2 update
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=2 install -y --no-install-recommends libsdl2-dev libasound2-dev libdrm-dev
+      - name: Run the headless device self-test
+        env:
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+        run: |
+          mkdir -p build/devhome
+          make devtest
 
   r36s:
     name: R36S arm64 packages
