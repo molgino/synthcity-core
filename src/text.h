@@ -43,14 +43,14 @@ inline void condText(int v, char* out, int n) {
 }
 // Abstand einer Akkordnote: 0 = aus, sonst Halbtoene um 25 herum, mit dem Namen des Intervalls.
 inline void chordText(int v, char* out, int n) {
-    if (v <= 0) { snprintf(out, n, "OFF"); return; }
-    static const char* iv[12] = {"unison", "min 2nd", "maj 2nd", "min 3rd", "maj 3rd",
+    if (v <= CHORD_OFF) { snprintf(out, n, "OFF"); return; }
+    if (v == CHORD_UNISON) { snprintf(out, n, "0"); return; }
+    static const char* iv[12] = {"octave", "min 2nd", "maj 2nd", "min 3rd", "maj 3rd",
                                  "4th", "tritone", "5th", "min 6th", "maj 6th",
                                  "min 7th", "maj 7th"};
-    int d = v - 25;
+    int d = v - CHORD_UNISON;
     int a = d < 0 ? -d : d;
-    if (a == 12 || a == 24) snprintf(out, n, "%+d octave", d);
-    else                    snprintf(out, n, "%+d %s", d, iv[a % 12]);
+    snprintf(out, n, "%+d %s", d, iv[a % 12]);
 }
 inline const char* vmodeName(int v) {
     static const char* n[] = {"POLY", "MONO", "LEGATO"};
@@ -259,7 +259,7 @@ inline void paramText(const ParamDef& d, float v, char* out, int n, int mach = -
         if (v > 126.5f) snprintf(out, n, "OPEN"); else snprintf(out, n, "%.1f oct", (double)(v * 10.0f / 127.0f)); return;
     }
     if (!strcmp(d.id, "trk.flt.type")) { snprintf(out, n, "%s", fltTypeName((int)(v + 0.5f))); return; }
-    if (!strncmp(d.id, "trk.nt", 6))    { chordText((int)(v + 0.5f), out, n); return; }
+    if (isChordParam(d))                { chordText((int)(v + 0.5f), out, n); return; }
     if (!strcmp(d.id, "trk.vmode"))     { snprintf(out, n, "%s", vmodeName((int)(v + 0.5f))); return; }
     if (!strncmp(d.id, "trk.lfo", 7) || !strncmp(d.id, "trk.menv.", 9)) {
         const char* f = modField(d.id);

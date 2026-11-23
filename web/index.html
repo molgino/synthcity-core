@@ -162,6 +162,10 @@ button:focus-visible { outline: 2px solid var(--ok); outline-offset: 2px; }
 .row .bar {
   position: absolute; left: 0; bottom: 0; height: 2px; background: var(--dim); transition: width .05s linear;
 }
+.row.bipolar::after {
+  content: ''; position: absolute; left: 50%; bottom: 0; height: 5px; width: 1px;
+  background: var(--line); pointer-events: none;
+}
 .row.locked .bar { background: var(--lock); }
 .row .nm { font-size: 12px; font-weight: 600; letter-spacing: .06em; }
 .row .nm small { display: block; font-weight: 400; letter-spacing: 0; color: var(--dim); font-size: 10px; font-family: var(--mono); }
@@ -622,13 +626,17 @@ const machOf = t => t >= FXT ? 0 : X.scGet(t, P.find(p => p.id === 'trk.machine'
 // Folgt die gewaehlte Spur einer Tonart? Dann zaehlen Akkordnoten in Stufen der Leiter.
 const tonartAn = () => sel < FXT && X.scPatScale(X.scPattern()) > 0 && X.scGet(sel, P.find(q => q.id === 'trk.quant').slot) > 0;
 const STUFE = ['root', '2nd', '3rd', '4th', '5th', '6th', '7th'];
+const CHORD_UNISON = 25; // Encoded center in the project and Core.
+const isChordParam = p => /^trk\.nt[234]$/.test(p.id);
 const ptext = (p, v) => {
-  if (/^trk\.nt[234]$/.test(p.id) && tonartAn()) {
+  if (isChordParam(p) && tonartAn()) {
     if (v <= 0) return 'OFF';
-    const d = v - 25, np = P.find(q => q.id === 'trk.note');
+    const d = v - CHORD_UNISON, np = P.find(q => q.id === 'trk.note');
     const ziel = X.scScaleDeg(valueOf(np).v, d), n = X.scScaleSize(), a = Math.abs(d);
-    const name = a % n === 0 ? (a ? (a / n) + ' oct' : 'unison') : (n === 7 ? STUFE[a % 7] : a + ' deg');
-    return (d > 0 ? '+' : d < 0 ? '\u2212' : '\u00b1') + a + ' ' + name + ' \u00b7 ' + str(X.scParamText(np.i, ziel, -1));
+    const note = str(X.scParamText(np.i, ziel, -1));
+    if (d === 0) return '0 \u00b7 ' + note;
+    const name = a % n === 0 ? (a / n) + ' oct' : (n === 7 ? STUFE[a % 7] : a + ' deg');
+    return (d > 0 ? '+' : '\u2212') + a + ' ' + name + ' \u00b7 ' + note;
   }
   if (p.id === 'trk.smp') return X.scSmpFrames(v) ? str(X.scSmpName(v)) : (v + 1) + '  empty';
   // Liegt die Note nicht in der Tonart, sagt die Anzeige, wohin sie einrastet.
@@ -1055,6 +1063,7 @@ function buildParams() {
     }
     const row = document.createElement('div');
     row.className = 'row' + (X.scEnumCount(p.i) || p.id === 'trk.smp' || knobSteps(p) ? ' pick' : '');
+    if (isChordParam(p)) row.classList.add('bipolar');
     row.innerHTML = `<div class="nm">${rowName(p)}<small>${p.id}</small></div>
                      <div style="display:flex;align-items:center"><span class="v"></span></div>
                      <div class="bar"></div>`;
@@ -1236,7 +1245,7 @@ function openChords() {
     list.appendChild(h);
   }
   for (const [name, iv] of liste) {
-    const vals = [0, 1, 2].map(i => i < iv.length ? 25 + iv[i] : 0);
+    const vals = [0, 1, 2].map(i => i < iv.length ? CHORD_UNISON + iv[i] : 0);
     const b = document.createElement('button');
     b.className = vals.join(',') === cur ? 'cur' : '';
     const info = iv.length ? iv.map(x => (x > 0 ? '+' : '') + x).join(' ') + (stufen ? ' deg' : '') : '';
@@ -1289,7 +1298,7 @@ function openFine(o) {
     const schritt = () => {
       const jetzt = fine.get();
       // Eine Akkordnote, die aus ist, beginnt beim Antippen am Grundton (+-0) und geht von dort.
-      const neu = (fine.ausBei0 && jetzt === 0) ? 25 + d
+      const neu = (fine.chord && jetzt === 0) ? CHORD_UNISON + d
                 : (fine.stufe && Math.abs(d) === 1) ? X.scScaleStep(jetzt, d) : jetzt + d;
       fine.set(Math.max(fine.lo, Math.min(fine.hi, neu))); fineShow();
     };
@@ -1313,7 +1322,7 @@ el('fineReset').onclick = () => { if (fine && fine.reset) { fine.reset(); fineSh
 
 function openFineParam(p) {
   const istNote = p.id === 'trk.note';
-  const istNt = p.id.startsWith('trk.nt');
+  const istNt = isChordParam(p);
   const qSlot = P.find(q => q.id === 'trk.quant').slot;
   const stufen = istNote && X.scPatScale(X.scPattern()) > 0 && X.scGet(sel, qSlot) > 0;
   const projekt = p.scope !== 1;
@@ -1322,7 +1331,7 @@ function openFineParam(p) {
   openFine({
     title: rowName(p) + (sceneMode ? '  \u00b7  SCENE ' + 'AB'[sceneEdit]
                                    : lockMode ? '  \u00b7  LOCK STEP ' + (lockStep + 1) : '') + '   ' + p.id,
-    lo: p.lo, hi: p.hi,
+    lo: istNt ? p.lo + 1 : p.lo, hi: p.hi,
     get: () => valueOf(p).v,
     set: v => writeValue(p, v),
     text: v => ptext(p, v),
@@ -1333,12 +1342,11 @@ function openFineParam(p) {
                    : [['\u221210', -10], ['\u22121', -1], ['+1', 1], ['+10', 10]],
     // In einer Tonart heisst "eine hoeher" die naechste Stufe der Leiter, nicht der naechste Halbton.
     stufe: istNote && stufen,
-    ausBei0: istNt,
+    chord: istNt,
     hint: istNote ? (stufen ? 'One step is one scale degree in ' + str(X.scNoteName(X.scPatRoot(X.scPattern()))) + ' '
                               + str(X.scScaleName(X.scPatScale(X.scPattern()))).toLowerCase() + '.'
                             : 'One step is one semitone.')
-        : istNt ? (tonartAn() ? 'In key: one step is one scale degree (+2 = the 3rd, +4 = the 5th of the key).'
-                         : 'Interval to NOTE in semitones. With a key and KEY on, it counts scale degrees.') : '',
+        : istNt ? ((tonartAn() ? 'Interval in scale degrees.' : 'Interval in semitones.') + ' 0 doubles NOTE.') : '',
     resetLabel: sceneMode ? 'CLEAR SCENE VALUE' : lockMode ? 'CLEAR LOCK' : istNt ? 'OFF' : 'DEFAULT',
     reset: () => {
       if (sceneMode) cmd('scSceneClear', sceneEdit, sel, p.slot);
@@ -1356,6 +1364,7 @@ function dragRow(row, p) {
     if (e.target.classList.contains('x')) return;
     id = e.pointerId; x0 = e.clientX; y0 = e.clientY; mode = 0;
     start = valueOf(p).v;
+    if (isChordParam(p) && start === 0) start = CHORD_UNISON;
   }, {passive: true});
   row.addEventListener('pointermove', e => {
     if (id === null || e.pointerId !== id) return;
@@ -1367,7 +1376,8 @@ function dragRow(row, p) {
     }
     if (mode !== 1) return;
     e.preventDefault();
-    writeValue(p, start + (dx / 180) * (p.hi - p.lo));
+    const lo = isChordParam(p) ? p.lo + 1 : p.lo;
+    writeValue(p, Math.max(lo, start + (dx / 180) * (p.hi - lo)));
     paint();
   });
   const end = e => {
@@ -1446,7 +1456,12 @@ function paint() {
     } else if (!scene && xs) xs.remove();
     row.querySelector('.v').textContent = ptext(p, v);
     row.querySelector('.nm').firstChild.textContent = rowName(p);
-    row.querySelector('.bar').style.width = ((v - p.lo) / (p.hi - p.lo) * 100) + '%';
+    const bar = row.querySelector('.bar');
+    if (isChordParam(p)) {
+      const offset = v > 0 ? (v - CHORD_UNISON) / (p.hi - CHORD_UNISON) * 50 : 0;
+      bar.style.left = (50 + Math.min(offset, 0)) + '%';
+      bar.style.width = v === CHORD_UNISON ? '2px' : Math.abs(offset) + '%';
+    } else bar.style.width = ((v - p.lo) / (p.hi - p.lo) * 100) + '%';
     let x = row.querySelector('.x');
     if (locked && !x) {
       x = document.createElement('span');

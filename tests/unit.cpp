@@ -45,6 +45,16 @@ static void testDoc() {
     static Project Q; projectFromDoc(d2, Q);
     CHECK(Q.g[paramSlot(paramFind("bpm"))] == 137, "Tempo nicht wiederhergestellt (%d)", Q.g[paramSlot(paramFind("bpm"))]);
     CHECK(Q.pat[0].t[0].p[paramSlot(paramFind("trk.flt.freq"))] == 90, "Spurwert nicht wiederhergestellt");
+    const int sustain = paramSlot(paramFind("trk.amp.sus"));
+    CHECK(tr.p[sustain] == 100 && Q.pat[0].t[0].p[sustain] == 100, "0 dB sustain survives a new project round trip");
+    static Doc legacy;
+    legacy.set("pat.0.used", 1);
+    legacy.set("pat.0.trk.1.amp.sus", 63);
+    static Project fromLegacy;
+    projectFromDoc(legacy, fromLegacy);
+    CHECK(fromLegacy.pat[0].t[0].p[sustain] == 0 && fromLegacy.pat[0].t[1].p[sustain] == 63,
+          "legacy sustain defaults and stored values are preserved");
+    CHECK(fromLegacy.pat[1].t[0].p[sustain] == 100, "unused patterns keep the new sustain default");
     const Lock* l = Q.pat[0].t[0].s[4].findLock(paramSlot(paramFind("trk.flt.freq")));
     CHECK(l && l->val == 20 && l->slide == 1, "Lock mit Slide nicht wiederhergestellt");
     CHECK(Q.pat[0].t[0].s[8].on == 2, "trigless Step nicht wiederhergestellt");

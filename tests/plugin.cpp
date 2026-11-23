@@ -178,6 +178,14 @@ int main(int argc, char** argv) {
         clap_id note = idOf(pa, p, "NOTE");
         chk(note != CLAP_INVALID_ID && pa->value_to_text(p, note, 69, buf, sizeof buf)
             && !strcmp(buf, "A4"), "Note 69 heisst nicht A4");
+        double value = -1;
+        const clap_id chord = idOf(pa, p, "NT2");
+        chk(chord != CLAP_INVALID_ID && pa->text_to_value(p, chord, "0", &value) && value == CHORD_UNISON
+            && pa->value_to_text(p, chord, value, buf, sizeof buf) && !strcmp(buf, "0"),
+            "Chord zero enters and displays unison");
+        chk(pa->text_to_value(p, chord, "-5", &value) && value == CHORD_UNISON - 5
+            && pa->text_to_value(p, chord, "OFF", &value) && value == CHORD_OFF,
+            "Signed chord intervals and OFF enter distinct values");
     }
 
     grp("Zustand IST das Dokument");

@@ -938,16 +938,20 @@ static const char* valueText(int p, int v) {
     }
     int pat = scPattern();
     bool key = U.sel < FXT && scPatScale(pat) > 0 && scGet(U.sel, slotOf(P_QUANT)) > 0;
-    if (key && (!strcmp(d.id, "trk.nt2") || !strcmp(d.id, "trk.nt3") || !strcmp(d.id, "trk.nt4"))) {
-        if (v <= 0) return "OFF";
-        int deg = v - 25, a = deg < 0 ? -deg : deg, n = scScaleSize();
+    if (key && isChordParam(d)) {
+        if (v <= CHORD_OFF) return "OFF";
+        int deg = v - CHORD_UNISON, a = abs(deg), n = scScaleSize();
         int target = scScaleDeg(baseValue(P_NOTE), deg);
+        if (!deg) {
+            snprintf(b, sizeof b, "0 %s", scParamText(P_NOTE, (float)target, -1));
+            return b;
+        }
         static const char* ST[7] = {"root", "2nd", "3rd", "4th", "5th", "6th", "7th"};
         char nm[24];
-        if (a % n == 0) snprintf(nm, sizeof nm, a ? "%d oct" : "unison", a / n);
+        if (a % n == 0) snprintf(nm, sizeof nm, "%d oct", a / n);
         else if (n == 7) snprintf(nm, sizeof nm, "%s", ST[a % 7]);
         else snprintf(nm, sizeof nm, "%d deg", a);
-        snprintf(b, sizeof b, "%c%d %s %s", deg > 0 ? '+' : deg < 0 ? '-' : ' ', a, nm, scParamText(P_NOTE, (float)target, -1));
+        snprintf(b, sizeof b, "%+d %s %s", deg, nm, scParamText(P_NOTE, (float)target, -1));
         return b;
     }
     if (p == P_NOTE && key && !scScaleHas(v)) {
@@ -997,6 +1001,10 @@ static int stepValue(int p, int v, int dir, bool coarse) {
     }
     int span = d.hi - d.lo;
     int step = coarse ? (span > 32 ? span / 16 : 4) : 1;
+    if (isChordParam(d)) {
+        const int start = v == CHORD_OFF ? CHORD_UNISON : v;
+        return clampi(start + dir * step, CHORD_UNISON - CHORD_RANGE, CHORD_UNISON + CHORD_RANGE);
+    }
     return clampi(v + dir * step, d.lo, d.hi);
 }
 static void editParam(int p, int dir, bool coarse) {
@@ -1113,7 +1121,7 @@ static ValuePicker gValuePick;
 
 static bool canPickValue(int p) {
     return U.view == V_TRACK && U.sel < FXT && p >= 0
-        && (PARAMS[p].kind == PK_COND || isModDestination(PARAMS[p]));
+        && (PARAMS[p].kind == PK_COND || isModDestination(PARAMS[p]) || isChordParam(PARAMS[p]));
 }
 static int destinationGroup(int value) {
     if (!value) return 0;
@@ -1158,6 +1166,19 @@ static void buildDestinationValues() {
         finishValueGroup(labels[group], begin);
     }
 }
+static void buildChordValues() {
+    auto& p = gValuePick;
+    int begin = p.nValues;
+    for (int i = 1; i <= CHORD_RANGE; i++) p.values[p.nValues++] = CHORD_UNISON - i;
+    finishValueGroup("Negative", begin);
+    begin = p.nValues;
+    p.values[p.nValues++] = CHORD_OFF;
+    p.values[p.nValues++] = CHORD_UNISON;
+    finishValueGroup("Off / zero", begin);
+    begin = p.nValues;
+    for (int i = 1; i <= CHORD_RANGE; i++) p.values[p.nValues++] = CHORD_UNISON + i;
+    finishValueGroup("Positive", begin);
+}
 static int valueInScope() {
     int p = gValuePick.param;
     int value = gValuePick.step ? lockValue(p, U.cur) : sceneValue(p);
@@ -1181,6 +1202,7 @@ static void openValuePicker(int param) {
     p.step = U.aHeld;
     U.aHeld = false;
     if (PARAMS[param].kind == PK_COND) buildConditionValues();
+    else if (isChordParam(PARAMS[param])) buildChordValues();
     else buildDestinationValues();
     focusPickedValue(valueInScope());
     U.modal = M_VALUE;
@@ -1273,7 +1295,7 @@ static void menuDo(int i) {
     case MI_VALUE: {
         int param = curParam();
         if (canPickValue(param)) openValuePicker(param);
-        else toast("Select Condition or a modulation destination first");
+        else toast("Select Condition, a chord note or a modulation destination");
         return;
     }
     case MI_SAVE: { bool ok = prjSave();
@@ -2262,6 +2284,15 @@ static void drawRail() {
         if (mute) text(RAIL_W - 18, y + 1, "M", C_REC);
     }
 }
+static void drawChordBar(int x, int y, int w, int h, int value, uint32_t color) {
+    const int middle = x + w / 2;
+    fill(x, y, w, h, C_LINE);
+    fill(middle, y - 1, 1, h + 2, C_FAINT);
+    if (value == CHORD_OFF) return;
+    const int offset = clampi(value - CHORD_UNISON, -CHORD_RANGE, CHORD_RANGE);
+    const int length = abs(offset) * (w / 2) / CHORD_RANGE;
+    fill(offset < 0 ? middle - length : middle, y, length > 0 ? length : 1, h, color);
+}
 static void drawList() {
     int x0 = LIST_X, w = SW - x0 - 4, y = HEAD_H + 4;
     fill(x0 - 2, HEAD_H, SW - x0 + 2, STEPS_Y - HEAD_H - 4, C_BG);
@@ -2330,7 +2361,8 @@ static void drawList() {
         // Balken: wo der Wert im Bereich steht
         const ParamDef& d = PARAMS[p];
         int bw = 70, bx = x0 + w - bw - 8;
-        if (d.hi > d.lo && !scEnumCount(p)) {
+        if (isChordParam(d)) drawChordBar(bx, y + 9, bw, 3, base, s ? hue : C_DIM);
+        else if (d.hi > d.lo && !scEnumCount(p)) {
             fill(bx, y + 9, bw, 3, C_LINE);
             fill(bx, y + 9, (base - d.lo) * bw / (d.hi - d.lo), 3, s ? hue : C_DIM);
         }
@@ -2381,7 +2413,9 @@ static void drawSteps() {
         if (cp >= 0 && lockable(cp)) {
             int lv = lockValue(cp, s);
             const ParamDef& d = PARAMS[cp];
-            if (lv != -32768 && d.hi > d.lo) {
+            if (lv != -32768 && isChordParam(d)) {
+                drawChordBar(x + 3, y + 26, cw - 10, 5, lv, C_LOCK);
+            } else if (lv != -32768 && d.hi > d.lo) {
                 int bw = (lv - d.lo) * (cw - 10) / (d.hi - d.lo);
                 fill(x + 3, y + 26, cw - 10, 5, C_LINE);
                 fill(x + 3, y + 26, bw < 1 ? 1 : bw, 5, C_LOCK);
@@ -3312,6 +3346,27 @@ static int selfTest(const char* shotDir) {
             if (gRows[row] == param) { rowSelRef() = row; break; }
         return param;
     };
+    const int nt2 = selectParam(TAB_CHRD, "trk.nt2");
+    CHECK(baseValue(pIndex("trk.amp.sus")) == 100, "A new sound starts with 0 dB sustain");
+    tap(BT_X);
+    CHECK(baseValue(nt2) == CHORD_UNISON + 1, "NT2 X starts at +1 from OFF");
+    tap(BT_Y);
+    CHECK(baseValue(nt2) == CHORD_UNISON && !strcmp(valueText(nt2, baseValue(nt2)), "0"),
+          "NT2 zero is unison");
+    tap(BT_Y);
+    CHECK(baseValue(nt2) == CHORD_UNISON - 1 && stepValue(nt2, CHORD_OFF, -1, false) == baseValue(nt2),
+          "NT2 Y starts at -1 and crosses the center");
+    tap(BT_X, 1u << BT_SELECT);
+    idle();
+    CHECK(U.modal == M_VALUE && gValuePick.nGroups == 3, "NT2 opens the bipolar value picker");
+    tap(BT_RIGHT);
+    tap(BT_A);
+    CHECK(baseValue(nt2) == CHORD_OFF, "The chord picker turns a voice off");
+    tap(BT_Y, 1u << BT_A);
+    idle();
+    CHECK(baseValue(nt2) == CHORD_OFF && lockValue(nt2, 0) == CHORD_UNISON - 1,
+          "Chord step locks start from the center too");
+    clearStepLocks();
     selectParam(TAB_FLTR, "trk.flt.atk");
     tap(BT_X, 1u << BT_SELECT); idle();
     CHECK(U.modal == M_DETAIL && gDetail.kind == DETAIL_FILTER, "SELECT + X opens the filter envelope");

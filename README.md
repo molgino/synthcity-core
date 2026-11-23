@@ -103,7 +103,10 @@ Leiter in allen zwölf Tonarten, dass Einrasten nie einen Ton außerhalb liefert
 ## Polyphone Spuren: Akkorde und Stimmen
 
 Eine polyphone Machine allein macht noch keine polyphone Spur: ein Step spielte genau eine Note.
-Jetzt hat jede Spur drei **Akkordnoten NT2–NT4** — Abstände zur NOTE in Halbtönen, ±24, oder AUS.
+Jede Spur hat drei **Akkordnoten NT2–NT4** mit Abständen von −24 bis +24 Halbtönen zur NOTE.
+**0** bedeutet Unisono, **OFF** schaltet die Zusatzstimme ab. Am R36S führt **X** von OFF
+direkt zu +1 und **Y** zu −1. **SELECT + X** öffnet die Auswahl mit OFF, 0 und den Intervallen
+in beide Richtungen.
 Sie sind gewöhnliche Werte: als Grundwert gelten sie für die ganze Spur, als **Lock** nur für
 einen Step — so spielt jeder Step einen anderen Akkord. Mit **SKALA an** rasten auch die
 Akkordnoten in die Tonart ein; aus „Dur" wird auf der II. Stufe von C-Dur von selbst ein
@@ -589,7 +592,7 @@ Gerät und umgekehrt.
 | B + A | Spur stumm |
 | SELECT → Select pattern | Alle 16 Patterns im Raster. Steuerkreuz wählt, A bestätigt und B schließt. Bei Wiedergabe wartet der Wechsel bis zur Pattern-Grenze. |
 | B + SELECT | Direkt zu einem Parameterbereich springen, etwa LFO 2, Insert 2 oder Master EQ. Auch im SELECT-Menü unter Parameter sections. |
-| SELECT + X | Am Condition- oder DEST-Regler die Werteliste öffnen. Links/rechts wechselt die Gruppe, hoch/runter den Wert, L1/R1 die Seite. X wechselt zwischen Grundwert und Step-Lock. A übernimmt, B schließt die Auswahl. Auch unter SELECT → Choose value. |
+| SELECT + X | Bei Condition, DEST oder NT2–NT4 die Werteliste öffnen. Links/rechts wechselt die Gruppe, hoch/runter den Wert, L1/R1 die Seite. X wechselt zwischen Grundwert und Step-Lock. A übernimmt, B schließt die Auswahl. Auch unter SELECT → Choose value. |
 | START | Play/Stop (in SONG: Song) · B + START: FILL, solange gehalten |
 | SELECT | Menü: Pattern-Auswahl, Parameterbereiche, kopieren/einfügen (Pattern, Spur, Step), Sample laden, Spurlänge, Scene A/B bearbeiten |
 | Track length | X/Y ändern die Länge der gewählten Spur um 1, Rechts/Links um 16 Steps. Bereich 1–128. |
@@ -739,6 +742,9 @@ Beide FX-LFOs haben Wellenform, synchronisierten Notenwert oder freie Rate in Hz
 bipolare Tiefe und eigene Ziele auf den beiden Sends. Die FX-Spur kann ihre Werte pro Step locken.
 
 ## Filter-Envelope, POLY und FM
+
+Neue Sounds starten im **AMP**-Reiter mit **Sustain auf 0 dB**. Beim Laden bleibt das
+Sustain-Verhalten gespeicherter Sounds erhalten.
 
 Im **FLTR**-Reiter schaltet **ENV SOURCE** zwischen Amp-Link und eigenem Filter-ADSR um.
 **ENV** legt Betrag und Richtung der Cutoff-Modulation fest. Der Filter-ADSR folgt dem Notengate.

@@ -853,9 +853,9 @@ struct Engine : Sink {
         if (mode == 0)
             for (int c = 0; c < 3; c++) {
                 int o = (int)(snap[sNt[c]] + 0.5f);
-                if (o <= 0) continue;
-                int nt = rastet ? scaleDegrees((int)(snap[sNote] + 0.5f), o - 25, ptq.root, ptq.scale)
-                                : (int)(snap[sNote] + 0.5f) + (o - 25);
+                if (o <= CHORD_OFF) continue;
+                int nt = rastet ? scaleDegrees((int)(snap[sNote] + 0.5f), o - CHORD_UNISON, ptq.root, ptq.scale)
+                                : (int)(snap[sNote] + 0.5f) + (o - CHORD_UNISON);
                 if (nt < 0 || nt > 127) continue;
                 noten[nNoten++] = (float)nt;
             }

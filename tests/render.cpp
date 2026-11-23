@@ -51,6 +51,17 @@ int main() {
     printf("Klang-Tests\n");
     static Engine e;
 
+    grp("New sounds sustain for the note gate");
+    {
+        e.prepare(48000);
+        setupBeat(e);
+        e.P.pat[0].t[0].p[SL("trk.len")] = LEN_INF;
+        float* audio = buf(22000);
+        e.start();
+        e.render(audio, 22000);
+        chk(rms(audio + 36000, 4000) > 0.05f, "A new track sustains after decay until note-off");
+    }
+
     grp("Ohne Start bleibt es still");
     {
         e.prepare(48000.0f); setupBeat(e);
@@ -623,7 +634,7 @@ int main() {
         projectInit(e.P); e.P.pat[0].used = 1;
         Track& t = e.P.pat[0].t[0];
         t.len = 16; t.speed = 4;
-        t.p[SL("trk.note")] = 57; t.p[SL("trk.amp.dec")] = 40;
+        t.p[SL("trk.note")] = 57; t.p[SL("trk.amp.dec")] = 40; t.p[SL("trk.amp.sus")] = 0;
         t.p[SL("trk.send.b")] = 110;
         t.s[0].on = 1;
         e.P.g[SL("fx.b.dec")] = 120;
@@ -637,7 +648,8 @@ int main() {
             e.prepare(48000.0f);
             projectInit(e.P); e.P.pat[0].used = 1;
             Track& h = e.P.pat[0].t[0];
-            h.p[SL("trk.note")] = 57; h.p[SL("trk.amp.dec")] = 40; h.p[SL("trk.send.b")] = 110;
+            h.p[SL("trk.note")] = 57; h.p[SL("trk.amp.dec")] = 40; h.p[SL("trk.amp.sus")] = 0;
+            h.p[SL("trk.send.b")] = 110;
             h.s[0].on = 1;
             e.P.g[SL("fx.b.dec")] = (int16_t)dec; e.P.g[SL("fx.b.damp")] = (int16_t)damp;
             e.start(); e.render(hall, 72000);
@@ -1917,12 +1929,14 @@ int main() {
         t0.len = 16; t0.speed = 4;
         t0.p[SL("trk.note")] = 45; t0.p[SL("trk.flt.freq")] = 60;
         t0.p[SL("trk.flt.env")] = 96; t0.p[SL("trk.amp.dec")] = 55;
+        t0.p[SL("trk.amp.sus")] = 0;
         for (int s = 0; s < 16; s += 4) t0.s[s].on = 1;
         t0.s[8].setLock(SL("trk.note"), 57);
         Track& t1 = e.P.pat[0].t[1];
         t1.len = 12; t1.speed = 4;                   // Polymetrik gegen die Vier
         t1.p[SL("trk.note")] = 69; t1.p[SL("trk.src.b")] = 100;
         t1.p[SL("trk.amp.dec")] = 30; t1.p[SL("trk.vol")] = 85;
+        t1.p[SL("trk.amp.sus")] = 0;
         for (int s = 2; s < 12; s += 3) t1.s[s].on = 1;
         e.start(); e.render(b, N);
 

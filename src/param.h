@@ -26,6 +26,7 @@ struct ParamDef {
 };
 
 enum { VOICE_PARAM_CAP = 112, TRACK_PARAM_CAP = 160, GLOBAL_PARAM_CAP = 128, INSERT_STAGES = 2 };
+enum { CHORD_OFF = 0, CHORD_UNISON = 25, CHORD_RANGE = 24 };
 enum InsertType { INS_OFF, INS_CRUSH, INS_COMPRESS, INS_CHORUS, INS_CLIP, INS_TYPE_COUNT };
 enum ClipShape { CLIP_HARD, CLIP_CUBIC, CLIP_TANH, CLIP_ATAN, CLIP_SHAPES };
 enum EqShape { EQ_OFF, EQ_BELL, EQ_LOW_SHELF, EQ_HIGH_SHELF, EQ_LOW_PASS, EQ_LOW_PASS_24,
@@ -124,9 +125,9 @@ static constexpr ParamDef PARAMS[] = {
     {"trk.quant",    "KEY",    PS_TRACK,  PK_ONOFF,   0,   1,   1, "",    PF_LOCK},
     // --- Spur: Akkord und Stimmen ---
     // Akkordnoten als Abstand zur NOTE in Halbtoenen: 0 = aus, 1..49 = -24..+24 (25 = gleiche Note).
-    {"trk.nt2",      "NT2",    PS_TRACK,  PK_NUM,     0,  49,   0, "",    PF_LOCK},
-    {"trk.nt3",      "NT3",    PS_TRACK,  PK_NUM,     0,  49,   0, "",    PF_LOCK},
-    {"trk.nt4",      "NT4",    PS_TRACK,  PK_NUM,     0,  49,   0, "",    PF_LOCK},
+    {"trk.nt2",      "NT2",    PS_TRACK,  PK_NUM, CHORD_OFF, CHORD_UNISON + CHORD_RANGE, CHORD_OFF, "", PF_LOCK},
+    {"trk.nt3",      "NT3",    PS_TRACK,  PK_NUM, CHORD_OFF, CHORD_UNISON + CHORD_RANGE, CHORD_OFF, "", PF_LOCK},
+    {"trk.nt4",      "NT4",    PS_TRACK,  PK_NUM, CHORD_OFF, CHORD_UNISON + CHORD_RANGE, CHORD_OFF, "", PF_LOCK},
     {"trk.vmode",    "VOICES",PS_TRACK,  PK_ENUM,    0,   2,   0, "",    0},
     // --- Spur: Quelle ---
     {"trk.machine",  "ENGINE", PS_TRACK,  PK_ENUM,    0,  15,   0, "",    0},
@@ -150,7 +151,7 @@ static constexpr ParamDef PARAMS[] = {
     // --- Spur: Huellkurve und Ausgang ---
     {"trk.amp.atk",  "ATK",    PS_TRACK,  PK_TIME,    0, 127,   0, "s",   PF_LOCK | PF_MOD},
     {"trk.amp.dec",  "DEC",    PS_TRACK,  PK_TIME,    0, 127,  71, "s",   PF_LOCK | PF_MOD},
-    {"trk.amp.sus",  "SUS",    PS_TRACK,  PK_LEVEL,   0, 127,   0, "dB",  PF_LOCK | PF_MOD},
+    {"trk.amp.sus",  "SUS",    PS_TRACK,  PK_LEVEL,   0, 127, 100, "dB",  PF_LOCK | PF_MOD},
     {"trk.amp.rel",  "REL",    PS_TRACK,  PK_TIME,    0, 127,  40, "s",   PF_LOCK | PF_MOD},
     {"trk.vol",      "VOL",    PS_TRACK,  PK_LEVEL,   0, 127, 100, "dB",  PF_LOCK | PF_MOD},
     {"trk.pan",      "PAN",    PS_TRACK,  PK_BIP,     0, 127,  64, "",    PF_LOCK | PF_MOD},
@@ -305,6 +306,7 @@ inline int paramOfSlot(PScope s, int slot) {
 }
 
 inline int clampParam(int p, int v) { return v < PARAMS[p].lo ? PARAMS[p].lo : v > PARAMS[p].hi ? PARAMS[p].hi : v; }
+inline bool isChordParam(const ParamDef& d) { return !strncmp(d.id, "trk.nt", 6); }
 inline bool isExtendedVoiceParam(int p) {
     static const int first = paramFind("trk.flt.envmode");
     return p >= first && p < INSERT_FIRST;
