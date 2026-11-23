@@ -258,10 +258,12 @@ struct Engine : Sink {
     SamplePool pool;
 
     // --- Aufnahme in einen Platz des Vorrats -----------------------------------------------
-    // Aufgenommen wird, was hinten herauskommt. Am Geraet kommt spaeter der Eingang als
-    // zweite Quelle dazu; der Weg hier bleibt derselbe.
+    // Aufnahmequellen: Master, trockene Spur oder externer Stereo-Eingang.
     bool  recOn = false;
-    int   recSlot = -1, recMax = 0, recCh = 2;
+    enum { REC_MASTER = -1, REC_INPUT = -2 };
+    int   recSlot = -1, recMax = 0, recCh = 2, recSource = REC_MASTER, recDelay = 0;
+    int recTrigTrack = -1, recTrigStep = -1, recTrigPattern = -1, recInputLead = 0;
+    float recDry[2][2][4096], recStereo[4096 * 2];
 
     // --- Pattern-Wechsel ---------------------------------------------------------------------
     // Gewaehlt wird sofort, gewechselt wird im Takt: alles andere klingt wie ein Versehen.
@@ -295,7 +297,24 @@ struct Engine : Sink {
     void runHalf(int parity, int c) {
         Voice::Mix mx = parity ? Voice::Mix{bufD2[0], bufD2[1], bufA2[0], bufA2[1], bufB2[0], bufB2[1]}
                                : Voice::Mix{bufD[0], bufD[1], bufA[0], bufA[1], bufB[0], bufB[1]};
-        for (int i = parity; i < NVOICES; i += 2) v[i].run(mx, c, sr, live[v[i].track]);
+        const bool soloCapture = recOn && recSource >= 0;
+        if (soloCapture) {
+            for (int i = 0; i < c; i++) recDry[parity][0][i] = recDry[parity][1][i] = 0.0f;
+        }
+        for (int i = parity; i < NVOICES; i += 2) {
+            Voice& voice = v[i];
+            Voice::Mix target = mx;
+            if (soloCapture && !voice.preview && voice.track == recSource) {
+                target.dL = recDry[parity][0];
+                target.dR = recDry[parity][1];
+            }
+            voice.run(target, c, sr, live[voice.track]);
+        }
+        if (soloCapture)
+            for (int i = 0; i < c; i++) {
+                mx.dL[i] += recDry[parity][0][i];
+                mx.dR[i] += recDry[parity][1][i];
+            }
     }
     // Faule Tabellen einmal im Hauptfaden fuellen, bevor ein zweiter Faden Stimmen rechnet.
     static void warmTables() {
@@ -333,15 +352,43 @@ struct Engine : Sink {
     }
 
     // Platz reservieren und scharf stellen. Gibt die moegliche Laenge in Bildern zurueck, 0 = kein Platz.
-    int recStart(int slot, float seconds, const char* name, int ch = 2) {
-        recStop();
-        int frames = (int)(seconds * sr);
+    int recStart(int slot, float seconds, const char* name, int ch = 2,
+                 int source = REC_MASTER, bool nextBar = false) {
+        if (recOn || source < REC_INPUT || source >= NTRACKS || !pool.empty(slot) || pool.wanted(slot)) return 0;
+        int channels = ch < 2 ? 1 : 2;
+        int capacity = pool.freeFrames() / channels;
+        if (capacity < 1) return 0;
+        int frames = seconds <= 0.0f ? capacity : (int)(seconds * sr);
         if (frames < 1) frames = 1;
         if (pool.reserve(slot, frames, sr, name, ch) < 0) return 0;
-        recSlot = slot; recMax = frames; recCh = ch < 2 ? 1 : 2; recOn = true;
+        recSlot = slot; recMax = frames; recCh = channels; recSource = source; recOn = true;
+        recDelay = 0;
+        recTrigTrack = -1;
+        if (nextBar && seq.running) {
+            const double bar = 4.0 * 60.0 * sr / tempoOf(pat);
+            const int64_t rel = seq.pos - seq.origin;
+            const int64_t k = (int64_t)(rel / bar) + 1;
+            recDelay = (int)(llround(k * bar) - rel);
+        }
         return frames;
     }
-    void recStop() { recOn = false; recSlot = -1; }
+    void recArmTrig(int track, int step) {
+        recTrigTrack = track;
+        recTrigStep = step;
+        recTrigPattern = pat;
+    }
+    bool recWaiting() const { return recTrigTrack >= 0 || recDelay > 0; }
+    void recStop() {
+        if (recOn) {
+            auto& slot = pool.s[recSlot];
+            if (pool.used == slot.at + recMax * recCh) pool.used = slot.at + slot.n * recCh;
+            if (!slot.n) slot = SamplePool::Slot{};
+        }
+        recOn = false;
+        recSlot = -1;
+        recTrigTrack = -1;
+        recDelay = 0;
+    }
     int  recFrames() const { return (recSlot >= 0) ? pool.s[recSlot].n : 0; }
     void stop()  { seq.stop(); for (int i = 0; i < NVOICES; i++) v[i].release(); }
 
@@ -503,7 +550,7 @@ struct Engine : Sink {
     // Vorhoeren im Sample-Editor: der Platz klingt so, wie er ist - offenes Filter, volle
     // Lautstaerke, Note 60 - unabhaengig davon, was eine Spur gerade eingestellt hat.
     // Alle Slots gelten als gelockt, damit keine Spur ihre Regler darueberlegt.
-    void preview(int slot, float seconds = 6.0f) {
+    void preview(int slot, float seconds = 6.0f, int slice = -1) {
         previewStop();
         if (pool.empty(slot)) return;
         float snap[64];
@@ -526,7 +573,13 @@ struct Engine : Sink {
         snap[paramSlot(paramFind("trk.send.a"))] = 0;
         snap[paramSlot(paramFind("trk.send.b"))] = 0;
         int i = pick();
-        v[i].start(machineAt(3), 0, 0, snap, 0.85f, (int64_t)(sr * seconds), sr, clock++,
+        int machine = slice < 0 ? 3 : 4;
+        if (slice >= 0) {
+            for (int k = 0; k < MACH_KNOBS; k++) snap[knobSlot(k)] = (float)machineAt(machine)->def(k);
+            snap[knobSlot(MachChop::C_SLICE)] = (float)slice;
+
+        }
+        v[i].start(machineAt(machine), 0, 0, snap, 0.85f, (int64_t)(sr * seconds), sr, clock++,
                    ~0ull, live[0], pool);
         v[i].preview = true;
     }
@@ -723,8 +776,11 @@ struct Engine : Sink {
 
     // Mitschreiben, was gerade herauskommt - in den reservierten Bereich, ohne Umweg.
     void recWrite(const float* stereoOut, int n) {
+        if (recTrigTrack >= 0) return;
+        int skip = recDelay < n ? recDelay : n;
+        recDelay -= skip;
         SamplePool::Slot& sl = pool.s[recSlot];
-        for (int i = 0; i < n && sl.n < recMax; i++) {
+        for (int i = skip; i < n && sl.n < recMax; i++) {
             float l = stereoOut[i * 2], r = stereoOut[i * 2 + 1];
             if (recCh == 2) { pool.data[sl.at + sl.n * 2] = l; pool.data[sl.at + sl.n * 2 + 1] = r; }
             else            { pool.data[sl.at + sl.n] = 0.5f * (l + r); }
@@ -741,6 +797,7 @@ struct Engine : Sink {
     // Steht ein Pattern-Wechsel an, wird der Block an GENAU der Stelle geteilt - sonst haenge
     // der Wechsel davon ab, wie der Host schneidet.
     void render(float* out, int frames) {
+        recInputLead = 0;
         int done = 0;
         songPlan();
         while (done < frames) {
@@ -821,7 +878,15 @@ struct Engine : Sink {
         int done = 0, ei = 0;
         while (done < frames) {
             int next = frames;
-            while (ei < nq && qoff[ei] <= done) { fire(q[ei]); ei++; }
+            while (ei < nq && qoff[ei] <= done) {
+                const Ev& e = q[ei++];
+                if (recOn && recTrigTrack == e.track && recTrigStep == e.step
+                    && recTrigPattern == pat && e.kind == EV_TRIG) {
+                    recTrigTrack = -1;
+                    if (recSource == REC_INPUT) recDelay = recInputLead;
+                }
+                fire(e);
+            }
             if (ei < nq && qoff[ei] < next) next = qoff[ei];
             int c = next - done; if (c > 4096) c = 4096; if (c <= 0) c = 1;
             for (int i = 0; i < c; i++) {
@@ -847,7 +912,15 @@ struct Engine : Sink {
                 out[(done + i) * 2]     = softClip(bufD[0][i] * master);
                 out[(done + i) * 2 + 1] = softClip(bufD[1][i] * master);
             }
-            if (recOn) recWrite(out + done * 2, c);
+            if (recOn && recSource == REC_INPUT && recTrigTrack >= 0) recInputLead += c;
+            if (recOn && recSource == REC_MASTER) recWrite(out + done * 2, c);
+            else if (recOn && recSource >= 0) {
+                for (int i = 0; i < c; i++) {
+                    recStereo[2 * i] = recDry[0][0][i] + recDry[1][0][i];
+                    recStereo[2 * i + 1] = recDry[0][1][i] + recDry[1][1][i];
+                }
+                recWrite(recStereo, c);
+            }
             done += c;
         }
     }

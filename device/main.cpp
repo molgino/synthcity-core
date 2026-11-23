@@ -35,6 +35,7 @@ int runDhcpd(const char* ifname);   // dhcpd.cpp: Helfer fuer den PC-Modus (pc-m
 #include <semaphore.h>
 #include <sys/mman.h>
 #include <ctype.h>
+#include <time.h>
 
 #ifdef SC_NO_LIBSTDCXX
 // Statische Variablen in Funktionen werden beim ersten Aufruf angelegt - mit zwei Audio-Faeden
@@ -343,24 +344,29 @@ static void smpNameOf(const char* rel, char* out, int n) {
 static bool poolLoadFile(int slot, const char* rel);
 // Der Vorrat waechst nur nach vorn. Ist er voll, werden die belegten Plaetze dicht neu gepackt.
 static void poolCompact() {
-    struct Keep { float* d; int n, ch, loop, a, b, la; float rate; char name[SMP_NAME]; };
+    struct Keep { float* d; SamplePool::Slot meta; };
     static Keep k[SMP_SLOTS];
     for (int i = 0; i < SMP_SLOTS; i++) {
         k[i].d = nullptr;
-        int n = scSmpFrames(i);
-        if (n <= 0) { snprintf(k[i].name, SMP_NAME, "%s", scSmpName(i)); continue; }
-        k[i].n = n; k[i].ch = scSmpCh(i); k[i].rate = scSmpRate(i); k[i].loop = scSmpLoop(i);
-        k[i].a = scSmpA(i); k[i].b = scSmpB(i); k[i].la = scSmpLA(i);
-        snprintf(k[i].name, SMP_NAME, "%s", scSmpName(i));
-        k[i].d = (float*)malloc((size_t)n * k[i].ch * sizeof(float));
-        if (k[i].d) memcpy(k[i].d, scSmpData(i), (size_t)n * k[i].ch * sizeof(float));
+        k[i].meta = gEng.pool.s[i];
+        const auto& m = k[i].meta;
+        if (m.n <= 0) continue;
+        k[i].d = (float*)malloc((size_t)m.n * m.ch * sizeof(float));
+        if (!k[i].d) {
+            for (int j = 0; j < i; j++) free(k[j].d);
+            return;
+        }
+        memcpy(k[i].d, scSmpData(i), (size_t)m.n * m.ch * sizeof(float));
     }
     scSmpClear();
     for (int i = 0; i < SMP_SLOTS; i++) {
-        if (!k[i].d) { if (k[i].name[0]) snprintf(gEng.pool.s[i].name, SMP_NAME, "%s", k[i].name); continue; }
-        scSmpSet(i, k[i].d, k[i].n, k[i].rate, k[i].name, k[i].loop, k[i].ch);
-        scSmpSetTrim(i, k[i].a, k[i].b, k[i].la, k[i].loop);
-        free(k[i].d);
+        auto& m = k[i].meta;
+        if (k[i].d) {
+            scSmpSet(i, k[i].d, m.n, m.rate, m.name, m.loop, m.ch);
+            m.at = gEng.pool.s[i].at;
+            free(k[i].d);
+        }
+        gEng.pool.s[i] = m;
     }
 }
 static bool poolLoadFile(int slot, const char* rel) {
@@ -373,6 +379,7 @@ static bool poolLoadFile(int slot, const char* rel) {
     char nm[SMP_NAME]; smpNameOf(rel, nm, sizeof nm);
     bool ok = false;
     lockA();
+    if (gEng.recOn) { unlockA(); free(d); return false; }
     gEng.pool.s[slot].n = 0;                       // der alte Inhalt zaehlt nicht mehr
     if (scSmpFree() < n * ch) poolCompact();
     ok = scSmpSet(slot, d, n, rate, nm, 0, ch) != 0;
@@ -644,7 +651,11 @@ static void audioCb(void*, Uint8* stream, int len) {
         gToneLeft -= frames;
     }
     usbAudioPush(out, frames);                                 // parallel an den PC (falls aktiv)
-    pcInMix(out, frames, gCfg.pcIn ? 1.0f : 0.0f);             // PC-Ton dazu (nach dem Senden: kein Echo)
+    static float capture[4096 * 2];
+    float* input = gEng.recOn && gEng.recSource == Engine::REC_INPUT && frames <= 4096 ? capture : nullptr;
+    if (input) memset(input, 0, (size_t)frames * 2 * sizeof(float));
+    pcInMix(out, frames, gCfg.pcIn ? 1.0f : 0.0f, input);
+    if (input) gEng.recWrite(input, frames);             // PC-Ton dazu (nach dem Senden: kein Echo)
     double used = (double)(SDL_GetPerformanceCounter() - t0) / SDL_GetPerformanceFrequency();
     float load = (float)(used * gRate / frames);
     gCpu = load > gCpu ? load : gCpu * 0.98f + load * 0.02f;
@@ -711,7 +722,7 @@ enum { V_TRACK, V_SONG, V_PROJECT, V_SYSTEM, V_N };
 static const char* VIEWNAME[V_N] = {"TRACK", "SONG", "PROJ", "SYSTEM"};
 enum { TAB_TRIG, TAB_CHRD, TAB_SRC, TAB_FLTR, TAB_AMP, TAB_MIX, TAB_MOD, TAB_N };
 static const char* TABNAME[TAB_N] = {"TRIG", "CHRD", "SRC", "FLTR", "AMP", "MIX", "MOD"};
-enum { M_NONE, M_MENU, M_SAMPLES, M_HELP, M_KEYS };
+enum { M_NONE, M_MENU, M_SAMPLES, M_HELP, M_KEYS, M_SLICE, M_RECORDER };
 static const int FXT = NTRACKS;   // die FX-Spur des Patterns
 
 struct UI {
@@ -720,6 +731,9 @@ struct UI {
     int cur = 0;                      // Step-Cursor
     bool aHeld = false, aEdited = false;
     int modal = M_NONE, menuSel = 0, smpSel = 0, smpScroll = 0;
+    int cutAction = 0, cutMarker = 0, cutFrame = 0, cutGrid = 2;
+    int recRow = 0, recSource = 0, recLength = 1, recTarget = -1, recLast = -1;
+    int recStartMode = 0;
     int songRow = 0, songField = 0;
     int prjRow = 0, sysRow = 0;
     int keyRow = 0, keyCol = 0, keyMode = 0; char keyBuf[32] = "";   // Bildschirmtastatur
@@ -953,12 +967,13 @@ static void clearStepLocks() {
 
 // --- Menue (SELECT) -------------------------------------------------------------------------
 enum { MI_SAVE, MI_COPYPAT, MI_PASTEPAT, MI_CLEARPAT, MI_COPYTRK, MI_PASTETRIG, MI_PASTEALL, MI_CLEARTRIG,
-       MI_COPYSTEP, MI_PASTESTEP, MI_LOADSMP, MI_LEN_DN, MI_LEN_UP, MI_SCENE_A, MI_SCENE_B, MI_SCENE_CLR, MI_HELP, MI_N };
+       MI_COPYSTEP, MI_PASTESTEP, MI_LOADSMP, MI_LEN_DN, MI_LEN_UP, MI_SCENE_A, MI_SCENE_B, MI_SCENE_CLR, MI_HELP, MI_SLICE, MI_RECORD, MI_N };
 static const char* MENU[MI_N] = {"Save project", "Copy pattern", "Paste pattern", "Clear pattern",
     "Copy track", "Paste trigs", "Paste track (with sound)", "Clear trigs", "Copy step", "Paste step",
     "Load sample into slot...", "Track length -16", "Track length +16",
-    "Edit scene A (on/off)", "Edit scene B (on/off)", "Clear the scene being edited", "Help"};
+    "Edit scene A (on/off)", "Edit scene B (on/off)", "Clear the scene being edited", "Help", "Sample editor...", "Recorder..."};
 static void openSamples();
+static int smpTargetSlot();
 static void menuDo(int i) {
     int p = scPattern();
     U.modal = M_NONE;
@@ -988,6 +1003,14 @@ static void menuDo(int i) {
         if (U.scene < 0) { toast("Choose scene A or B first"); return; }
         scSceneClearAll(U.scene); toast("Scene %c cleared", 'A' + U.scene); break;
     case MI_HELP: U.modal = M_HELP; return;
+    case MI_SLICE:
+        if (U.sel >= FXT || !scSmpFrames(smpTargetSlot())) { toast("Load a sample on this track first"); return; }
+        U.cutAction = U.cutMarker = 0;
+        U.cutFrame = (scSmpA(smpTargetSlot()) + scSmpB(smpTargetSlot())) / 2;
+        U.modal = M_SLICE; return;
+    case MI_RECORD:
+        if (U.sel >= FXT) { toast("Select an audio track first"); return; }
+        U.modal = M_RECORDER; return;
     }
     touched();
 }
@@ -1209,6 +1232,7 @@ static void keysDone() {
     int l = (int)strlen(n); while (l > 0 && n[l - 1] == ' ') n[--l] = 0;
     if (!nameOk(n)) { toast("Name: letters, digits, space, - and _"); return; }
     U.modal = M_NONE;
+    if (U.keyMode == KM_NEW && U.recTarget >= 0) { toast("Stop the recorder first"); return; }
     if (U.keyMode == KM_SAVEAS) {
         if (!prjSave(n)) { toast("Could not save %s", n); return; }
         snprintf(gPrjName, sizeof gPrjName, "%s", n);
@@ -1250,6 +1274,7 @@ static void prEdit(int dir, bool coarse) {
 static void prAction() {
     switch (U.prjRow) {
     case PR_OPEN: {
+        if (U.recTarget >= 0) { toast("Stop the recorder first"); break; }
         char n[48]; snprintf(n, sizeof n, "%s", browseName());
         if (!strcmp(n, gPrjName) && !prjExists(n)) { toast("%s is not saved yet", n); break; }
         if (U.dirty && !prjSave()) { toast("Could not save %s", gPrjName); break; }
@@ -1266,7 +1291,10 @@ static void prAction() {
     case PR_DEMO:
         lockA(); scStop(); scDemo(); unlockA();
         toast("Demo loaded into %s", gPrjName); touched(); break;
-    case PR_EXPORT: exportBegin(); break;
+    case PR_EXPORT:
+        if (U.recTarget >= 0) toast("Stop the recorder first");
+        else exportBegin();
+        break;
     default: break;
     }
 }
@@ -1484,7 +1512,151 @@ static void handleKeys() {
     if (IN.pressed(BT_START)) keysDone();
     if (IN.pressed(BT_SELECT)) U.modal = M_NONE;
 }
+enum { CUT_GRID, CUT_TRANSIENTS, CUT_ADD, CUT_MOVE, CUT_REMOVE, CUT_CHOP, CUT_LINEAR, CUT_RANDOM, CUT_UNDO, CUT_N };
+static const char* const CUT_ACTIONS[CUT_N] = {"Create slice grid", "Detect transients", "Add marker at cursor",
+    "Move selected marker", "Remove selected marker", "Use sample in CHOP", "Create linear locks",
+    "Create random locks", "Undo slice locks"};
+
+static void handleSlices() {
+    int slot = smpTargetSlot();
+    if (IN.pressed(BT_B) || IN.pressed(BT_SELECT) || !scSmpFrames(slot)) {
+        scSmpPreviewStop(); U.modal = M_NONE; return;
+    }
+    if (IN.repeat(BT_UP, U.now)) U.cutAction = (U.cutAction + CUT_N - 1) % CUT_N;
+    if (IN.repeat(BT_DOWN, U.now)) U.cutAction = (U.cutAction + 1) % CUT_N;
+    int count = scSmpCutCount(slot);
+    if (count && (IN.pressed(BT_L1) || IN.pressed(BT_R1))) {
+        U.cutMarker = (U.cutMarker + (IN.pressed(BT_L1) ? count - 1 : 1)) % count;
+        U.cutFrame = scSmpCut(slot, U.cutMarker);
+    }
+    int delta = IN.down[BT_R2] ? 1 : (int)scSmpRate(slot) / (IN.down[BT_L2] ? 1000 : 50);
+    if (IN.repeat(BT_LEFT, U.now)) U.cutFrame -= delta;
+    if (IN.repeat(BT_RIGHT, U.now)) U.cutFrame += delta;
+    U.cutFrame = clampi(U.cutFrame, scSmpA(slot), scSmpB(slot) - 1);
+    if (IN.pressed(BT_X)) {
+        if (count) scSmpSlicePreview(slot, scSmpSliceAt(slot, U.cutFrame));
+        else scSmpPreview(slot);
+    }
+    if (IN.pressed(BT_Y) && U.cutAction == CUT_GRID) U.cutGrid = (U.cutGrid + 1) % 6;
+    if (!IN.pressed(BT_A)) return;
+    uint32_t seed = 0;
+    int result = 0;
+    switch (U.cutAction) {
+    case CUT_GRID: scSmpSliceGrid(slot, 2 << U.cutGrid); U.cutMarker = 0; break;
+    case CUT_TRANSIENTS: {
+        int32_t cuts[SMP_SLICES - 1];
+        int found;
+        {
+            NoLock nl;
+            found = gEng.pool.detectTransients(slot, cuts);
+        }
+        gEng.pool.setCuts(slot, cuts, found);
+        U.cutMarker = 0;
+        break;
+    }
+    case CUT_ADD:
+        result = scSmpCutAdd(slot, U.cutFrame);
+        if (result < 0) { toast("No room for a marker at the cursor"); return; }
+        U.cutMarker = result; break;
+    case CUT_MOVE:
+        if (!scSmpCutMove(slot, U.cutMarker, U.cutFrame)) { toast("Move the cursor between adjacent markers"); return; }
+        break;
+    case CUT_REMOVE:
+        if (!scSmpCutRemove(slot, U.cutMarker)) return;
+        if (U.cutMarker > 0) U.cutMarker--;
+        break;
+    case CUT_CHOP:
+        if (machOf(U.sel) != 4) scSetMachine(U.sel, 4);
+        break;
+    case CUT_RANDOM: seed = U.now | 1u; [[fallthrough]];
+    case CUT_LINEAR:
+        result = scSliceLocks(U.sel, seed);
+        if (result == -2) { toast("A step has no room for more locks"); return; }
+        if (result <= 0) { toast("Needs a CHOP track with trigs and samples"); return; }
+        toast("%d trigs locked", result);
+        break;
+    case CUT_UNDO:
+        if (!scSliceLocksUndo(U.sel)) { toast("No slice locks to undo"); return; }
+        break;
+    }
+    touched();
+}
+
+static const int REC_BARS[] = {0, 1, 2, 4, 8};
+static const char* const REC_SOURCES[] = {"Master", "Selected track (dry)", "USB return"};
+static void handleRecorder() {
+    if (IN.pressed(BT_B) || IN.pressed(BT_SELECT)) { U.modal = M_NONE; return; }
+    if (IN.pressed(BT_START)) {
+        if (gEng.recOn) { scRecStop(); return; }
+        if (U.recTarget >= 0 || !gAudio) { toast("Audio output must be open"); return; }
+        int slot = -1;
+        for (int i = 0; i < SMP_SLOTS; i++)
+            if (!scSmpFrames(i) && !scSmpWanted(i)) { slot = i; break; }
+        if (slot < 0) { toast("No free sample slot"); return; }
+        if (U.recSource == 2 && (gUsbNow != 2 || !pcInStart())) {
+            toast("Enable PC + Audio in SYSTEM"); return;
+        }
+        if (U.recStartMode && !scIsRunning()) { toast("Start the transport before arming"); return; }
+        if (U.recStartMode == 2 && (U.cur >= scTrackLen(U.sel) || scStepGet(U.sel, U.cur) != 1)) {
+            toast("Select an active trig on this track"); return;
+        }
+        char name[SMP_NAME], file[800];
+        unsigned run = (unsigned)time(nullptr);
+        do {
+            snprintf(name, sizeof name, "take-%u", run++);
+            snprintf(file, sizeof file, "%ssamples/%s.wav", gBase, name);
+        } while (access(file, F_OK) == 0);
+        int source = U.recSource == 0 ? Engine::REC_MASTER : U.recSource == 1 ? U.sel : Engine::REC_INPUT;
+        float seconds = (float)(REC_BARS[U.recLength] * 4 * 60 / gEng.tempoOf(gEng.pat));
+        if (gEng.recStart(slot, seconds, name, 2, source, U.recStartMode == 1)) {
+            if (U.recStartMode == 2) gEng.recArmTrig(U.sel, U.cur);
+            U.recTarget = slot; U.recLast = -1;
+        } else toast("Not enough sample memory for this take");
+        return;
+    }
+    if (gEng.recOn) return;
+    if (IN.pressed(BT_X) && U.recLast >= 0) scSmpPreview(U.recLast);
+    if (IN.pressed(BT_Y) && U.recLast >= 0 && U.sel < FXT) {
+        if (machOf(U.sel) != 4) scSetMachine(U.sel, 4);
+        scSet(U.sel, slotOf(P_SMP), U.recLast);
+        U.cutAction = U.cutMarker = 0;
+        U.cutFrame = scSmpFrames(U.recLast) / 2;
+        U.modal = M_SLICE;
+        touched();
+        return;
+    }
+    if (IN.repeat(BT_UP, U.now)) U.recRow = (U.recRow + 2) % 3;
+    if (IN.repeat(BT_DOWN, U.now)) U.recRow = (U.recRow + 1) % 3;
+    int d = IN.pressed(BT_RIGHT) || IN.pressed(BT_A) ? 1 : IN.pressed(BT_LEFT) ? -1 : 0;
+    if (!d) return;
+    if (U.recRow == 0) U.recSource = (U.recSource + d + 3) % 3;
+    if (U.recRow == 1) U.recLength = (U.recLength + d + 5) % 5;
+    if (U.recRow == 2) U.recStartMode = (U.recStartMode + d + 3) % 3;
+}
+
+static void finishTake() {
+    if (U.recTarget < 0) return;
+    lockA();
+    bool active = gEng.recOn;
+    int slot = U.recTarget, frames = active ? 0 : scSmpFrames(slot);
+    unlockA();
+    if (active) return;
+    U.recTarget = -1;
+    if (!frames) { toast("Recording cancelled"); return; }
+    char path[800], tmp[820];
+    snprintf(path, sizeof path, "%ssamples/%s.wav", gBase, scSmpName(slot));
+    snprintf(tmp, sizeof tmp, "%s.tmp", path);
+    bool ok = wavWrite(tmp, scSmpData(slot), frames, (int)scSmpRate(slot), 2) && rename(tmp, path) == 0;
+    if (!ok) { remove(tmp); toast("Could not save take to disk"); return; }
+    scanSamples();
+    U.recLast = slot;
+    touched();
+    toast("Recorded to slot %d", slot + 1);
+}
+
 static void handleModal() {
+    if (U.modal == M_SLICE) { handleSlices(); return; }
+    if (U.modal == M_RECORDER) { handleRecorder(); return; }
     if (U.modal == M_KEYS) { handleKeys(); return; }
     if (U.modal == M_HELP) {
         if (IN.pressed(BT_B) || IN.pressed(BT_A) || IN.pressed(BT_SELECT)) U.modal = M_NONE;
@@ -1921,6 +2093,7 @@ static const char* helpLine() {
     if (U.modal == M_MENU) return "UP/DOWN choose   A do it   B close";
     if (U.modal == M_SAMPLES) return "A open/load  LEFT up  RIGHT into  L1/R1 page  X hear  B close";
     if (U.modal == M_HELP) return "any of A / B / SELECT closes";
+    if (U.modal == M_SLICE || U.modal == M_RECORDER) return "";
     if (U.view == V_SONG) return "X/Y value  A dup row  B+A delete  B+UP/DN move  START play song";
     if (U.view == V_PROJECT) return "UP/DOWN item   X/Y value / browse projects   A action";
     if (U.view == V_SYSTEM) return "UP/DOWN item   X/Y change   A apply / action";
@@ -1992,6 +2165,80 @@ static void drawSamples() {
     char b[96]; snprintf(b, sizeof b, "%d files  -  free sample memory %.1f s", gNFiles, scSmpFree() / 48000.0);
     text(x + 12, y + h - 22, b, C_FAINT);
 }
+static void drawSlices() {
+    int slot = smpTargetSlot(), a = scSmpA(slot), n = scSmpB(slot) - a;
+    box(30, 34, 580, 404, "SAMPLE EDITOR");
+    if (n <= 0) return;
+    int ch = scSmpCh(slot), count = scSmpCutCount(slot);
+    const float* samples = scSmpData(slot);
+    const int x = 48, w = 544, mid = 118;
+    fill(x, mid, w, 1, C_LINE);
+    for (int i = 0; i < w; i++) {
+        int f = a + n * i / w;
+        int end = a + n * (i + 1) / w;
+        int stride = (end - f) / 12 + 1;
+        float peak = 0.0f;
+        do {
+            float v = fabsf(samples[f * ch]);
+            if (ch == 2 && fabsf(samples[f * ch + 1]) > v) v = fabsf(samples[f * ch + 1]);
+            if (v > peak) peak = v;
+            f += stride;
+        } while (f < end);
+        int h = clampi((int)(peak * 47), 0, 47);
+        fill(x + i, mid - h, 1, 2 * h + 1, C_DIM);
+    }
+    for (int i = 0; i < count; i++) {
+        int f = scSmpCut(slot, i) - a;
+        if (f > 0 && f < n) fill(x + f * w / n, mid - 48, 1, 96, i == U.cutMarker ? C_TXT : C_SCENE);
+    }
+    fill(x + (U.cutFrame - a) * w / n, mid - 49, 2, 98, C_TXT);
+    char line[96];
+    snprintf(line, sizeof line, "%s  |  %.3f s  |  %d markers", scSmpName(slot),
+             U.cutFrame / (double)scSmpRate(slot), count);
+    text(x, 171, line, C_DIM);
+    for (int i = 0; i < CUT_N; i++) {
+        int y = 196 + i * 20;
+        if (i == U.cutAction) fill(x - 4, y - 1, w + 8, 19, C_LINE);
+        if (i == CUT_GRID) snprintf(line, sizeof line, "%s: %d  (Y changes)", CUT_ACTIONS[i], 2 << U.cutGrid);
+        else snprintf(line, sizeof line, "%s", CUT_ACTIONS[i]);
+        text(x, y, line, i == U.cutAction ? C_TXT : C_DIM);
+    }
+    text(x, 392, "A apply  X hear  L1/R1 marker  B close", C_TXT);
+    text(x, 411, "Left/right cursor  L2 fine  R2 single frame", C_DIM);
+}
+
+static void drawRecorder() {
+    box(60, 100, 520, 280, "RECORDER");
+    char length[32];
+    if (U.recLength) snprintf(length, sizeof length, "%d bars", REC_BARS[U.recLength]);
+    else snprintf(length, sizeof length, "Free");
+    const char* labels[] = {"Source", "Length", "Start"};
+    char trig[32];
+    snprintf(trig, sizeof trig, "Trig %d on track %d", U.cur + 1, U.sel + 1);
+    const char* starts[] = {"Now", "Next bar", trig};
+    const char* values[] = {REC_SOURCES[U.recSource], length, starts[U.recStartMode]};
+    for (int i = 0; i < 3; i++) {
+        int y = 149 + i * 30;
+        if (i == U.recRow) fill(76, y - 2, 482, 22, C_LINE);
+        text(84, y, labels[i], C_TXT);
+        text(240, y, values[i], C_TXT);
+    }
+    lockA();
+    bool rec = gEng.recOn, armed = gEng.recWaiting();
+    int trigStep = gEng.recTrigStep;
+    bool armedTrig = gEng.recTrigTrack >= 0;
+    int frames = scRecFrames();
+    unlockA();
+    char info[96];
+    if (rec && !armed) snprintf(info, sizeof info, "Recording  %.1f s", frames / (double)gRate);
+    else if (rec && armedTrig) snprintf(info, sizeof info, "Armed for trig %d", trigStep + 1);
+    else if (rec) snprintf(info, sizeof info, "Armed for next bar");
+    else if (U.recLast >= 0) snprintf(info, sizeof info, "Take ready in slot %d", U.recLast + 1);
+    else snprintf(info, sizeof info, "Choose source, length and start");
+    text(84, 252, info, C_TXT);
+    text(84, 302, "START record / stop  B close", C_TXT);
+    text(84, 328, "X preview take  Y use in CHOP and edit", C_DIM);
+}
 static void drawHelp() {
     box(30, 34, SW - 60, SH - 68, "CONTROLS");
     static const char* L[] = {
@@ -2025,6 +2272,8 @@ static void drawAll() {
     else if (U.modal == M_SAMPLES) drawSamples();
     else if (U.modal == M_HELP) drawHelp();
     else if (U.modal == M_KEYS) drawKeys();
+    else if (U.modal == M_SLICE) drawSlices();
+    else if (U.modal == M_RECORDER) drawRecorder();
     if (gExp.on) {
         box(120, 180, 400, 110, "EXPORTING SONG");
         char b[96]; snprintf(b, sizeof b, "%s", gExp.rel);
@@ -2099,6 +2348,8 @@ static void pollPower() {
     }
     if (gPwrDown && U.now - gPwrDown >= 1500) {
         gPwrDown = 0;
+        lockA(); scRecStop(); unlockA();
+        finishTake();
         prjSave();
         settingsSave();
         sync();
@@ -2379,10 +2630,32 @@ static int selfTest(const char* shotDir) {
         U.smpSel = 2; idle(1);
         shot("11-samples");
         tap(BT_B);
+        menuDo(MI_SLICE);
+        CHECK(U.modal == M_SLICE, "Sample editor opens for the selected slot");
+        tap(BT_A);
+        CHECK(scSmpCutCount(slot) == 7, "Sample editor creates eight slices");
+        shot("11a-slice-editor");
+        tap(BT_B);
         // Projekt mit Sample: nach dem Laden sucht der Slot seine Datei selbst
         CHECK(prjSave(), "Projekt mit Sample gespeichert");
         lockA(); scSmpClear(); scLoad(""); unlockA();
         CHECK(prjLoad("selftest") && scSmpFrames(slot) == 4800, "Sample nach Laden wieder da");
+        CHECK(scSmpCutCount(slot) == 7, "Slice markers restored after sample reload");
+        int takeSlot = (slot + 1) % SMP_SLOTS;
+        static float recorded[64 * 2];
+        for (float& value : recorded) value = 0.25f;
+        CHECK(gEng.recStart(takeSlot, 0, "zz-rec-selftest", 2, Engine::REC_INPUT) > 0, "Recorder reserves the take");
+        U.recTarget = takeSlot;
+        gEng.recWrite(recorded, 64);
+        scRecStop();
+        finishTake();
+        char takePath[800]; snprintf(takePath, sizeof takePath, "%ssamples/zz-rec-selftest.wav", gBase);
+        int takeFrames = 0, takeChannels = 0; float takeRate = 0;
+        float* take = wavRead(takePath, &takeFrames, &takeChannels, &takeRate);
+        CHECK(U.recLast == takeSlot && take && takeFrames == 64 && takeChannels == 2 && take[0] > 0.20f,
+              "Recorder saves a playable stereo take");
+        free(take);
+        remove(takePath);
         prjPath("selftest", p, sizeof p); remove(p);
         remove(sp); remove(sp2);
         snprintf(dd, sizeof dd, "%ssamples/kit/sub", gBase); rmdir(dd);
@@ -2601,6 +2874,7 @@ int main(int argc, char** argv) {
         lockA();
         handleInput();
         unlockA();
+        finishTake();
         if (gExp.on) exportStep(gRate / 5);
         pollPower();
         // automatisch sichern: 4 s nach der letzten Aenderung, hoechstens alle 20 s
@@ -2629,7 +2903,7 @@ int main(int argc, char** argv) {
             bool want = gUsbNow == 2;
             if (want && !usbAudioActive()) { usbAudioSetChannels(2); usbAudioStart(); }
             if (!want && usbAudioActive()) usbAudioStop();
-            bool wantIn = want && gCfg.pcIn;
+            bool wantIn = want && (gCfg.pcIn || (U.recTarget >= 0 && U.recSource == 2));
             if (wantIn && !pcInActive()) pcInStart();
             if (!wantIn && pcInActive()) pcInStop();
         }
@@ -2652,6 +2926,8 @@ int main(int argc, char** argv) {
         if (!gScreenOff) { drawAll(); present(); }
         if (useDrm || !ren || gScreenOff) SDL_Delay(16);   // ohne VSync: rund 60 Bilder/s
     }
+    lockA(); scRecStop(); unlockA();
+    finishTake();
     if (U.dirty) prjSave();
     settingsSave();
     if (gAudio) SDL_CloseAudioDevice(gAudio);

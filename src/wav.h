@@ -26,8 +26,8 @@ inline bool wavWrite(const char* path, const float* inter, int frames, int sr, i
         int16_t s = (int16_t)(x * 32767.0f);
         fwrite(&s, 2, 1, f);
     }
-    fclose(f);
-    return true;
+    bool ok = !ferror(f);
+    return fclose(f) == 0 && ok;
 }
 
 // Liest eine mit wavWrite erzeugte Datei (16 Bit, feste Kopfgroesse).

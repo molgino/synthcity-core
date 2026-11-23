@@ -677,9 +677,29 @@ Audio-Last laufend (CPU %).
 * SYSTEM: AUDIO BUFFER (128–1024), AUDIO CORES (1/2), AUDIO STATS (zu späte Blöcke, schwerster
   Block in % – zu späte Blöcke hört man als Klick).
 
+## Sample-Editor und Recorder
+
+**R36S:** Im SELECT-Menü öffnet **Sample editor** den Sample-Slot der gewählten Spur.
+Links/rechts bewegt den Cursor, L2 verkleinert die Schritte und R2 schaltet auf einzelne
+Frames. L1/R1 wählt einen Marker, X hört den Slice am Cursor vor. Mit A lassen sich
+ein gleichmäßiges Raster oder Marker aus Transienten erzeugen und Marker manuell setzen,
+verschieben oder löschen. Im Browser stehen die gleichen Befehle im Wellenform-Editor.
+
+**Create linear locks** verteilt Slices der Reihe nach auf die vorhandenen Trigs der
+CHOP-Spur. **Create random locks** schreibt einmal gewürfelte Slice-Werte in dieselben
+Trigs. Beides lässt sich mit **Undo slice locks** rückgängig machen. Trigless Steps bleiben
+unverändert. Die Marker werden in der Projektdatei gespeichert und folgen dem Sample-Slot.
+
+**Recorder** im SELECT-Menü nimmt **Master**, die **gewählte Spur ohne Send-Effekte** oder
+den **USB-Rückkanal** (SYSTEM → PC + Audio) auf. Die Länge ist frei oder 1, 2, 4 bzw. 8 Takte,
+soweit der Sample-Pool Platz bietet. START startet sofort, am nächsten Takt oder beim
+nächsten erklingenden Trig am zuvor gewählten Step. Erneutes START stoppt oder bricht die
+Armierung ab. Die Aufnahme wird als Stereo-WAV in `samples/` geschrieben. X hört den Take
+vor, Y weist ihn der gewählten Spur in CHOP zu und öffnet den Editor.
+
 ## Als Nächstes
 
-12. Gerät: Sampling vom Eingang/PC, MIDI-CC auf Regler, Mehrkanal-USB-Audio.
+12. Gerät: Sampling vom internen Codec, MIDI-CC auf Regler, Mehrkanal-USB-Audio.
 13. Modulation: LFOs und Hüllkurven als Ziele aus der Parametertabelle.
 
 Offen aus Meilenstein 2: das DSP ist **neu geschrieben**, nicht aus SYNTH CITY portiert — ein
