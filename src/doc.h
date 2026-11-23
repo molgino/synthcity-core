@@ -7,7 +7,7 @@
 #include <string.h>
 #include <stdlib.h>
 
-enum { DOC_MAX = 24000, DOC_KEY = 96, DOC_SLOTS = 65536, DOC_STR = 128, DOC_SVAL = 32 };   // Schluessel wie "pat.0.trk.3.st.12.flt.freq.slide"   // Slots: Zweierpotenz > 2 * DOC_MAX
+enum { DOC_MAX = 48000, DOC_KEY = 96, DOC_SLOTS = 131072, DOC_STR = 128, DOC_SVAL = 32 };   // Schluessel wie "pat.0.trk.3.st.12.flt.freq.slide"   // Slots: Zweierpotenz > 2 * DOC_MAX
 
 struct Doc {
     struct E { char k[DOC_KEY]; int32_t v; };
@@ -78,16 +78,33 @@ struct Doc {
     int32_t get(const char* k, int32_t def) const { int at = find(k); return at < 0 ? def : e[at].v; }
     bool has(const char* k) const { return find(k) >= 0; }
 
+    bool writeText(char* out, size_t size) const {
+        if (overflow || !size) return false;
+        size_t at = 0;
+        for (int i = 0; i < n; i++) {
+            int len = snprintf(out + at, size - at, "%s = %d\n", e[i].k, (int)e[i].v);
+            if (len < 0 || (size_t)len >= size - at) return false;
+            at += len;
+        }
+        for (int i = 0; i < ns; i++) {
+            int len = snprintf(out + at, size - at, "%s = %s\n", se[i].k, se[i].v);
+            if (len < 0 || (size_t)len >= size - at) return false;
+            at += len;
+        }
+        out[at] = 0;
+        return true;
+    }
+
     // Dateien gibt es nur dort, wo es ein Dateisystem gibt - der Browser-Bau laesst sie weg.
 #ifndef SC_NO_FILES
     bool save(const char* path) const {
+        if (overflow) return false;
         FILE* f = fopen(path, "w");
         if (!f) return false;
-        fprintf(f, "# synthcity 1\n");
-        for (int i = 0; i < n; i++) fprintf(f, "%s = %d\n", e[i].k, (int)e[i].v);
-        for (int i = 0; i < ns; i++) fprintf(f, "%s = %s\n", se[i].k, se[i].v);
-        fclose(f);
-        return true;
+        bool ok = fprintf(f, "# synthcity 1\n") >= 0;
+        for (int i = 0; i < n && ok; i++) ok = fprintf(f, "%s = %d\n", e[i].k, (int)e[i].v) >= 0;
+        for (int i = 0; i < ns && ok; i++) ok = fprintf(f, "%s = %s\n", se[i].k, se[i].v) >= 0;
+        return fclose(f) == 0 && ok;
     }
     bool load(const char* path) {
         FILE* f = fopen(path, "r");
@@ -112,8 +129,8 @@ struct Doc {
             if (isNumber(v)) set(k, (int32_t)strtol(v, nullptr, 10));
             else             setStr(k, v);
         }
-        fclose(f);
-        return true;
+        bool ok = !overflow && !ferror(f);
+        return fclose(f) == 0 && ok;
     }
 #endif
 };

@@ -56,6 +56,44 @@ static void testDoc() {
     CHECK(d3.get("pat.0.trk.0.zukunft.regler", -1) == 42, "unbekannte ID ueberlebt das Laden nicht");
 }
 
+static void testDenseProject() {
+    curCase = "Dichtes Projekt";
+    static Project source, loaded;
+    static Doc doc, roundTrip;
+    projectInit(source);
+    const int slot = paramSlot(paramFind("trk.flt.freq"));
+    for (Pattern& pattern : source.pat) {
+        for (Track& track : pattern.t) {
+            track.len = NSTEPS;
+            for (Step& step : track.s) {
+                step.on = 1;
+                step.setLock(slot, 80, 0);
+            }
+        }
+    }
+    projectToDoc(source, doc);
+    const char* path = "/tmp/sc-dense-project.txt";
+    CHECK(!doc.overflow && doc.save(path), "dichtes Projekt passt nicht ins Dokument");
+    CHECK(roundTrip.load(path), "dichtes Projekt laesst sich nicht laden");
+    projectFromDoc(roundTrip, loaded);
+    const Step& last = loaded.pat[NPATTERNS - 1].t[NTRACKS - 1].s[NSTEPS - 1];
+    const Lock* lock = last.findLock(slot);
+    CHECK(last.on == 1 && lock && lock->val == 80, "letzter Trig oder Lock verloren");
+
+    for (int i = 0; i <= DOC_MAX; i++) {
+        char key[DOC_KEY];
+        snprintf(key, sizeof key, "test.%d", i);
+        doc.set(key, i);
+    }
+    CHECK(doc.overflow, "Dokument meldet den Ueberlauf nicht");
+    char text[128];
+    CHECK(!doc.writeText(text, sizeof text), "unvollstaendiger Text wurde exportiert");
+    CHECK(!doc.save(path), "unvollstaendiges Dokument wurde gespeichert");
+    CHECK(roundTrip.load(path) && roundTrip.get("pat.15.trk.7.st.127", 0) == 1,
+          "vorherige Datei wurde ersetzt");
+    remove(path);
+}
+
 // 2 - Ein Projekt laedt, NACHDEM ein Parameter dazugekommen ist: das Versprechen des Dokuments
 static void testNeuerParameter() {
     curCase = "Projekt ueberlebt neue Parameter";
@@ -296,6 +334,7 @@ static void testQueue() {
 
 int main() {
     testDoc();
+    testDenseProject();
     testNeuerParameter();
     testBlockgroessen();
     testMicro();

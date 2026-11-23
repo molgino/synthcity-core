@@ -443,19 +443,14 @@ const char* scSave() {
     projectToDoc(gEng.P, d);
     poolToDoc(gEng.pool, d);
     d.set("prj.pat", gEng.pat);          // mit welchem Pattern das Projekt aufgeht
-    int at = 0;
-    for (int i = 0; i < d.n && at < (int)sizeof gDoc - 64; i++)
-        at += snprintf(gDoc + at, sizeof gDoc - at, "%s = %d\n", d.e[i].k, d.e[i].v);
-    for (int i = 0; i < d.ns && at < (int)sizeof gDoc - 64; i++)
-        at += snprintf(gDoc + at, sizeof gDoc - at, "%s = %s\n", d.se[i].k, d.se[i].v);
-    gDoc[at] = 0;
-    return gDoc;
+    return d.writeText(gDoc, sizeof gDoc) ? gDoc : nullptr;
 }
-void scLoad(const char* text) {
-    static Doc d;
+static bool readProjectText(const char* text, Doc& d) {
     d.clear();
     static char tmp[DOC_MAX * 48];
-    snprintf(tmp, sizeof tmp, "%s", text);
+    size_t len = strlen(text);
+    if (len >= sizeof tmp) return false;
+    memcpy(tmp, text, len + 1);
     char* line = tmp;
     while (line && *line) {
         char* nl = strchr(line, '\n');
@@ -475,6 +470,10 @@ void scLoad(const char* text) {
         }
         line = nl ? nl + 1 : nullptr;
     }
+    return !d.overflow;
+}
+
+static void applyProjectDoc(const Doc& d) {
     projectFromDoc(d, gEng.P);
     poolFromDoc(d, gEng.pool);
     int p0 = d.get("prj.pat", 0);
@@ -483,6 +482,13 @@ void scLoad(const char* text) {
     gEng.seq.toPattern(gEng.seq.pos);
     gEng.seq.bpm = gEng.effTempo(gEng.pat);
     gEng.resetTrackValues();
+}
+
+int scLoad(const char* text) {
+    static Doc d;
+    if (!readProjectText(text, d)) return 0;
+    applyProjectDoc(d);
+    return 1;
 }
 
 // --- Ein Pattern zum Anfangen (steht in src/demo.h) -------------------------------------------
