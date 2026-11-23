@@ -578,15 +578,18 @@ Gerät und umgekehrt.
 
 | Taste | Wirkung |
 |---|---|
-| L1 / R1 | Spur 1–8, FX-Spur |
+| L1 / R1 oder B + ▲▼ | Spur 1–8, FX-Spur. B + ▲▼ gilt in der TRACK-Ansicht. |
 | L2 / R2 | Ansicht TRACK / SONG / PROJECT |
-| ▲▼ | Regler · ◀▶ Step-Cursor · B + ◀▶ Reiter (TRIG CHRD SRC FLTR AMP MIX MOD) |
+| ▲▼ | Regler · ◀▶ Step-Cursor · B + ◀▶ Reiter (TRIG CHRD SRC FLTR AMP MIX MOD INS) |
 | X / Y | Wert hoch / runter (B gehalten = grob, lange halten = schneller) |
 | A antippen | Trig an/aus |
 | A halten + X/Y | Lock auf dem Step (auf leerem Step: trigless) · A halten + B: Locks des Steps löschen |
-| B + A | Spur stumm · B + ▲▼ Pattern wechseln (läuft es, wird es vorgemerkt) |
+| B + A | Spur stumm |
+| SELECT → Select pattern | Alle 16 Patterns im Raster. Steuerkreuz wählt, A bestätigt und B schließt. Bei Wiedergabe wartet der Wechsel bis zur Pattern-Grenze. |
+| B + SELECT | Direkt zu einem Parameterbereich springen, etwa LFO 2, Insert 2 oder Master EQ. Auch im SELECT-Menü unter Parameter sections. |
+| SELECT + X | Am Condition- oder DEST-Regler die Werteliste öffnen. Links/rechts wechselt die Gruppe, hoch/runter den Wert, L1/R1 die Seite. X wechselt zwischen Grundwert und Step-Lock. A übernimmt, B schließt die Auswahl. Auch unter SELECT → Choose value. |
 | START | Play/Stop (in SONG: Song) · B + START: FILL, solange gehalten |
-| SELECT | Menü: kopieren/einfügen (Pattern, Spur, Step), Sample laden, Spurlänge, Scene A/B bearbeiten |
+| SELECT | Menü: Pattern-Auswahl, Parameterbereiche, kopieren/einfügen (Pattern, Spur, Step), Sample laden, Spurlänge, Scene A/B bearbeiten |
 | Track length | X/Y ändern die Länge der gewählten Spur um 1, Rechts/Links um 16 Steps. Bereich 1–128. |
 | rechter Stick ◀▶ | Scene-Crossfader A ↔ B |
 
