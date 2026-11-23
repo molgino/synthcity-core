@@ -1484,6 +1484,106 @@ int main() {
         e.stop(); e.pool.clear();
     }
 
+    grp("Track inserts: crush, stereo sidechain and bypass");
+    {
+        const int frames = 24000;
+        static float bypass[frames * 2], enabled[frames * 2], blocks[frames * 2], ducked[frames * 2];
+        auto toneSetup = [&]() {
+            e.prepare(48000);
+            e.pat = 0;
+            setupBeat(e, 57);
+            Track& target = e.P.pat[0].t[0];
+            target.p[SL("trk.amp.sus")] = 100;
+            target.p[SL("trk.len")] = 127;
+            target.p[SL("trk.pan")] = 1;
+            for (int i = 1; i < NSTEPS; i++) target.s[i].on = 0;
+        };
+        auto render = [&](float* dst, int block) {
+            e.start();
+            for (int i = 0; i < frames; i += block)
+                e.render(dst + 2 * i, block < frames - i ? block : frames - i);
+        };
+
+        toneSetup();
+        render(bypass, 977);
+        toneSetup();
+        e.P.pat[0].t[0].p[SL("trk.ins1.drive")] = 24;
+        e.P.pat[0].t[0].p[SL("trk.ins2.threshold")] = -50;
+        render(blocks, 977);
+        chk(!memcmp(bypass, blocks, sizeof bypass), "bypassed slots alter the dry output");
+
+        auto crush = [&]() {
+            toneSetup();
+            auto* first = e.P.pat[0].t[0].p + insertParamSlot(0);
+            first[INS_TYPE] = INS_CRUSH;
+            first[INS_RATE] = 1;
+            first[INS_BITS] = 4;
+            first[INS_DRIVE] = 9;
+            first[INS_PREFILTER] = 0;
+        };
+        crush(); render(enabled, 64);
+        crush(); render(blocks, 977);
+        chk(!memcmp(enabled, blocks, sizeof enabled), "crush changes with the host block size");
+        chk(memcmp(enabled, bypass, sizeof enabled) && sane(enabled, frames * 2), "crush stays dry or produces invalid output");
+        int changes = 0;
+        for (int i = 1001; i < frames; i++) if (enabled[2 * i] != enabled[2 * (i - 1)]) changes++;
+        chk(changes > 10 && changes <= 240, "500 Hz sample hold does not reduce the update rate");
+
+        auto compress = [&](bool keyOn) {
+            toneSetup();
+            auto* second = e.P.pat[0].t[0].p + insertParamSlot(1);
+            second[INS_TYPE] = INS_COMPRESS;
+            second[INS_THRESHOLD] = -36;
+            second[INS_RATIO] = 12;
+            second[INS_ATTACK] = 2;
+            second[INS_SOURCE] = 2;
+            Track& key = e.P.pat[0].t[1];
+            key.p[SL("trk.note")] = 45;
+            key.p[SL("trk.pan")] = 127;
+            key.p[SL("trk.amp.sus")] = 100;
+            key.p[SL("trk.len")] = 127;
+            key.s[0].on = keyOn ? 1 : 0;
+            // Attenuating the key's insert does not change the pre-insert detector.
+            auto* keyInsert = key.p + insertParamSlot(0);
+            keyInsert[INS_TYPE] = INS_CRUSH;
+            keyInsert[INS_TRIM] = -24;
+        };
+        compress(false); render(enabled, 64);
+        compress(true); render(ducked, 64);
+        double dry = rms(enabled + 24000, 12000);
+        double wet = rms(ducked + 24000, 12000);
+        chk(dry > 0.01 && wet < dry * 0.45, "external key does not duck the target");
+        chk(e.inserts[0][1].reductionDb() > 6.0f, "sidechain reduction meter does not move");
+        compress(true); render(blocks, 977);
+        chk(!memcmp(ducked, blocks, sizeof ducked), "sidechain changes with the host block size");
+
+        auto serial = [&](bool trimFirst) {
+            toneSetup();
+            const int trimSlot = trimFirst ? 0 : 1;
+            auto* level = e.P.pat[0].t[0].p + insertParamSlot(trimSlot);
+            auto* comp = e.P.pat[0].t[0].p + insertParamSlot(1 - trimSlot);
+            level[INS_TYPE] = INS_CRUSH;
+            level[INS_TRIM] = -24;
+            comp[INS_TYPE] = INS_COMPRESS;
+            comp[INS_THRESHOLD] = -24;
+            comp[INS_ATTACK] = 1;
+            comp[INS_RATIO] = 10;
+        };
+        serial(true); render(enabled, 977);
+        serial(false); render(blocks, 977);
+        chk(rms(enabled + 24000, 12000) > rms(blocks + 24000, 12000) * 1.2f,
+            "slot 2 does not process the signal coming from slot 1");
+
+        compress(true);
+        static Doc doc;
+        static Project reloaded;
+        projectToDoc(e.P, doc);
+        projectFromDoc(doc, reloaded);
+        const int16_t* restored = reloaded.pat[0].t[0].p + insertParamSlot(1);
+        chk(restored[INS_TYPE] == INS_COMPRESS && restored[INS_THRESHOLD] == -36
+            && restored[INS_SOURCE] == 2, "insert selection does not survive project save and load");
+    }
+
     grp("Referenz-Aufnahme");
     {
         const int N = 96000;                         // zwei Sekunden

@@ -327,7 +327,7 @@ textarea {
   .trk .m { width: 32px; }
   /* Flachere Pads: im Hochformat bleibt sonst fuer die Regler kaum eine Zeile. */
   .pad { aspect-ratio: 16 / 9; }
-  .ptabs { grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 3px; padding: 6px 6px 5px; }
+  .ptabs { grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 3px; padding: 6px 6px 5px; }
   .ptab { font-size: 9.5px; letter-spacing: 0; min-height: 30px; padding: 0 1px; text-overflow: clip; }
   .brand { display: none; }          /* schmaler Schirm: die Knoepfe sind wichtiger */
   .padgrid { grid-template-columns: repeat(4, 1fr); }
@@ -596,11 +596,11 @@ const GROUP = {note: 'Anschlag', vel: 'Anschlag', len: 'Anschlag', prob: 'Anschl
                nt2: 'Akkord', nt3: 'Akkord', nt4: 'Akkord', vmode: 'Akkord',
                machine: 'Quelle', smp: 'Quelle', src: 'Quelle', flt: 'Filter', bw: 'Filter',
                amp: 'Huellkurve', vol: 'Ausgang', pan: 'Ausgang', send: 'Ausgang',
-               lfo1: 'Mod', lfo2: 'Mod', menv: 'Mod'};
+               lfo1: 'Mod', lfo2: 'Mod', menv: 'Mod', ins1: 'Inserts', ins2: 'Inserts'};
 
 // Reiter ueber den Reglern: immer nur eine Gruppe, statt einer langen Liste zum Scrollen.
 const TABNAME = {Anschlag: 'TRIG', Akkord: 'CHRD', Quelle: 'SRC', Filter: 'FLTR', Mod: 'MOD',
-                 Huellkurve: 'AMP', Ausgang: 'MIX'};
+                 Huellkurve: 'AMP', Ausgang: 'MIX', Inserts: 'INS'};
 let grpSel = 'Anschlag';
 try { grpSel = localStorage.getItem('synthcity-tab') || grpSel; } catch (e) {}
 let X = null;                 // der Kern im Hauptfaden: Modell, Texte, Speichern
@@ -613,6 +613,7 @@ let patsOffen = false;          // Pattern-Auswahl aufgeklappt?
 try { patsOffen = localStorage.getItem('synthcity-pats') === '1'; } catch (e) {}
 let patNextView = -1;          // was der Klang-Kern in der Warteschlange hat
 let meterPeak = 0;
+let insertReduction = [];
 let songView = {on: false, pos: -1};    // was der Klang-Kern ueber den Song sagt
 const P = [];                 // Parametertabelle, aus dem Kern gelesen
 const el = id => document.getElementById(id);
@@ -695,7 +696,7 @@ async function boot() {
     X.scDemo();
     for (let i = 0; i < X.scNParams(); i++) {
       P.push({i, id: str(X.scParamId(i)), name: str(X.scParamName(i)),
-              scope: X.scParamScope(i), slot: X.scParamSlot(i),
+              scope: X.scParamScope(i), slot: X.scParamSlot(i), insert: X.scInsertStage(i),
               lo: X.scParamLo(i), hi: X.scParamHi(i), flags: X.scParamFlags(i)});
     }
     buildRail(); buildPats(); buildPads(); buildParams(); tick();
@@ -722,6 +723,7 @@ async function audioOn() {
   node.onprocessorerror = e => console.error('Audio-Kern:', e);
   node.port.onmessage = e => {
     if (e.data.type === 'pos') {
+      insertReduction = e.data.insertReduction || [];
       posSteps = e.data.steps;
       patNextView = e.data.next;
       songView = {on: !!e.data.songOn, pos: e.data.songPos, mute: e.data.songMute || 0};
@@ -967,7 +969,7 @@ function buildPages() {
 }
 function clearLocks(s) {
   for (const p of P)
-    if (sel === FXT ? (p.scope !== 1 && /^(fx\.|master\.)/.test(p.id)) : p.scope === 1) cmd('scLockClear', sel, s, p.slot);
+    if (sel === FXT ? (p.scope !== 1 && /^(fx\.|master\.)/.test(p.id)) : (p.scope === 1 && p.insert < 0)) cmd('scLockClear', sel, s, p.slot);
 }
 function openLock(s) {
   if (sceneEdit >= 0) closeScene();
@@ -997,7 +999,7 @@ function buildParams() {
   tabs.id = 'ptabs';
   box.appendChild(tabs);
   const gruppen = [];
-  let group = '', modKopf = '';
+  let group = '', modKopf = '', insertHead = '';
   const fxSpur = sel === FXT;                // FX-Spur: nur die Effekte, ohne Reiter
   tabs.hidden = fxSpur;
   for (const p of P) {
@@ -1025,6 +1027,16 @@ function buildParams() {
       const h = document.createElement('div');
       h.className = 'grp lbl'; h.dataset.g = g;
       h.textContent = {lfo1: 'LFO 1', lfo2: 'LFO 2', menv: 'MOD ENVELOPE'}[key];
+      box.appendChild(h);
+    }
+    if (g === 'Inserts' && key !== insertHead) {
+      insertHead = key;
+      const h = document.createElement('div');
+      h.className = 'grp lbl'; h.dataset.g = g;
+      h.textContent = key === 'ins1' ? 'INSERT 1' : 'INSERT 2';
+      const meter = document.createElement('span');
+      meter.dataset.insertMeter = key === 'ins1' ? '0' : '1';
+      h.appendChild(meter);
       box.appendChild(h);
     }
     const row = document.createElement('div');
@@ -1091,6 +1103,7 @@ function zeigeGruppe() {
   for (const e of box.querySelectorAll('[data-g]'))
     if (!e.classList.contains('ptab'))
       e.hidden = e.dataset.g !== welche || (e.dataset.id === 'trk.smp' && !mitSample)
+                 || (e.dataset.g === 'Inserts' && e.dataset.p !== undefined && !X.scInsertVisible(sel, +e.dataset.p))
                  || (/^trk\.src\.[a-h]$/.test(e.dataset.id || '') && !rowName(P[+e.dataset.p]));
   for (const t of box.querySelectorAll('.ptab')) t.classList.toggle('cur', t.dataset.g === grpSel);
 }
@@ -1102,6 +1115,7 @@ const valueOf = p => {
     }
     return {v: X.scGet(-1, p.slot), locked: false};
   }
+  if (p.insert >= 0) return {v: X.scGet(sel, p.slot), locked: false};
   if (sceneEdit >= 0) {
     const sv = X.scSceneGet(sceneEdit, sel, p.slot);
     if (sv !== -32768) return {v: sv, locked: false, scene: true};
@@ -1118,6 +1132,11 @@ function writeValue(p, v) {
   if (p.scope !== 1) {
     if (sel === FXT && lockStep >= 0) cmd('scLockSet', FXT, lockStep, p.slot, v, 0);
     else cmd('scSet', -1, p.slot, v);
+    return;
+  }
+  if (p.insert >= 0) {
+    cmd('scSet', sel, p.slot, v);
+    if (p.id.endsWith('.type')) zeigeGruppe();
     return;
   }
   if (sceneEdit >= 0) { cmd('scSceneSet', sceneEdit, sel, p.slot, v); return; }
@@ -1281,7 +1300,8 @@ function openFineParam(p) {
   const qSlot = P.find(q => q.id === 'trk.quant').slot;
   const stufen = istNote && X.scPatScale(X.scPattern()) > 0 && X.scGet(sel, qSlot) > 0;
   const projekt = p.scope !== 1;
-  const lockMode = lockStep >= 0 && (!projekt || sel === FXT), sceneMode = sceneEdit >= 0 && !projekt;
+  const insert = p.insert >= 0;
+  const lockMode = !insert && lockStep >= 0 && (!projekt || sel === FXT), sceneMode = !insert && sceneEdit >= 0 && !projekt;
   openFine({
     title: rowName(p) + (sceneMode ? '  \u00b7  SCENE ' + 'AB'[sceneEdit]
                                    : lockMode ? '  \u00b7  LOCK STEP ' + (lockStep + 1) : '') + '   ' + p.id,
@@ -1386,6 +1406,14 @@ function paint() {
     pads[i].classList.toggle('now', playing && posSteps[sel] === s);
     pads[i].classList.toggle('held', s === lockStep);
     pads[i].querySelector('.lk').hidden = X.scNLocks(sel, s) === 0;
+  }
+  if (sel < FXT && grpSel === 'Inserts') {
+    for (const meter of el('params').querySelectorAll('[data-insert-meter]')) {
+      const stage = +meter.dataset.insertMeter;
+      const type = P.find(p => p.id === 'trk.ins' + (stage + 1) + '.type');
+      meter.textContent = X.scGet(sel, type.slot) === 2
+        ? 'GR ' + (insertReduction[sel * 2 + stage] || 0).toFixed(1) + ' dB' : '';
+    }
   }
   for (const row of el('params').querySelectorAll('.row')) {
     const p = P[+row.dataset.p];

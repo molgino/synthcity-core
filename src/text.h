@@ -6,6 +6,7 @@
 #include "dsp.h"
 #include "machine.h"
 #include "fx.h"
+#include "insert.h"
 #include "seq.h"
 #include "mod.h"
 #include <stdio.h>
@@ -68,6 +69,7 @@ inline const char* modField(const char* id) {
     return f;
 }
 inline int enumCount(const ParamDef& d) {
+    if (!strncmp(d.id, "trk.ins", 7) && d.kind == PK_ENUM) return d.hi + 1;
     if (!strcmp(d.id, "trk.machine"))  return machineCount();
     if (!strcmp(d.id, "fx.a.div"))     return DELAY_DIV_N;
     if (!strcmp(d.id, "trk.vmode"))    return 3;
@@ -113,6 +115,36 @@ inline int enumValue(const ParamDef& d, int i) {
 // mach: welche Machine die Spur gerade benutzt. Nur sie weiss, was ihre beiden eigenen
 // Regler bedeuten - 64 heisst bei POLY "kein Detune" und bei FM "Verhaeltnis 2.5 : 1".
 inline void paramText(const ParamDef& d, float v, char* out, int n, int mach = -1) {
+    if (!strncmp(d.id, "trk.ins", 7)) {
+        const char* field = d.id + 9;
+        int value = (int)v;
+        if (!strcmp(field, "type")) {
+            static const char* names[] = {"OFF", "CRUSH / DRIVE", "COMPRESSOR"};
+            snprintf(out, n, "%s", names[value >= 0 && value < INS_TYPE_COUNT ? value : 0]);
+            return;
+        }
+        if (!strcmp(field, "source")) {
+            if (value) snprintf(out, n, "TRACK %d", value);
+            else snprintf(out, n, "SELF");
+            return;
+        }
+        if (!strcmp(field, "rate")) {
+            if (value) {
+                float hz = crushRate(value);
+                if (hz >= 1000.0f) snprintf(out, n, "%.1f kHz", hz / 1000.0f);
+                else snprintf(out, n, "%.0f Hz", hz);
+            } else snprintf(out, n, "NATIVE");
+            return;
+        }
+        if (!strcmp(field, "bits")) {
+            if (value) snprintf(out, n, "%d bit", value);
+            else snprintf(out, n, "OFF");
+            return;
+        }
+        if (!strcmp(field, "tone") && value == d.hi) { snprintf(out, n, "OPEN"); return; }
+        if (!strcmp(field, "ratio")) { snprintf(out, n, "%d:1", value); return; }
+        if (!strcmp(field, "sc.hpf") && !value) { snprintf(out, n, "OFF"); return; }
+    }
     if (mach >= 0) {
         if (!strncmp(d.id, "trk.src.", 8) && d.id[8] >= 'a' && d.id[8] <= 'h' && !d.id[9]) {
             machineAt(mach)->text(d.id[8] - 'a', v, out, n); return;

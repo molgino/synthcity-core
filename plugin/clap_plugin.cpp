@@ -46,7 +46,7 @@ static void buildParams() {
     gPar[gNPar++] = {pidHash("ui.track"), "SPUR", "Spur", 1, NTRACKS, 1, PX_FOCUS, 0, -1};
     for (int i = 0; i < NPARAMS && gNPar < 128; i++) {
         if (PARAMS[i].scope != PS_TRACK) continue;
-        gPar[gNPar++] = {pidHash(PARAMS[i].id), PARAMS[i].name, "Spur",
+        gPar[gNPar++] = {pidHash(PARAMS[i].id), PARAMS[i].name, isInsertParam(i) ? (insertStage(i) ? "Spur/Insert 2" : "Spur/Insert 1") : "Spur",
                          (double)PARAMS[i].lo, (double)PARAMS[i].hi, (double)PARAMS[i].def,
                          PX_TRACK, (int16_t)paramSlot(i), (int16_t)i};
     }
@@ -82,10 +82,14 @@ struct Plug {
             if (!strcmp(PARAMS[p.pidx].id, "bpm")) eng.setTempo(eng.effTempo(eng.pat));
             break;
         case PX_TRACK:
+            eng.P.pat[eng.pat].used = 1;
             if (!strcmp(PARAMS[p.pidx].id, "trk.machine")) {
                 machineSelect(eng.P.pat[eng.pat].t[focus].p, (int)(v + 0.5));
                 needRescan = true;              // die beiden Quellregler stehen jetzt anders
-            } else eng.P.pat[eng.pat].t[focus].p[p.slot] = (int16_t)(v + 0.5);
+            } else {
+                double clamped = v < p.lo ? p.lo : v > p.hi ? p.hi : v;
+                eng.P.pat[eng.pat].t[focus].p[p.slot] = (int16_t)(clamped + (clamped < 0 ? -0.5 : 0.5));
+            }
             break;
         case PX_MORPH: eng.morph = (float)v; break;
         case PX_FILL:  eng.seq.fill = v > 0.5; break;
@@ -205,6 +209,7 @@ static bool stLoad(const clap_plugin_t* pl, const clap_istream_t* is) {
     }
     if (d.overflow) return false;
     projectFromDoc(d, P->eng.P);
+    P->eng.resetInserts();
     P->focus = d.get("ui.track", 0);
     P->eng.seq.bpm = P->eng.effTempo(P->eng.pat);
     P->eng.resetTrackValues();

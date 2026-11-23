@@ -208,12 +208,26 @@ int main(int argc, char** argv) {
         for (int i = 0; i < 20; i++) rmsAn += renderRms(p, 2048, ev, true, 150.0);
         chk(rmsAn > 0.01, "mit laufendem Transport kommt kein Klang");
 
+        clap_id threshold = CLAP_INVALID_ID;
+        for (uint32_t i = 0; i < pa->count(p); i++) {
+            clap_param_info_t ins;
+            if (pa->get_info(p, i, &ins) && !strcmp(ins.module, "Spur/Insert 2")
+                && !strcmp(ins.name, "THRESHOLD")) threshold = ins.id;
+        }
+        chk(threshold != CLAP_INVALID_ID, "Insert 2 threshold missing");
+        EvList edit;
+        edit.param(threshold, -31);
+        renderRms(p, 256, edit, false);
+        chk(pa->get_value(p, threshold, &v) && v == -31, "signed insert automation rounded incorrectly");
+
         // Sichern und in eine ZWEITE Instanz laden: dieselben Werte
         Mem out;
         clap_ostream_t os{&out, memWrite};
         chk(st->save(p, &os), "Zustand sichern fehlgeschlagen");
         chk(out.s.find("pat.0.trk.0.note = 45") != std::string::npos,
             "der gesicherte Zustand ist nicht das lesbare Dokument");
+        chk(out.s.find("pat.0.trk.0.ins2.threshold = -31") != std::string::npos,
+            "insert automation is missing from project state");
 
         const clap_plugin_t* p2 = fac->create_plugin(fac, &gHost, desc->id);
         p2->init(p2); p2->activate(p2, 48000.0, 32, 4096);
