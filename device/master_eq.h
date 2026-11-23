@@ -3,19 +3,23 @@
 #include <math.h>
 #include <string.h>
 
-static double masterEqResponseDb(const MasterBiquad (&bands)[3], double hz, double rate) {
+static double masterEqResponseDb(const MasterEq& eq, double hz, double rate) {
     const double angle = 6.283185307179586 * hz / rate;
     const double c = cos(angle), s = sin(angle);
     const double c2 = c * c - s * s, s2 = 2 * c * s;
     double power = 1.0;
-    for (const auto& band : bands) {
-        const double nr = band.b0 + band.b1 * c + band.b2 * c2;
-        const double ni = band.b1 * s + band.b2 * s2;
-        const double dr = 1.0 + band.a1 * c + band.a2 * c2;
-        const double di = band.a1 * s + band.a2 * s2;
-        power *= (nr * nr + ni * ni) / (dr * dr + di * di);
+    for (int i = 0; i < eq.count; i++) {
+        const auto& band = eq.bands[eq.enabled[i]];
+        for (int j = 0; j < band.count; j++) {
+            const MasterBiquad& filter = band.filter[j];
+            const double nr = filter.b0 + filter.b1 * c + filter.b2 * c2;
+            const double ni = filter.b1 * s + filter.b2 * s2;
+            const double dr = 1.0 + filter.a1 * c + filter.a2 * c2;
+            const double di = filter.a1 * s + filter.a2 * s2;
+            power *= (nr * nr + ni * ni) / (dr * dr + di * di);
+        }
     }
-    return 10.0 * log10(power);
+    return 10.0 * log10(fmax(power, 1e-16));
 }
 
 struct MasterSpectrum {

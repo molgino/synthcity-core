@@ -7,6 +7,34 @@ inline float crushRate(int value) {
     return 500.0f * exp2f((value - 1) * (6.5849625f / 126.0f));
 }
 
+inline const char* clipShapeName(int shape) {
+    static const char* names[] = {"Hard", "Cubic soft", "Tanh", "Arctan"};
+    return names[shape >= 0 && shape < CLIP_SHAPES ? shape : CLIP_HARD];
+}
+
+inline float clipTransfer(float x, int shape) {
+    switch (shape) {
+    case CLIP_CUBIC:
+        x *= 2.0f / 3.0f;
+        if (x >= 1.0f) return 1.0f;
+        if (x <= -1.0f) return -1.0f;
+        return 1.5f * x - 0.5f * x * x * x;
+    case CLIP_TANH: return tanhf(x);
+    case CLIP_ATAN: return atanf(x * 1.570796327f) * 0.636619772f;
+    default: return x > 1.0f ? 1.0f : x < -1.0f ? -1.0f : x;
+    }
+}
+
+inline float compressorReduction(float inputDb, float threshold, float knee, float slope) {
+    const float over = inputDb - threshold;
+    if (over <= -knee * 0.5f) return 0.0f;
+    if (knee > 0.0f && over < knee * 0.5f) {
+        const float distance = over + knee * 0.5f;
+        return slope * distance * distance / (2.0f * knee);
+    }
+    return slope * over;
+}
+
 struct StereoChorus {
     // Fixed buffers for the audio thread. Reset only the cursor and valid length.
     enum { BUFFER = 8192, TABLE = 256 };
@@ -81,7 +109,9 @@ struct StereoChorus {
 struct StereoInsert {
     struct Settings {
         InsertType type = INS_OFF;
-        int source = 0;
+        int source = 0, clipShape = CLIP_HARD;
+        float clipCeil = 1.0f, clipDrive = 1.0f;
+        float rmsCoeff = 0.0f, autoRelease = 0.0f;
         float mix = 0.0f, trim = 1.0f;
         float rate = 1.0f, levels = 0.0f, drive = 0.0f;
         float pre = 0.0f, tone = 0.0f;
@@ -96,7 +126,7 @@ struct StereoInsert {
     float rateHz = 0.0f, fadeStep = 1.0f;
     float wet = 0.0f, trim = 1.0f, drive = 0.0f;
     float phase = 1.0f, held[2] = {}, pre1[2] = {}, pre2[2] = {}, tone[2] = {};
-    float detector[2] = {}, peak = 0.0f, wantedGain = 1.0f, gain = 1.0f;
+    float detector[2] = {}, peak = 0.0f, wantedGain = 1.0f, gain = 1.0f, rmsPower = 0.0f;
     unsigned detectorClock = 0;
     StereoChorus chorus;
 
@@ -149,6 +179,12 @@ struct StereoInsert {
             s.attack = 1.0f - expf(-1000.0f / (p[INS_ATTACK] * sr));
             s.release = 1.0f - expf(-1000.0f / (p[INS_RELEASE] * sr));
             if (p[INS_SC_HPF]) s.hp = filterCoeff((float)p[INS_SC_HPF], sr);
+            if (p[INS_DETECT]) s.rmsCoeff = 1.0f - expf(-1.0f / (0.010f * sr));
+            if (p[INS_AUTO_RELEASE]) s.autoRelease = 1.0f - expf(-1.0f / (0.035f * sr));
+        } else if (s.type == INS_CLIP) {
+            s.clipShape = p[INS_CLIP_SHAPE];
+            s.clipCeil = dbGain(p[INS_CLIP_CEIL]);
+            s.clipDrive = dbGain(p[INS_DRIVE]) / s.clipCeil;
         } else if (s.type == INS_CHORUS) {
             s.chorusMode = p[INS_CH_MODE];
             s.chorusSpeed = p[INS_CH_RATE] * 0.01f / sr;
@@ -162,14 +198,16 @@ struct StereoInsert {
         if (sameAlgorithm()) active = next;
     }
     bool sameAlgorithm() const {
-        return active.type == next.type && (active.type != INS_CHORUS || active.chorusMode == next.chorusMode);
+        return active.type == next.type
+            && (active.type != INS_CHORUS || active.chorusMode == next.chorusMode)
+            && (active.type != INS_CLIP || active.clipShape == next.clipShape);
     }
     void resetState() {
         trim = active.trim;
         drive = active.drive;
         phase = 1.0f;
         for (int c = 0; c < 2; c++) held[c] = pre1[c] = pre2[c] = tone[c] = detector[c] = 0.0f;
-        peak = 0.0f;
+        peak = rmsPower = 0.0f;
         gain = wantedGain = 1.0f;
         detectorClock = 0;
     }
@@ -226,6 +264,9 @@ struct StereoInsert {
         } else if (active.type == INS_CHORUS) {
             chorus.run(y, active.chorusMode, active.chorusSpeed, active.chorusDepth,
                        active.chorusWidth, active.chorusSamplesPerMs, fadeStep);
+        } else if (active.type == INS_CLIP) {
+            for (float& sample : y)
+                sample = active.clipCeil * clipTransfer(sample * active.clipDrive, active.clipShape);
         } else {
             if (!active.source) { keyL = l; keyR = r; }
             if (active.hp) {
@@ -233,22 +274,31 @@ struct StereoInsert {
                 detector[1] += active.hp * (keyR - detector[1]);
                 keyL -= detector[0]; keyR -= detector[1];
             }
-            float p = fabsf(keyL) > fabsf(keyR) ? fabsf(keyL) : fabsf(keyR);
-            if (p > peak) peak = p;
-            // Peak hold keeps short transients in the detector with one logarithm per 16 samples.
+            if (active.rmsCoeff) {
+                const float power = 0.5f * (keyL * keyL + keyR * keyR);
+                rmsPower = undenorm(rmsPower + active.rmsCoeff * (power - rmsPower));
+            } else {
+                const float p = fabsf(keyL) > fabsf(keyR) ? fabsf(keyL) : fabsf(keyR);
+                if (p > peak) peak = p;
+            }
+            // A peak window catches short transients. RMS uses a 10 ms detector.
             if ((detectorClock++ & 15) == 0) {
                 wantedGain = 1.0f;
-                if (peak > active.quiet && active.slope > 0.0f) {
-                    float over = 20.0f * log10f(peak) - active.threshold;
-                    if (active.knee && over < active.knee * 0.5f) {
-                        float k = over + active.knee * 0.5f;
-                        over = k * k / (2.0f * active.knee);
-                    }
-                    wantedGain = dbGain(-over * active.slope);
-                }
+                const float level = active.rmsCoeff ? sqrtf(rmsPower) : peak;
+                if (level > active.quiet && active.slope > 0.0f)
+                    wantedGain = dbGain(-compressorReduction(20.0f * log10f(level), active.threshold, active.knee, active.slope));
                 peak = 0.0f;
             }
-            gain += (wantedGain < gain ? active.attack : active.release) * (wantedGain - gain);
+            float release = active.release;
+            if (active.autoRelease > 0.0f) {
+                // Let small reductions recover quickly while heavier reductions use a slower tail.
+                const bool autoIsFast = active.autoRelease > release;
+                const float fast = autoIsFast ? active.autoRelease : release;
+                const float slow = autoIsFast ? release : active.autoRelease;
+                const float blend = gain * gain * gain;
+                release = slow + blend * (fast - slow);
+            }
+            gain += (wantedGain < gain ? active.attack : release) * (wantedGain - gain);
             y[0] *= gain; y[1] *= gain;
         }
         trim = slew(trim, active.trim, fadeStep);

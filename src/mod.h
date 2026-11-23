@@ -44,7 +44,54 @@ static const ModDest MOD_DESTS[] = {
     {"SAMPLE", "trk.smp", 63, true},
     {"SRC C", "trk.src.c", 127, false}, {"SRC D", "trk.src.d", 127, false}, {"SRC E", "trk.src.e", 127, false},
     {"SRC F", "trk.src.f", 127, false}, {"SRC G", "trk.src.g", 127, false}, {"SRC H", "trk.src.h", 127, false},
-    {"BW BASE", "trk.bw.base", 127, false}, {"BW WIDTH", "trk.bw.width", 127, false}};
+    {"BW BASE", "trk.bw.base", 127, false}, {"BW WIDTH", "trk.bw.width", 127, false},
+    {"FILTER ENV SOURCE", "trk.flt.envmode", 1, true},
+    {"FILTER ATTACK", "trk.flt.atk", 127, true},
+    {"FILTER DECAY", "trk.flt.dec", 127, true},
+    {"FILTER SUSTAIN", "trk.flt.sus", 100, true},
+    {"FILTER RELEASE", "trk.flt.rel", 127, true},
+    {"OSC 1 WAVE", "trk.poly1.wave", 3, false},
+    {"OSC 1 VOL", "trk.poly1.level", 100, false},
+    {"OSC 1 TUNE", "trk.poly1.tune", 48, false},
+    {"OSC 1 FINE", "trk.poly1.fine", 200, false},
+    {"OSC 1 PW", "trk.poly1.pw", 95, false},
+    {"OSC 2 WAVE", "trk.poly2.wave", 3, false},
+    {"OSC 2 VOL", "trk.poly2.level", 100, false},
+    {"OSC 2 TUNE", "trk.poly2.tune", 48, false},
+    {"OSC 2 FINE", "trk.poly2.fine", 200, false},
+    {"OSC 2 PW", "trk.poly2.pw", 95, false},
+    {"OP C RATIO", "trk.fm1.ratio", 1600, false},
+    {"OP C LEVEL", "trk.fm1.level", 101, false},
+    {"OP C FINE", "trk.fm1.fine", 200, false},
+    {"OP C ENV", "trk.fm1.env", 1, true},
+    {"OP C ATK", "trk.fm1.atk", 127, true},
+    {"OP C DEC", "trk.fm1.dec", 127, true},
+    {"OP C SUS", "trk.fm1.sus", 100, true},
+    {"OP C REL", "trk.fm1.rel", 127, true},
+    {"OP A RATIO", "trk.fm2.ratio", 1600, false},
+    {"OP A LEVEL", "trk.fm2.level", 101, false},
+    {"OP A FINE", "trk.fm2.fine", 200, false},
+    {"OP A ENV", "trk.fm2.env", 1, true},
+    {"OP A ATK", "trk.fm2.atk", 127, true},
+    {"OP A DEC", "trk.fm2.dec", 127, true},
+    {"OP A SUS", "trk.fm2.sus", 100, true},
+    {"OP A REL", "trk.fm2.rel", 127, true},
+    {"OP B1 RATIO", "trk.fm3.ratio", 1600, false},
+    {"OP B1 LEVEL", "trk.fm3.level", 101, false},
+    {"OP B1 FINE", "trk.fm3.fine", 200, false},
+    {"OP B1 ENV", "trk.fm3.env", 1, true},
+    {"OP B1 ATK", "trk.fm3.atk", 127, true},
+    {"OP B1 DEC", "trk.fm3.dec", 127, true},
+    {"OP B1 SUS", "trk.fm3.sus", 100, true},
+    {"OP B1 REL", "trk.fm3.rel", 127, true},
+    {"OP B2 RATIO", "trk.fm4.ratio", 1600, false},
+    {"OP B2 LEVEL", "trk.fm4.level", 101, false},
+    {"OP B2 FINE", "trk.fm4.fine", 200, false},
+    {"OP B2 ENV", "trk.fm4.env", 1, true},
+    {"OP B2 ATK", "trk.fm4.atk", 127, true},
+    {"OP B2 DEC", "trk.fm4.dec", 127, true},
+    {"OP B2 SUS", "trk.fm4.sus", 100, true},
+    {"OP B2 REL", "trk.fm4.rel", 127, true}};
 enum { MOD_NDEST = (int)(sizeof MOD_DESTS / sizeof *MOD_DESTS) };
 inline int modDestSlot(int d) {
     static int s[MOD_NDEST] = {-2};
@@ -53,8 +100,15 @@ inline int modDestSlot(int d) {
 }
 // Welches Ziel gehoert zu einem Spur-Slot? (-1: keins)
 inline int modDestOfSlot(int slot) {
-    for (int d = 1; d < MOD_NDEST; d++) if (modDestSlot(d) == slot) return d;
-    return -1;
+    struct DestMap {
+        int bySlot[VOICE_PARAM_CAP];
+        DestMap() {
+            for (int& d : bySlot) d = -1;
+            for (int d = 1; d < MOD_NDEST; d++) bySlot[modDestSlot(d)] = d;
+        }
+    };
+    static const DestMap map;
+    return slot >= 0 && slot < VOICE_PARAM_CAP ? map.bySlot[slot] : -1;
 }
 // Bereich eines Ziels - einmal nachgeschlagen (vorher lief je Steuertakt eine Namenssuche).
 inline void modDestRange(int d, float& lo, float& hi) {

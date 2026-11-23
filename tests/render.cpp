@@ -1742,6 +1742,170 @@ int main() {
         chk(fabsf(meter.integrated() - loud) < 0.8f, "gating did not exclude silence");
     }
 
+    grp("Extended synth and filter controls");
+    {
+        auto sustained = [&](int machine) -> Track& {
+            e.prepare(48000);
+            e.pat = 0;
+            setupBeat(e, 69);
+            Track& t = e.P.pat[0].t[0];
+            for (int i = 1; i < 16; i++) t.s[i].on = 0;
+            machineSelect(t.p, machine);
+            t.p[SL("trk.amp.sus")] = 100;
+            t.p[SL("trk.len")] = LEN_INF;
+            e.mute[0] = false;
+            return t;
+        };
+        float* a = buf(24000);
+        Track& poly = sustained(0);
+        poly.p[SL("trk.poly1.level")] = 0;
+        poly.p[SL("trk.poly2.wave")] = 3;
+        poly.p[SL("trk.src.g")] = 0;
+        poly.p[SL("trk.src.h")] = 0;
+        poly.s[0].setLock(SL("trk.poly2.fine"), 100);
+        e.start();
+        e.render(a, 24000);
+        chk(bin(a, 24000, 466.164f, 48000) > 12 * bin(a, 24000, 440, 48000),
+            "POLY oscillator 2 plays at its individually locked fine pitch");
+        poly.p[SL("trk.poly2.level")] = 0;
+        e.render(a, 24000);
+        chk(rms(a + 2000 * 2, 20000) < 1e-5f, "POLY oscillator volumes are independently editable during a note");
+
+        Track& fm = sustained(1);
+        fm.p[SL("trk.src.c")] = 120; // all four operators are carriers
+        fm.p[SL("trk.fm1.level")] = 0;
+        fm.p[SL("trk.fm2.level")] = 0;
+        fm.p[SL("trk.fm3.level")] = 0;
+        fm.p[SL("trk.fm4.level")] = 100;
+        fm.p[SL("trk.fm4.ratio")] = 100;
+        fm.p[SL("trk.fm4.fine")] = 100;
+        fm.p[SL("trk.fm4.env")] = 1;
+        fm.p[SL("trk.fm4.dec")] = 70;
+        fm.p[SL("trk.fm4.sus")] = 0;
+        e.start();
+        e.render(a, 24000);
+        chk(bin(a, 3300, 466.164f, 48000) > 4 * bin(a, 3300, 440.0f, 48000),
+            "FM operator B2 has its own ratio and fine tuning");
+        chk(rms(a, 3000) > 40 * rms(a + 18000 * 2, 4000),
+            "An independent FM operator envelope shapes the output");
+
+        Track& filter = sustained(0);
+        filter.p[SL("trk.poly1.wave")] = 3;
+        filter.p[SL("trk.poly2.level")] = 0;
+        filter.p[SL("trk.src.h")] = 0;
+        filter.p[SL("trk.flt.freq")] = 34;
+        filter.p[SL("trk.flt.env")] = 127;
+        filter.p[SL("trk.flt.envmode")] = 1;
+        filter.p[SL("trk.flt.atk")] = 54;
+        filter.p[SL("trk.flt.dec")] = 75;
+        filter.p[SL("trk.flt.sus")] = 0;
+        e.start();
+        e.render(a, 24000);
+        chk(rms(a + 1700 * 2, 1000) > 3.5f * rms(a + 19000 * 2, 3000),
+            "Filter ADSR closes the cutoff while the amp envelope sustains");
+
+        static Doc doc;
+        doc.clear();
+        e.P.g[SL("master.eq7.shape")] = EQ_NOTCH;
+        e.P.g[SL("fx.lfo2.dest")] = 19;
+        filter.s[0].setLock(SL("trk.fm4.fine"), -50);
+        projectToDoc(e.P, doc);
+        static Project copy;
+        projectFromDoc(doc, copy);
+        const Lock* locked = copy.pat[0].t[0].s[0].findLock(SL("trk.fm4.fine"));
+        chk(copy.g[SL("master.eq7.shape")] == EQ_NOTCH && copy.g[SL("fx.lfo2.dest")] == 19 &&
+            copy.pat[0].t[0].p[SL("trk.flt.envmode")] == 1 && locked && locked->val == -50,
+            "New global parameters, track parameters and extended step locks survive a project round trip");
+    }
+
+    grp("Clipper and expanded send effects");
+    {
+        int16_t clipper[INSERT_FIELDS] = {};
+        clipper[INS_TYPE] = INS_CLIP;
+        clipper[INS_MIX] = 100;
+        clipper[INS_CLIP_CEIL] = -6;
+        clipper[INS_DRIVE] = 6;
+        static StereoInsert shaper;
+        for (int shape = 0; shape < CLIP_SHAPES; shape++) {
+            shaper.reset();
+            clipper[INS_CLIP_SHAPE] = (int16_t)shape;
+            shaper.configure(clipper, 48000);
+            float l = 0, r = 0;
+            for (int i = 0; i < 300; i++) {
+                l = 2; r = -2;
+                shaper.advance();
+                shaper.process(l, r, 0, 0);
+            }
+            chk(l > 0.40f && l <= 0.502f && fabsf(l + r) < 1e-6f,
+                "Track clipper shapes stereo symmetrically within its ceiling");
+        }
+        chk(clipTransfer(0.9f, CLIP_HARD) > clipTransfer(0.9f, CLIP_CUBIC) &&
+            clipTransfer(0.9f, CLIP_TANH) > clipTransfer(0.9f, CLIP_ATAN),
+            "The clipper algorithms have distinct transfer curves");
+
+        auto reduction = [&](bool rmsDetector) {
+            shaper.reset();
+            int16_t settings[INSERT_FIELDS] = {};
+            settings[INS_TYPE] = INS_COMPRESS;
+            settings[INS_MIX] = 100;
+            settings[INS_DETECT] = rmsDetector;
+            settings[INS_THRESHOLD] = -16;
+            settings[INS_RATIO] = 4;
+            settings[INS_ATTACK] = 1;
+            settings[INS_RELEASE] = 100;
+            settings[INS_AUTO_RELEASE] = 1;
+            shaper.configure(settings, 48000);
+            for (int i = 0; i < 48000; i++) {
+                float l = i % 64 ? 0.0f : 1.0f, r = l;
+                shaper.advance();
+                shaper.process(l, r, 0, 0);
+            }
+            return shaper.reductionDb();
+        };
+        const float peakReduction = reduction(false), rmsReduction = reduction(true);
+        chk(peakReduction > 6 && rmsReduction < 1, "Peak and RMS detectors respond differently to short transients");
+
+        using F = FxControls;
+        static Project p;
+        projectInit(p);
+        p.g[SL("fx.a.mode")] = DLY_STEREO;
+        p.g[SL("fx.a.timing")] = DLY_FREE;
+        p.g[SL("fx.a.msl")] = 7;
+        p.g[SL("fx.a.msr")] = 11;
+        p.g[SL("fx.b.mode")] = REV_ROOM;
+        p.g[SL("fx.b.pre")] = 20;
+        p.g[SL("fx.lfo1.dest")] = 1;
+        p.g[SL("fx.lfo2.dest")] = 1;
+        p.g[SL("fx.lfo1.wave")] = LFO_SQR;
+        p.g[SL("fx.lfo2.wave")] = LFO_SQR;
+        p.g[SL("fx.lfo1.depth")] = 100;
+        p.g[SL("fx.lfo2.depth")] = -100;
+        F controls;
+        controls.read([&](int slot) { return p.g[slot]; });
+        int settings[F::FIELDS];
+        controls.values(settings, 0, 48000, 120);
+        chk(controls.active && settings[F::D_FB] == p.g[SL("fx.a.fb")], "Both FX LFOs sum before the destination is clamped");
+        p.g[SL("fx.lfo2.dest")] = 12;
+        controls.read([&](int slot) { return p.g[slot]; });
+        controls.values(settings, 0, 48000, 120);
+        chk(settings[F::D_FB] == 127 && settings[F::R_DAMP] == 0,
+            "The two FX LFOs independently modulate delay and reverb destinations");
+        static float left[9600], right[9600], outL[9600], outR[9600];
+        left[0] = 1; right[0] = -1;
+        e.delay.reset();
+        e.delay.configure(settings, 120, 48000);
+        e.delay.run(left, right, outL, outR, 9600, 0.0f, 1.0f, 1.0f);
+        chk(outL[7 * 48] == 1.0f && outR[11 * 48] == -1.0f && outR[7 * 48] == 0.0f,
+            "Free delay times produce distinct left and right taps");
+        memset(outL, 0, sizeof outL);
+        memset(outR, 0, sizeof outR);
+        e.reverb.reset();
+        e.reverb.configure(settings, 48000);
+        e.reverb.run(left, right, outL, outR, 9600, 0.3f, 1.0f);
+        chk(rms(outL, 20 * 48, 1) == 0.0f && rms(outL + 960, 8640, 1) > 0.0001f,
+            "Room reverb preserves side energy and delays the wet onset");
+    }
+
     grp("Referenz-Aufnahme");
     {
         const int N = 96000;                         // zwei Sekunden

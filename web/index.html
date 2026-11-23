@@ -594,7 +594,8 @@ const spurName = t => t === FXT ? 'FX' : 'Track ' + (t + 1);
 const GROUP = {note: 'Anschlag', vel: 'Anschlag', len: 'Anschlag', prob: 'Anschlag',
                cond: 'Anschlag', micro: 'Anschlag', ratchet: 'Anschlag', quant: 'Anschlag',
                nt2: 'Akkord', nt3: 'Akkord', nt4: 'Akkord', vmode: 'Akkord',
-               machine: 'Quelle', smp: 'Quelle', src: 'Quelle', flt: 'Filter', bw: 'Filter',
+               machine: 'Quelle', smp: 'Quelle', src: 'Quelle', poly1: 'Quelle', poly2: 'Quelle',
+               fm1: 'Quelle', fm2: 'Quelle', fm3: 'Quelle', fm4: 'Quelle', flt: 'Filter', bw: 'Filter',
                amp: 'Huellkurve', vol: 'Ausgang', pan: 'Ausgang', send: 'Ausgang',
                lfo1: 'Mod', lfo2: 'Mod', menv: 'Mod', ins1: 'Inserts', ins2: 'Inserts'};
 
@@ -1033,6 +1034,15 @@ function buildParams() {
       h.textContent = {lfo1: 'LFO 1', lfo2: 'LFO 2', menv: 'MOD ENVELOPE'}[key];
       box.appendChild(h);
     }
+    if (/^(poly[12]|fm[1-4])$/.test(key) && key !== modKopf) {
+      modKopf = key;
+      const h = document.createElement('div');
+      h.className = 'grp lbl';
+      h.dataset.g = g;
+      h.dataset.source = p.i;
+      h.textContent = key.startsWith('poly') ? 'OSCILLATOR ' + key[4] : 'OPERATOR ' + ['C', 'A', 'B1', 'B2'][+key[2] - 1];
+      box.appendChild(h);
+    }
     if (g === 'Inserts' && key !== insertHead) {
       insertHead = key;
       const h = document.createElement('div');
@@ -1064,10 +1074,10 @@ function buildParams() {
   // Effekte und Summe gehoeren dem Projekt: sie stehen nur auf der FX-Spur (ohne gehaltenen
   // Step der Grundwert, mit gehaltenem Step der Lock) - nicht doppelt als Reiter jeder Spur.
   let fxKopf = '';
-  const fxReihe = id => id.startsWith('fx.a') ? 0 : id.startsWith('fx.b') ? 1 : 2;
+  const fxReihe = id => id.startsWith('fx.a') ? 0 : id.startsWith('fx.b') ? 1 : id.startsWith('master.') ? 2 : id.startsWith('fx.lfo1.') ? 3 : 4;
   for (const p of P.filter(q => q.scope !== 1 && /^(fx\.|master\.)/.test(q.id))
                    .sort((a, b) => fxReihe(a.id) - fxReihe(b.id) || a.i - b.i)) {
-    const k = p.id.startsWith('fx.a') ? 'DELAY (SEND A)' : p.id.startsWith('fx.b') ? 'REVERB (SEND B)' : 'MASTER';
+    const k = p.id.startsWith('fx.a') ? 'DELAY (SEND A)' : p.id.startsWith('fx.b') ? 'REVERB (SEND B)' : p.id.startsWith('fx.lfo1.') ? 'FX LFO 1' : p.id.startsWith('fx.lfo2.') ? 'FX LFO 2' : 'MASTER';
     if (k !== fxKopf) {
       fxKopf = k;
       const h = document.createElement('div');
@@ -1107,6 +1117,8 @@ function zeigeGruppe() {
   for (const e of box.querySelectorAll('[data-g]'))
     if (!e.classList.contains('ptab'))
       e.hidden = e.dataset.g !== welche || (e.dataset.id === 'trk.smp' && !mitSample)
+                 || ((e.dataset.source ?? e.dataset.p) !== undefined && X.scSourceVisible
+                     && !X.scSourceVisible(+(e.dataset.source ?? e.dataset.p), machOf(sel)))
                  || (e.dataset.g === 'Inserts' && e.dataset.p !== undefined && !X.scInsertVisible(sel, +e.dataset.p))
                  || (/^trk\.src\.[a-h]$/.test(e.dataset.id || '') && !rowName(P[+e.dataset.p]));
   for (const t of box.querySelectorAll('.ptab')) t.classList.toggle('cur', t.dataset.g === grpSel);

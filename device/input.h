@@ -4,7 +4,7 @@
 
 enum Btn {
     BT_UP, BT_DOWN, BT_LEFT, BT_RIGHT, BT_A, BT_B, BT_X, BT_Y,
-    BT_L1, BT_R1, BT_L2, BT_R2, BT_SELECT, BT_START, BT_COUNT
+    BT_L1, BT_R1, BT_L2, BT_R2, BT_SELECT, BT_START, BT_FN, BT_COUNT
 };
 extern const char* const BTN_NAMES[BT_COUNT];
 
@@ -18,6 +18,7 @@ struct Input {
     int axLX = -1, axRX = -1, sgnLX = 1, sgnRX = 1;   // sgn: Vorzeichen fuer "rechts"
     bool haveLX = false, haveRX = false;
     bool haveMap = false;
+    int fnFd = -1;
 
     bool down[BT_COUNT] = {false}, prev[BT_COUNT] = {false};
     Uint32 downSince[BT_COUNT] = {0}, lastRep[BT_COUNT] = {0};

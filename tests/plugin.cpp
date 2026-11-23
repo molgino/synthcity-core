@@ -1,6 +1,7 @@
 // Prueft das CLAP-Plugin so, wie ein Host es benutzt: Bibliothek laden, Einstieg suchen,
 // erzeugen, Parameter setzen, Zustand sichern und wieder laden, rendern.
 // Hier faellt auf, ob das Datenmodell trug - das Plugin darf kaum eigenen Code brauchen.
+#include "../src/model.h"
 #include <clap/clap.h>
 #include <dlfcn.h>
 #include <stdio.h>
@@ -148,7 +149,7 @@ int main(int argc, char** argv) {
     grp("Parameterliste kommt aus der Tabelle");
     {
         uint32_t n = pa->count(p);
-        chk(n > 20 && n < 180, "unplausible Parameterzahl");
+        chk(n == NPARAMS + NTRACKS + 3u, "parameter count does not match the declared controls");
         std::vector<clap_id> seen;
         bool bereichOk = true, textOk = true;
         clap_param_info_t info;

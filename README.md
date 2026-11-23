@@ -581,6 +581,8 @@ Gerät und umgekehrt.
 | L1 / R1 oder B + ▲▼ | Spur 1–8, FX-Spur. B + ▲▼ gilt in der TRACK-Ansicht. |
 | L2 / R2 | Ansicht TRACK / SONG / PROJECT |
 | ▲▼ | Regler · ◀▶ Step-Cursor · B + ◀▶ Reiter (TRIG CHRD SRC FLTR AMP MIX MOD INS) |
+| FN + Pfeile | Step-Bereich markieren. Links/rechts erweitert über Steps, hoch/runter über Audiospuren. Auf der FX-Spur springt hoch/runter in 16er-Schritten. |
+| FN + X / Y | Bereich kopieren / ab Cursor einfügen. Ohne Auswahl kopiert FN + X den aktuellen Step. FN + B hebt die Auswahl auf. |
 | X / Y | Wert hoch / runter (B gehalten = grob, lange halten = schneller) |
 | A antippen | Trig an/aus |
 | A halten + X/Y | Lock auf dem Step (auf leerem Step: trigless) · A halten + B: Locks des Steps löschen |
@@ -699,7 +701,7 @@ seine Attack- und Decay-Phasen unabhängig von den Noten wiederholen.
 [Digitakt-Handbuch, Abschnitt 11.7](https://www.elektron.se/wp-content/uploads/2025/07/Digitakt-User-Manual_ENG_OS1.52A_250708.pdf)
 
 Auf der **FX-Spur** unter **Master → Chain** lässt sich die Mastering-Kette einschalten.
-Sie enthält Trim, einen Drei-Band-EQ, Stereo-Bus-Kompressor, optionales Soft Clipping
+Sie enthält Trim, einen Achtband-EQ, Stereo-Bus-Kompressor, optionales Soft Clipping
 und einen latenzfreien Limiter. **A/B Dry** schaltet beim Abhören RMS-pegelangepasst auf
 das unbearbeitete Signal. Der 24-Bit-Song-Export nutzt den bearbeiteten Mix und zeigt
 Integrated LUFS und den vierfach interpolierten, geschätzten Spitzenpegel. Auf dem
@@ -708,21 +710,57 @@ Sicherheitsreserve für diese Interpolation. Ältere Projekte starten mit ausges
 Mastering-Kette.
 
 Am R36S öffnet **SELECT → Visual Master EQ** die Frequenzkurve mit Live-Spektrum
-des Master-Ausgangs. Auf einem Regler unter **FX → Master EQ** geht das direkt mit
-**SELECT + X**. Mit **Links/Rechts** wählst du Tiefen-Shelf, Mitten-Bell oder Höhen-Shelf.
-**Hoch/Runter** ändert den Gain in 1-dB-Schritten, **L1/R1** verschiebt die Mittenfrequenz,
-und **Y** setzt den Gain des gewählten Bands auf 0 dB. **A** schaltet die gesamte
-Mastering-Kette ein oder aus, **X** wechselt zwischen bearbeitetem Mix und **A/B Dry**.
-**START** steuert die Wiedergabe, **B** schließt die Ansicht. Die EQ-Einstellungen werden
-mit dem Projekt gespeichert.
+des Master-Ausgangs. Auf einem EQ-Regler der FX-Spur geht das direkt mit **SELECT + X**.
+**Links/Rechts** wechselt zwischen acht Bändern, **X** zwischen Shape, Frequenz, Gain und Q.
+**Hoch/Runter** bearbeitet das Feld, **L1/R1** verschiebt direkt die Frequenz des gewählten Bands,
+**Y** setzt das Feld zurück, **A** schaltet die Master-Chain und **R2** wechselt A/B.
+Pro Band gibt es Bell, Low/High Shelf, Tief- und Hochpass mit 12 oder 24 dB/Oktave,
+Notch, Bandpass und Off. Die drei bisherigen EQ-Werte werden als Bänder 1, 4 und 8 geladen.
+
+**SELECT + X** öffnet auch die Detailansichten von Master-Kompressor, Limiter und Clipper,
+von Track-Kompressor und Track-Clipper sowie von Filter-, Amp-, Mod- und FM-Operator-Envelopes.
+**Links/Rechts** wählt einen Regler, **Hoch/Runter** ändert den Wert, **L1/R1** ändert ihn gröber.
+**START** steuert die Wiedergabe, **B** schließt die Ansicht. Kompressor und Limiter zeigen
+eine statische Kennlinie und den Verlauf der Gain Reduction. Auf dem Gerät läuft die
+Spektrumanalyse nur im EQ-Fenster und die Verlaufsmessung nur im geöffneten Dynamikfenster.
+
+## Send-Effekte auf der FX-Spur
+
+**Delay** bietet Ping Pong, Stereo und Tape. **Linked Sync** nutzt dieselbe Teilung für beide
+Kanäle, **Dual Sync** trennt die Notenwerte, **Free L/R** stellt beide Seiten in Millisekunden ein.
+**Base** setzt den Hochpass, **Width** die Öffnung des Tiefpasses in Oktaven. Tape bietet Wow,
+Flutter und Drive sowie gleitende Zeitänderungen.
+
+**Reverb** bietet Studio, Room, Plate und Hall. Dazu kommen Predelay, die Eingangsfilter HPF/LPF,
+Low- und High-Shelf mit einstellbarer Frequenz auf dem Effekt-Return und Stereo-Width.
+
+**B + Rechts** öffnet auf der FX-Spur den **MOD**-Reiter, **B + Links** kehrt zu **FX** zurück.
+Beide FX-LFOs haben Wellenform, synchronisierten Notenwert oder freie Rate in Hz, Phase,
+bipolare Tiefe und eigene Ziele auf den beiden Sends. Die FX-Spur kann ihre Werte pro Step locken.
+
+## Filter-Envelope, POLY und FM
+
+Im **FLTR**-Reiter schaltet **ENV SOURCE** zwischen Amp-Link und eigenem Filter-ADSR um.
+**ENV** legt Betrag und Richtung der Cutoff-Modulation fest. Der Filter-ADSR folgt dem Notengate.
+Mit **A** lässt sich seine Quelle direkt in der Detailansicht umschalten.
+
+**POLY** hat im **SRC**-Reiter getrennte Wellenform, Lautstärke, Grob- und Feinstimmung und
+Pulsbreite für beide Oszillatoren. Die gemeinsame Saw/Pulse-Mischung lässt sich pro Oszillator
+durch Saw, Pulse oder Sine ersetzen. **FM** hat pro Operator C, A, B1 und B2 einstellbares
+Ratio, Level, Detune und einen eigenen zuschaltbaren ADSR. **B + SELECT** springt zu den
+Oszillator- und Operator-Gruppen. Die neuen Regler stehen als Locks und Modulationsziele zur Verfügung.
+
+Falls die FN-Taste nicht als Guide oder Linux-FN erkannt wird, lässt sie sich unter
+**SYSTEM → Learn buttons** zuordnen. Auf einer Tastatur entspricht **F** der FN-Taste.
 
 ## Insert-Effekte
 
 Auf jeder Audiospur stehen im Reiter **INS** zwei serielle Stereo-Inserts zur Verfügung.
 **Crush / Drive** hat getrennte Regler für Abtastrate und Bit-Tiefe, einen optionalen Filter
 vor der Abtastratenreduktion, Drive, Tone, Output und Mix. **Compressor** bietet Threshold,
-Ratio, Attack, Release, Knee, Output, Mix und einen Sidechain-Hochpass. **Sidechain** wählt
-SELF oder eine der acht Spuren. Die Anzeige GR zeigt die Gain Reduction in dB.
+Ratio, Attack, Release, Knee, Peak/RMS-Erkennung, Auto Release, Output, Mix und einen Sidechain-Hochpass. **Sidechain** wählt
+SELF oder eine der acht Spuren. **Clipper** bietet Hard, Cubic Soft, Tanh und Arctan mit Drive,
+Ceiling, Output und Mix. Die Anzeige GR zeigt die Gain Reduction in dB.
 **Chorus** hat die Charaktere **Classic** (ein modulierter Delay-Abgriff pro Seite)
 und **Ensemble** (zwei versetzte Abgriffe pro Seite). Rate, Depth, Width, Mix und Output
 sind einstellbar. Bei Width = 0 bleibt ein Mono-Signal in der Mitte.

@@ -36,6 +36,24 @@ inline float softSat(float x) {
     return x * (27.0f + x2) / (27.0f + 9.0f * x2);
 }
 
+struct AdsrSlots {
+    int attack, decay, sustain, release;
+    void setup(Env& env, const float* p, float sr) const {
+        env.setup(pTime(p[attack]), pTime(p[decay]), p[sustain] * 0.01f, pTime(p[release]), sr);
+    }
+};
+
+inline AdsrSlots adsrSlots(const char* prefix) {
+    const char* fields[] = {"atk", "dec", "sus", "rel"};
+    int slots[4];
+    for (int i = 0; i < 4; i++) {
+        char id[32];
+        snprintf(id, sizeof id, "%s.%s", prefix, fields[i]);
+        slots[i] = paramSlot(paramFind(id));
+    }
+    return {slots[0], slots[1], slots[2], slots[3]};
+}
+
 struct Machine {
     virtual ~Machine() {}
     virtual const char* name() const = 0;
@@ -53,6 +71,8 @@ struct Machine {
     // einen zweiten Filter umsonst.
     virtual void  render(MState& m, const float* p, float hz, float* buf, float* bufR, int n,
                          float sr, const SamplePool& pool) const = 0;
+    virtual void release(MState&) const {}
+    virtual bool usesGate(const MState&) const { return false; }
     virtual bool  stereo(const float* p, const SamplePool& pool) const { (void)p; (void)pool; return false; }
     // Grundwert von Regler k - jede Machine sagt selbst, wo sie anfaengt.
     virtual int   def(int k) const { (void)k; return 64; }
@@ -84,6 +104,25 @@ struct MachPoly : Machine {
     int def(int k) const override {
         static const int d[MACH_KNOBS] = {64, 64, 0, 64, 0, 0, 24, 16};
         return d[k & 7];
+    }
+    struct OscSlots { int wave, level, tune, fine, width; };
+    static OscSlots oscSlots(int number) {
+        const char* names[] = {"wave", "level", "tune", "fine", "pw"};
+        int slots[5];
+        for (int i = 0; i < 5; i++) {
+            char id[32];
+            snprintf(id, sizeof id, "trk.poly%d.%s", number, names[i]);
+            slots[i] = paramSlot(paramFind(id));
+        }
+        return {slots[0], slots[1], slots[2], slots[3], slots[4]};
+    }
+    static float waveform(const Osc& osc, int wave, float shape, float width) {
+        if (wave == 1 || (wave == 0 && shape == 0)) return osc.saw();
+        if (wave == 2 || (wave == 0 && shape == 1)) return osc.pulse(width);
+        if (wave == 3) return osc.sine();
+        float saw, pulse;
+        osc.sawPulse(width, saw, pulse);
+        return (1.0f - shape) * saw + shape * pulse;
     }
     static int osc2Semi(float v) { int s = (int)((v - 64.0f) * 24.0f / 63.0f + (v >= 64 ? 0.5f : -0.5f)); return s < -24 ? -24 : (s > 24 ? 24 : s); }
     void text(int k, float v, char* out, int n) const override {
@@ -123,9 +162,14 @@ struct MachPoly : Machine {
         // Gezaehlt wird je Sample: so klingt es bei jeder Blockgroesse gleich.
         const int periode = (int)(sr * 0.04f);
         const float glatt = 1.0f / (sr * 0.03f);
-        s.sub.setHz(hz * 0.5f, sr);
-        s.a.setHz(hz, sr);
-        s.b.setHz(hz * exp2f((dtCt + 100.0f * semi2) / 1200.0f), sr);
+        static const OscSlots a = oscSlots(1), b = oscSlots(2);
+        const float h1 = hz * exp2f((100.0f * p[a.tune] + p[a.fine]) / 1200.0f);
+        s.sub.setHz(h1 * 0.5f, sr);
+        s.a.setHz(h1, sr);
+        s.b.setHz(hz * exp2f((dtCt + 100.0f * (semi2 + p[b.tune]) + p[b.fine]) / 1200.0f), sr);
+        const float w1 = p[a.width] ? p[a.width] * 0.01f : w, w2 = p[b.width] ? p[b.width] * 0.01f : w;
+        const float lo1 = p[a.level] * 0.01f, lo2 = p[b.level] * 0.01f;
+        const int wave1 = (int)p[a.wave], wave2 = (int)p[b.wave];
         const float incA = s.a.inc, incB = s.b.inc, incS = s.sub.inc;
         float g = 1.0f + drive * 5.0f, norm = 1.0f / (1.0f + 0.6f * drive);
         float mixN = 0.5f / (1.0f + 0.5f * subL + 0.4f * noise);
@@ -137,13 +181,8 @@ struct MachPoly : Machine {
                 s.a.inc = incA * fa; s.b.inc = incB * fb; s.sub.inc = incS * fa;
             }
             // Was mit 0 gewichtet wird, muss nicht gerechnet werden (das Ergebnis ist bitgleich).
-            float x, y;
-            if (shape == 0.0f)      { x = s.a.saw();      y = s.b.saw(); }
-            else if (shape == 1.0f) { x = s.a.pulse(w);   y = s.b.pulse(w); }
-            else {
-                float sa, pa, sb2, pb; s.a.sawPulse(w, sa, pa); s.b.sawPulse(w, sb2, pb);
-                x = (1.0f - shape) * sa + shape * pa; y = (1.0f - shape) * sb2 + shape * pb;
-            }
+            const float x = lo1 ? lo1 * waveform(s.a, wave1, shape, w1) : 0;
+            const float y = lo2 ? lo2 * waveform(s.b, wave2, shape, w2) : 0;
             float sb = subL != 0.0f ? s.sub.pulse(0.5f) : 0.0f;
             float nz = machNoise(s.rng);                 // Zufall laeuft immer weiter (DRIFT teilt ihn)
             float v = (x + y + subL * sb + noise * 0.8f * nz) * mixN;
@@ -160,7 +199,7 @@ struct MachPoly : Machine {
 // eigenen Huellkurve ab (MOD DECAY): hell im Anschlag, weich im Ausklang - das, was FM lebendig
 // macht. Gerechnet wird in der Reihenfolge B2, B1, A, C: jeder kann nur von frueheren moduliert werden.
 struct MachFm : Machine {
-    struct St { float ph[4]; float out[4]; float fb; float menv; };
+    struct St { float ph[4]; float out[4]; float fb; float menv; Env env[4]; unsigned gated; };
     static_assert(sizeof(St) <= MACH_STATE, "Zustand passt nicht in den Block");
     static const float* ratios() {
         static const float r[16] = {0.5f, 1.0f, 1.5f, 2.0f, 2.5f, 3.0f, 3.5f, 4.0f,
@@ -172,6 +211,27 @@ struct MachFm : Machine {
     static float modDecay(float v) { return 0.01f * powf(500.0f, (v - 1.0f) / 126.0f); }
     static int algo(float v) { int a = (int)(v * 8.0f / 128.0f); return a < 0 ? 0 : (a > 7 ? 7 : a); }
     enum { OC = 0, OA = 1, OB1 = 2, OB2 = 3 };
+    struct OperatorSlots { int ratio, level, fine, enable; AdsrSlots adsr; };
+    static OperatorSlots operatorSlots(int number) {
+        char prefix[16], id[32];
+        snprintf(prefix, sizeof prefix, "trk.fm%d", number);
+        const char* fields[] = {"ratio", "level", "fine", "env"};
+        int slots[4];
+        for (int i = 0; i < 4; i++) {
+            snprintf(id, sizeof id, "%s.%s", prefix, fields[i]);
+            slots[i] = paramSlot(paramFind(id));
+        }
+        return {slots[0], slots[1], slots[2], slots[3], adsrSlots(prefix)};
+    }
+    static const OperatorSlots* operators() {
+        static const OperatorSlots slots[] = {operatorSlots(1), operatorSlots(2), operatorSlots(3), operatorSlots(4)};
+        return slots;
+    }
+    bool usesGate(const MState& m) const override { return m.as<St>().gated != 0; }
+    void release(MState& m) const override {
+        St& s = m.as<St>();
+        for (int i = 0; i < 4; i++) if (s.gated & (1u << i)) s.env[i].release();
+    }
     // je Algorithmus: wer moduliert wen (Bitmaske der Quellen je Ziel) und wer klingt
     struct Algo { uint8_t mod[4]; uint8_t car; const char* bild; };
     static const Algo& alg(int a) {
@@ -209,8 +269,16 @@ struct MachFm : Machine {
                const SamplePool& pool) const override {
         St& s = m.as<St>();
         for (int i = 0; i < 4; i++) { s.ph[i] = 0.0f; s.out[i] = 0.0f; }
-        s.fb = 0.0f; s.menv = 1.0f;
-        (void)hz; (void)vel; (void)p; (void)sr; (void)pool;
+        s.fb = 0.0f; s.menv = 1.0f; s.gated = 0;
+        const OperatorSlots* op = operators();
+        for (int i = 0; i < 4; i++) {
+            if (p[op[i].enable] <= 0.5f) continue;
+            s.gated |= 1u << i;
+            s.env[i].kill();
+            op[i].adsr.setup(s.env[i], p, sr);
+            s.env[i].gate();
+        }
+        (void)hz; (void)vel; (void)pool;
     }
     void render(MState& m, const float* p, float hz, float* buf, float* bufR, int n, float sr,
                 const SamplePool& pool) const override {
@@ -224,8 +292,16 @@ struct MachFm : Machine {
         float det = exp2f(pBip(knob(p, 3)) * 30.0f / 1200.0f);
         float inc[4] = {hz / sr, hz * rA * det / sr, hz * rB / det / sr, hz * rB * 2.0f * det / sr};
         // Index als Modulator: bis ~3,5 Umdrehungen (unten wie die alte 2-Operator-FM); als Traeger: Lautstaerke
-        float idx[4] = {1.0f, lA * 1.2f + lA * lA * lA * 2.3f, lB * 1.2f + lB * lB * lB * 2.3f, lB * 1.2f + lB * lB * lB * 2.3f};
         float vol[4] = {1.0f, lA, lB, lB};
+        const OperatorSlots* op = operators();
+        for (int o = 0; o < 4; o++) {
+            if (p[op[o].ratio] > 0) inc[o] = hz * p[op[o].ratio] * (0.01f / sr);
+            if (p[op[o].fine] != 0) inc[o] *= exp2f(p[op[o].fine] / 1200.0f);
+            if (inc[o] > 0.49f && (p[op[o].ratio] > 0 || p[op[o].fine] != 0)) inc[o] = 0.49f;
+            if (p[op[o].level] >= 0) vol[o] = p[op[o].level] * 0.01f;
+        }
+        float idx[4] = {1.0f};
+        for (int o = 1; o < 4; o++) idx[o] = vol[o] * 1.2f + vol[o] * vol[o] * vol[o] * 2.3f;
         int nCar = 0; for (int o = 0; o < 4; o++) if (a.car & (1 << o)) nCar++;
         float norm = 1.0f / (float)(nCar ? nCar : 1);
         static const int folge[4] = {OB2, OB1, OA, OC};
@@ -236,11 +312,12 @@ struct MachFm : Machine {
             for (int f = 0; f < 4; f++) {
                 int o = folge[f];
                 float pm = 0.0f;
-                for (int q = 0; q < 4; q++) if (a.mod[o] & (1 << q)) pm += s.out[q] * idx[q] * me;
+                for (int q = 0; q < 4; q++) if (a.mod[o] & (1 << q)) pm += s.out[q] * idx[q] * (s.gated & (1u << q) ? 1.0f : me);
                 if (o == OB2) pm += s.fb * fbk;
                 float ph = s.ph[o] + pm;
                 ph -= floorf(ph);
                 float y = sinf(6.2831853f * ph);
+                if (s.gated & (1u << o)) y *= s.env[o].tick();
                 s.out[o] = y;
                 if (o == OB2) s.fb = 0.5f * (s.fb + y);
                 if (a.car & (1 << o)) mix += y * vol[o];
