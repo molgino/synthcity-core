@@ -722,7 +722,8 @@ enum { V_TRACK, V_SONG, V_PROJECT, V_SYSTEM, V_N };
 static const char* VIEWNAME[V_N] = {"TRACK", "SONG", "PROJ", "SYSTEM"};
 enum { TAB_TRIG, TAB_CHRD, TAB_SRC, TAB_FLTR, TAB_AMP, TAB_MIX, TAB_MOD, TAB_INSERT, TAB_N };
 static const char* TABNAME[TAB_N] = {"TRIG", "CHRD", "SRC", "FLTR", "AMP", "MIX", "MOD", "INS"};
-enum { M_NONE, M_MENU, M_SAMPLES, M_HELP, M_KEYS, M_SLICE, M_RECORDER, M_LENGTH };
+enum { M_NONE, M_MENU, M_SAMPLES, M_HELP, M_KEYS, M_SLICE, M_RECORDER, M_LENGTH, M_PATTERNS, M_SECTIONS };
+static constexpr int PATTERN_COLUMNS = 4;
 static const int FXT = NTRACKS;   // die FX-Spur des Patterns
 
 struct UI {
@@ -731,6 +732,7 @@ struct UI {
     int cur = 0;                      // Step-Cursor
     bool aHeld = false, aEdited = false;
     int modal = M_NONE, menuSel = 0, smpSel = 0, smpScroll = 0;
+    int patternSel = 0, sectionSel = 0;
     int cutAction = 0, cutMarker = 0, cutFrame = 0, cutGrid = 2;
     int recRow = 0, recSource = 0, recLength = 1, recTarget = -1, recLast = -1;
     int recStartMode = 0;
@@ -780,22 +782,28 @@ static int srcKnob(const ParamDef& d) {   // trk.src.a..h -> 0..7, sonst -1
     return d.id[8] - 'a';
 }
 // Zeilen der aktuellen Liste: Parameterindex, oder -1-k = Ueberschrift k
-enum { HDR_LFO1 = -1, HDR_LFO2 = -2, HDR_MENV = -3, HDR_DELAY = -4, HDR_REVERB = -5, HDR_MASTER = -6, HDR_INSERT1 = -7, HDR_INSERT2 = -8 };
+enum { HDR_LFO1 = -1, HDR_LFO2 = -2, HDR_MENV = -3, HDR_DELAY = -4, HDR_REVERB = -5, HDR_MASTER = -6, HDR_INSERT1 = -7, HDR_INSERT2 = -8,
+       HDR_EQ = -9, HDR_DYNAMICS = -10, HDR_LIMITER = -11 };
 static int gRows[96], gNRows = 0;
+static int fxHeading(const char* id) {
+    if (!strncmp(id, "fx.a.", 5)) return HDR_DELAY;
+    if (!strncmp(id, "fx.b.", 5)) return HDR_REVERB;
+    const char* field = id + 7;
+    if (!strcmp(field, "vol") || !strcmp(field, "on") || !strcmp(field, "trim")) return HDR_MASTER;
+    if (!strcmp(field, "low") || !strcmp(field, "mid") || !strcmp(field, "freq") || !strcmp(field, "high")) return HDR_EQ;
+    if (!strcmp(field, "clip") || !strcmp(field, "limit") || !strcmp(field, "ceiling") || !strcmp(field, "ab")) return HDR_LIMITER;
+    return HDR_DYNAMICS;
+}
 static void buildRows() {
     gNRows = 0;
     if (U.sel == FXT) {
-        int last = 0;
-        for (int pass = 0; pass < 3; pass++)
-            for (int i = 0; i < NPARAMS; i++) {
-                if (!fxLockable(i) && !masterSetting(i)) continue;
-                const char* id = PARAMS[i].id;
-                int k = !strncmp(id, "fx.a", 4) ? 0 : !strncmp(id, "fx.b", 4) ? 1 : 2;
-                if (k != pass) continue;
-                int h = k == 0 ? HDR_DELAY : k == 1 ? HDR_REVERB : HDR_MASTER;
-                if (h != last) { gRows[gNRows++] = h; last = h; }
-                gRows[gNRows++] = i;
-            }
+        const int headings[] = {HDR_DELAY, HDR_REVERB, HDR_MASTER, HDR_EQ, HDR_DYNAMICS, HDR_LIMITER};
+        for (int heading : headings) {
+            gRows[gNRows++] = heading;
+            for (int i = 0; i < NPARAMS; i++)
+                if ((fxLockable(i) || masterSetting(i)) && fxHeading(PARAMS[i].id) == heading)
+                    gRows[gNRows++] = i;
+        }
         return;
     }
     bool smp = scMachUsesSmp(machOf(U.sel)) != 0;
@@ -821,9 +829,19 @@ static void buildRows() {
     }
 }
 static const char* hdrName(int h) {
-    switch (h) { case HDR_LFO1: return "LFO 1"; case HDR_LFO2: return "LFO 2"; case HDR_MENV: return "MOD ENVELOPE";
-                 case HDR_INSERT1: return "INSERT 1"; case HDR_INSERT2: return "INSERT 2";
-                 case HDR_DELAY: return "DELAY (SEND A)"; case HDR_REVERB: return "REVERB (SEND B)"; default: return "MASTER"; }
+    switch (h) {
+    case HDR_LFO1: return "LFO 1";
+    case HDR_LFO2: return "LFO 2";
+    case HDR_MENV: return "MOD ENVELOPE";
+    case HDR_INSERT1: return "INSERT 1";
+    case HDR_INSERT2: return "INSERT 2";
+    case HDR_DELAY: return "DELAY (SEND A)";
+    case HDR_REVERB: return "REVERB (SEND B)";
+    case HDR_EQ: return "MASTER EQ";
+    case HDR_DYNAMICS: return "MASTER DYNAMICS";
+    case HDR_LIMITER: return "MASTER LIMITER / A-B";
+    default: return "MASTER";
+    }
 }
 static int& rowSelRef() { return U.rowSel[U.sel == FXT ? TAB_N : U.tab]; }
 // gewaehlte Zeile: immer ein Parameter, nie eine Ueberschrift
@@ -987,10 +1005,47 @@ static void clearStepLocks() {
     toast("Step %d: locks cleared", s + 1);
 }
 
+struct ParamSection { int tab, heading; const char* label; };
+static const ParamSection TRACK_SECTIONS[] = {
+    {TAB_TRIG, 0, "TRIGGER"}, {TAB_CHRD, 0, "CHORDS"}, {TAB_SRC, 0, "SOURCE"},
+    {TAB_FLTR, 0, "FILTER"}, {TAB_AMP, 0, "AMP ENVELOPE"}, {TAB_MIX, 0, "MIXER"},
+    {TAB_MOD, HDR_LFO1, nullptr}, {TAB_MOD, HDR_LFO2, nullptr}, {TAB_MOD, HDR_MENV, nullptr},
+    {TAB_INSERT, HDR_INSERT1, nullptr}, {TAB_INSERT, HDR_INSERT2, nullptr},
+};
+static const ParamSection FX_SECTIONS[] = {
+    {TAB_N, HDR_DELAY, nullptr}, {TAB_N, HDR_REVERB, nullptr}, {TAB_N, HDR_MASTER, nullptr},
+    {TAB_N, HDR_EQ, nullptr}, {TAB_N, HDR_DYNAMICS, nullptr}, {TAB_N, HDR_LIMITER, nullptr},
+};
+static int sectionCount() {
+    return U.sel == FXT ? sizeof FX_SECTIONS / sizeof FX_SECTIONS[0]
+                       : sizeof TRACK_SECTIONS / sizeof TRACK_SECTIONS[0];
+}
+static const ParamSection& activeSection() {
+    return U.sel == FXT ? FX_SECTIONS[U.sectionSel] : TRACK_SECTIONS[U.sectionSel];
+}
+static void openSections() {
+    buildRows();
+    curParam();
+    const auto* sections = U.sel == FXT ? FX_SECTIONS : TRACK_SECTIONS;
+    const int tab = U.sel == FXT ? TAB_N : U.tab;
+    int heading = 0;
+    for (int r = rowSelRef(); r >= 0 && r < gNRows; r--)
+        if (gRows[r] < 0) { heading = gRows[r]; break; }
+    U.sectionSel = 0;
+    for (int i = 0; i < sectionCount(); i++)
+        if (sections[i].tab == tab && sections[i].heading == heading) { U.sectionSel = i; break; }
+    U.modal = M_SECTIONS;
+}
+static void openPatterns() {
+    int next = scPatNext();
+    U.patternSel = next >= 0 ? next : scPattern();
+    U.modal = M_PATTERNS;
+}
+
 // --- Menue (SELECT) -------------------------------------------------------------------------
-enum { MI_SAVE, MI_COPYPAT, MI_PASTEPAT, MI_CLEARPAT, MI_COPYTRK, MI_PASTETRIG, MI_PASTEALL, MI_CLEARTRIG,
+enum { MI_PATTERN, MI_SECTIONS, MI_SAVE, MI_COPYPAT, MI_PASTEPAT, MI_CLEARPAT, MI_COPYTRK, MI_PASTETRIG, MI_PASTEALL, MI_CLEARTRIG,
        MI_COPYSTEP, MI_PASTESTEP, MI_LOADSMP, MI_LENGTH, MI_SCENE_A, MI_SCENE_B, MI_SCENE_CLR, MI_HELP, MI_SLICE, MI_RECORD, MI_N };
-static const char* MENU[MI_N] = {"Save project", "Copy pattern", "Paste pattern", "Clear pattern",
+static const char* MENU[MI_N] = {"Select pattern...", "Parameter sections...", "Save project", "Copy pattern", "Paste pattern", "Clear pattern",
     "Copy track", "Paste trigs", "Paste track (with sound)", "Clear trigs", "Copy step", "Paste step",
     "Load sample into slot...", "Track length...",
     "Edit scene A (on/off)", "Edit scene B (on/off)", "Clear the scene being edited", "Help", "Sample editor...", "Recorder..."};
@@ -1000,6 +1055,8 @@ static void menuDo(int i) {
     int p = scPattern();
     U.modal = M_NONE;
     switch (i) {
+    case MI_PATTERN: openPatterns(); return;
+    case MI_SECTIONS: openSections(); return;
     case MI_SAVE: { bool ok = prjSave();
                     if (ok) U.dirty = false;
                     toast(ok ? "Saved %s" : "Could not save %s", gPrjName); return; }
@@ -1463,8 +1520,8 @@ static void handleTrack() {
         if (B && U.sel != FXT) { U.tab = (U.tab + 1) % TAB_N; }
         else U.cur = (U.cur + 1) % trackLen();
     }
-    if (IN.repeat(BT_UP, U.now))   { if (B) { int n = clampi((scPatNext() >= 0 ? scPatNext() : scPattern()) - 1, 0, NPATTERNS - 1); if (scIsRunning()) scPatQueue(n); else scSetPattern(n); } else moveRow(-1); }
-    if (IN.repeat(BT_DOWN, U.now)) { if (B) { int n = clampi((scPatNext() >= 0 ? scPatNext() : scPattern()) + 1, 0, NPATTERNS - 1); if (scIsRunning()) scPatQueue(n); else scSetPattern(n); } else moveRow(+1); }
+    if (!B && IN.repeat(BT_UP, U.now)) moveRow(-1);
+    if (!B && IN.repeat(BT_DOWN, U.now)) moveRow(1);
     // A: antippen = Trig an/aus, halten + Wert = Lock auf diesem Step
     if (IN.pressed(BT_A)) {
         if (B) { scMute(U.sel, !scIsMute(U.sel)); toast(scIsMute(U.sel) ? "Track muted" : "Track unmuted"); IN.mask |= 1u << BT_A; }
@@ -1701,7 +1758,43 @@ static void handleLength() {
     if (U.cur >= len) U.cur = len - 1;
     touched();
 }
+static void handlePatterns() {
+    if (IN.pressed(BT_B)) { U.modal = M_NONE; return; }
+    int p = U.patternSel;
+    if (IN.repeat(BT_UP, U.now) && p >= PATTERN_COLUMNS) p -= PATTERN_COLUMNS;
+    if (IN.repeat(BT_DOWN, U.now) && p + PATTERN_COLUMNS < NPATTERNS) p += PATTERN_COLUMNS;
+    if (IN.repeat(BT_LEFT, U.now) && p % PATTERN_COLUMNS > 0) p--;
+    if (IN.repeat(BT_RIGHT, U.now) && p % PATTERN_COLUMNS < PATTERN_COLUMNS - 1 && p + 1 < NPATTERNS) p++;
+    U.patternSel = p;
+    if (!IN.pressed(BT_A)) return;
+    if (scIsRunning()) {
+        if (p != scPattern() || scPatNext() >= 0) scPatQueue(p);
+    } else if (p != scPattern() || scPatNext() >= 0) {
+        scSetPattern(p);
+        if (U.cur >= trackLen()) U.cur = trackLen() - 1;
+    }
+    U.modal = M_NONE;
+}
+static void handleSections() {
+    if (IN.pressed(BT_B)) { U.modal = M_NONE; return; }
+    if (IN.repeat(BT_UP, U.now)) U.sectionSel = (U.sectionSel + sectionCount() - 1) % sectionCount();
+    if (IN.repeat(BT_DOWN, U.now)) U.sectionSel = (U.sectionSel + 1) % sectionCount();
+    if (!IN.pressed(BT_A)) return;
+    const auto& section = activeSection();
+    if (U.sel != FXT) U.tab = section.tab;
+    U.view = V_TRACK;
+    buildRows();
+    int top = 0;
+    if (section.heading)
+        for (int r = 0; r < gNRows; r++)
+            if (gRows[r] == section.heading) { top = r; break; }
+    rowSelRef() = U.listScroll = top;
+    curParam();
+    U.modal = M_NONE;
+}
 static void handleModal() {
+    if (U.modal == M_PATTERNS) { handlePatterns(); return; }
+    if (U.modal == M_SECTIONS) { handleSections(); return; }
     if (U.modal == M_LENGTH) { handleLength(); return; }
     if (U.modal == M_SLICE) { handleSlices(); return; }
     if (U.modal == M_RECORDER) { handleRecorder(); return; }
@@ -1747,6 +1840,9 @@ static void handleInput() {
     static bool selUsed = false;
     if (IN.pressed(BT_SELECT) && U.modal == M_NONE) selUsed = false;
     if (U.modal != M_NONE) { handleModal(); return; }
+    if (U.view == V_TRACK && IN.down[BT_B] && IN.pressed(BT_SELECT) && !U.aHeld) {
+        openSections(); selUsed = true; return;
+    }
     if (IN.down[BT_SELECT] && IN.heldMs(BT_SELECT, U.now) > 500) { U.modal = M_HELP; selUsed = true; return; }
     if (IN.released(BT_SELECT) && !selUsed) { U.modal = M_MENU; return; }
     // START: Play/Stop (im Song: Song), B+START gehalten = FILL
@@ -1762,9 +1858,17 @@ static void handleInput() {
     // L2/R2: Ansicht, L1/R1: Spur
     if (IN.pressed(BT_L2)) U.view = (U.view + V_N - 1) % V_N;
     if (IN.pressed(BT_R2)) U.view = (U.view + 1) % V_N;
+    int trackDelta = 0;
     if (!IN.down[BT_B]) {
-        if (IN.repeat(BT_L1, U.now)) { U.sel = (U.sel + NTRACKS) % (NTRACKS + 1); U.aHeld = false; }
-        if (IN.repeat(BT_R1, U.now)) { U.sel = (U.sel + 1) % (NTRACKS + 1); U.aHeld = false; }
+        if (IN.repeat(BT_L1, U.now)) trackDelta--;
+        if (IN.repeat(BT_R1, U.now)) trackDelta++;
+    } else if (U.view == V_TRACK && !U.aHeld) {
+        if (IN.repeat(BT_UP, U.now)) trackDelta--;
+        if (IN.repeat(BT_DOWN, U.now)) trackDelta++;
+    }
+    if (trackDelta) {
+        U.sel = (U.sel + trackDelta + NTRACKS + 1) % (NTRACKS + 1);
+        U.aHeld = false;
     }
     if (U.cur >= trackLen()) U.cur = trackLen() - 1;
     buildRows();
@@ -2156,6 +2260,7 @@ static void drawKeys() {
 static const char* helpLine() {
     if (U.modal == M_KEYS) return "D-pad choose  A type  B delete  START done  SELECT cancel";
     if (U.modal == M_MENU) return "UP/DOWN choose   A do it   B close";
+    if (U.modal == M_PATTERNS || U.modal == M_SECTIONS) return "";
     if (U.modal == M_SAMPLES) return "A open/load  LEFT up  RIGHT into  L1/R1 page  X hear  B close";
     if (U.modal == M_HELP) return "any of A / B / SELECT closes";
     if (U.modal == M_SLICE || U.modal == M_RECORDER) return "";
@@ -2163,7 +2268,7 @@ static const char* helpLine() {
     if (U.view == V_PROJECT) return "UP/DOWN item   X/Y value / browse projects   A action";
     if (U.view == V_SYSTEM) return "UP/DOWN item   X/Y change   A apply / action";
     if (U.aHeld) return "A held: X/Y lock value on this step   B clear locks";
-    return "A trig  hold A+X/Y lock  X/Y value  B+L/R tab  B+UP/DN pattern";
+    return "X/Y value  A trig / hold to lock  B+UP/DN track  B+SELECT sections";
 }
 static void drawHelpLine() {
     fill(0, HELP_Y, SW, SH - HELP_Y, C_PANEL);
@@ -2176,6 +2281,38 @@ static void box(int x, int y, int w, int h, const char* title) {
     frame(x, y, w, h, C_LINE);
     fill(x, y, w, 24, C_SEL);
     text(x + 10, y + 4, title, C_TXT);
+}
+static void drawPatterns() {
+    const int x = 122, y = 100, w = 396, h = 280;
+    box(x, y, w, h, "SELECT PATTERN");
+    const int current = scPattern(), queued = scPatNext();
+    for (int p = 0; p < NPATTERNS; p++) {
+        const int px = x + 14 + p % PATTERN_COLUMNS * 93, py = y + 37 + p / PATTERN_COLUMNS * 46;
+        const bool selected = U.patternSel == p;
+        uint32_t accent = p == queued ? C_LOCK : p == current ? C_PLAY : C_FAINT;
+        fill(px, py, 87, 40, selected ? C_SEL : C_BG);
+        frame(px, py, 87, 40, selected ? C_TXT : C_LINE);
+        if (p == current || p == queued) fill(px + 1, py + 36, 85, 3, accent);
+        char label[12]; snprintf(label, sizeof label, "P%02d", p + 1);
+        textC(px + 43, py + 12, label, selected || scPatUsed(p) ? C_TXT : accent);
+    }
+    char status[64];
+    snprintf(status, sizeof status, queued >= 0 ? "P%02d active  |  P%02d queued" : "P%02d active", current + 1, queued + 1);
+    text(x + 14, y + 226, status, C_DIM);
+    text(x + 14, y + h - 24, "D-pad choose   A select   B cancel", C_TXT);
+}
+static void drawSections() {
+    const int w = 360, h = 58 + 22 * sectionCount(), x = (SW - w) / 2, y = (SH - h) / 2;
+    box(x, y, w, h, "PARAMETER SECTIONS");
+    const auto* sections = U.sel == FXT ? FX_SECTIONS : TRACK_SECTIONS;
+    for (int i = 0; i < sectionCount(); i++) {
+        const auto& section = sections[i];
+        int ry = y + 28 + 22 * i;
+        bool selected = i == U.sectionSel;
+        if (selected) fill(x + 4, ry, w - 8, 20, C_SEL);
+        text(x + 12, ry + 2, section.label ? section.label : hdrName(section.heading), selected ? C_TXT : C_DIM);
+    }
+    text(x + 12, y + h - 24, "Up/down choose   A jump   B cancel", C_TXT);
 }
 static void drawLength() {
     const int w = 350, h = 112, x = (SW - w) / 2, y = (SH - h) / 2;
@@ -2318,11 +2455,12 @@ static void drawHelp() {
     static const char* L[] = {
         "L1 / R1        track (1-8, FX)",          "L2 / R2        view: TRACK / SONG / PROJ / SYSTEM",
         "UP / DOWN      parameter",                 "LEFT / RIGHT   step cursor",
-        "X / Y          value up / down",           "B held         coarse  (+L/R tab, +UP/DN pattern)",
+        "X / Y          value up / down",           "B held         coarse  (+L/R tab, +UP/DN track)",
         "A tap          trig on / off",             "A hold + X/Y   lock value on the step (trigless)",
         "A hold + B     clear the step's locks",    "B + A          mute track",
         "B + L1 / R1    jump 16 steps",             "START          play / stop  (SONG view: song)",
-        "B + START      fill while held",           "SELECT tap     menu (copy, paste, samples...)",
+        "B + START      fill while held",           "SELECT tap     menu (pattern, sample, copy...)",
+        "B + SELECT     jump to a parameter section",
         "SELECT hold    this help",                 "right stick    scene crossfader A <-> B",
         "menu > Edit scene A/B   X/Y then set scene values",
     };
@@ -2349,6 +2487,8 @@ static void drawAll() {
     else if (U.modal == M_SLICE) drawSlices();
     else if (U.modal == M_RECORDER) drawRecorder();
     else if (U.modal == M_LENGTH) drawLength();
+    else if (U.modal == M_PATTERNS) drawPatterns();
+    else if (U.modal == M_SECTIONS) drawSections();
     if (gExp.on) {
         box(120, 180, 400, 110, "EXPORTING SONG");
         char b[96]; snprintf(b, sizeof b, "%s", gExp.rel);
@@ -2550,6 +2690,41 @@ static int selfTest(const char* shotDir) {
     scLoad("");
     idle(2);
     shot("01-track");
+    tap(BT_DOWN, 1u << BT_B);
+    CHECK(U.sel == 1 && scPattern() == 0, "B + down selects the next track without changing pattern");
+    tap(BT_UP, 1u << BT_B); tap(BT_UP, 1u << BT_B);
+    CHECK(U.sel == FXT && scPattern() == 0, "B + up wraps from track 1 to FX");
+    tap(BT_SELECT, 1u << BT_B);
+    CHECK(U.modal == M_SECTIONS, "B + SELECT opens the FX sections");
+    for (int i = 0; i < 3; i++) tap(BT_DOWN);
+    tap(BT_A);
+    CHECK(U.modal == M_NONE && curParam() == pIndex("master.low"), "FX sections jump directly to Master EQ");
+    tap(BT_DOWN, 1u << BT_B);
+    CHECK(U.sel == 0, "B + down wraps from FX to track 1");
+    tap(BT_SELECT, 1u << BT_B);
+    CHECK(U.modal == M_SECTIONS, "B + SELECT opens the track sections");
+    for (int i = 0; i < 7; i++) tap(BT_DOWN);
+    shot("01a-sections");
+    tap(BT_A);
+    CHECK(U.tab == TAB_MOD && curParam() == pIndex("trk.lfo2.wave"), "Track sections jump directly to LFO 2");
+    U.tab = TAB_TRIG;
+
+    tap(BT_SELECT); U.menuSel = MI_PATTERN; tap(BT_A);
+    CHECK(U.modal == M_PATTERNS && U.patternSel == 0, "Pattern picker opens at the active pattern");
+    tap(BT_DOWN); tap(BT_RIGHT);
+    CHECK(U.patternSel == 5 && scPattern() == 0, "D-pad moves the pattern cursor before confirmation");
+    shot("01b-patterns");
+    tap(BT_A);
+    CHECK(scPattern() == 5 && U.modal == M_NONE, "A selects the highlighted pattern while stopped");
+    scStart();
+    tap(BT_SELECT); U.menuSel = MI_PATTERN; tap(BT_A); tap(BT_RIGHT); tap(BT_A);
+    CHECK(scPattern() == 5 && scPatNext() == 6, "A queues a pattern while playing");
+    tap(BT_SELECT); U.menuSel = MI_PATTERN; tap(BT_A);
+    CHECK(U.patternSel == 6, "Pattern picker highlights the queued pattern");
+    tap(BT_RIGHT); tap(BT_B);
+    CHECK(scPattern() == 5 && scPatNext() == 6, "Cancelling the pattern picker keeps the queue");
+    scStop(); scSetPattern(0);
+    U.rowSel[TAB_N] = 0;
     // Trig setzen und wieder loeschen
     tap(BT_A); CHECK(scStepGet(0, 0) == 1, "A setzt Trig auf Step 1");
     tap(BT_RIGHT); tap(BT_RIGHT); tap(BT_A); CHECK(scStepGet(0, 2) == 1, "Cursor rechts + A: Trig auf Step 3");
