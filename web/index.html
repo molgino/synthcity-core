@@ -648,6 +648,12 @@ const rowName = p => {
 }
 
 // --- Kern laden -------------------------------------------------------------------------------
+const projectText = () => {
+  const p = X.scSave();
+  if (p) return str(p);
+  saveInfo("Project too large to save.");
+  return null;
+};
 const str = p => {
   const b = new Uint8Array(X.memory.buffer);
   let e = p; while (b[e]) e++;
@@ -686,12 +692,14 @@ async function boot() {
 // --- Audio erst auf Druck: Browser lassen Klang nicht von selbst zu ----------------------------
 async function audioOn() {
   if (ctx) return;
+  const text = projectText();
+  if (text === null) throw new Error("Project too large to start audio.");
   ctx = new (window.AudioContext || window.webkitAudioContext)();
   await ctx.audioWorklet.addModule(WORKLET_URL);
   node = new AudioWorkletNode(ctx, 'synthcity', {
     numberOfInputs: 0, outputChannelCount: [2],
     processorOptions: {bytes: await fetch('synthcity.wasm').then(r => r.arrayBuffer()),
-                       doc: new TextEncoder().encode(str(X.scSave()))}
+                       doc: new TextEncoder().encode(text)}
   });
   node.onprocessorerror = e => console.error('Audio-Kern:', e);
   node.port.onmessage = e => {
@@ -2221,18 +2229,20 @@ el('songPlay').onclick = () => {
 };
 
 el('pickClose').onclick = () => el('pick').close();
-el('docBtn').onclick = () => { el('docText').value = str(X.scSave()); el('doc').showModal(); };
+el('docBtn').onclick = () => { el('docText').value = projectText() ?? ''; el('doc').showModal(); };
 el('docClose').onclick = () => el('doc').close();
 function loadDoc(t) {
   const b = new TextEncoder().encode(t + '\0');
   const p = X.scScratch(b.length);
+  if (!p) { saveInfo('Not enough memory to load the project.'); return false; }
   new Uint8Array(X.memory.buffer, p, b.length).set(b);
-  X.scLoad(p);
+  if (!X.scLoad(p)) { saveInfo('Project too large to load.'); return false; }
   if (node) node.port.postMessage({fn: 'scLoad', doc: new TextEncoder().encode(t)});
   buildRail(); buildPats(); buildPads(); buildParams();
   smpRestoreWanted();
+  return true;
 }
-el('docLoad').onclick = () => { loadDoc(el('docText').value); el('doc').close(); };
+el('docLoad').onclick = () => { if (loadDoc(el('docText').value)) el('doc').close(); };
 // Neu braucht zwei Tipps - das ueberschreibt das gespeicherte Projekt.
 let neuArmed = 0;
 el('docNew').onclick = () => {
@@ -2308,14 +2318,16 @@ async function prjLocalPut(rec) {
 }
 function prjSave(force) {
   if (restoring || !X) return;
-  const text = str(X.scSave());
-  if (text === savedText && !force) return;
+  const text = projectText();
+  if (text === null) return false;
+  if (text === savedText && !force) return true;
   const rec = {doc: text, t: Date.now(), v: 1};
   savedText = text;
   prjLocalPut(rec);
   stand.zuletzt = new Date(rec.t).toLocaleTimeString('en-GB', {hour: '2-digit', minute: '2-digit', second: '2-digit'});
   standZeigen();
   cloudPush(force);
+  return true;
 }
 // Ins Konto hoechstens alle 5 Sekunden - der Browser-Speicher haelt die Zwischenstaende.
 let cloudTimer = null;
@@ -2415,7 +2427,7 @@ async function cloudSmpSync() {
 async function prjRestore() {
   bootText = str(X.scSave());
   const lokal = await prjLocalGet();
-  if (lokal && lokal.doc) { loadDoc(lokal.doc); saveInfo('Project loaded from browser storage.'); }
+  if (lokal && lokal.doc) { if (loadDoc(lokal.doc)) saveInfo('Project loaded from browser storage.'); }
   else standZeigen();
   bootText = str(X.scSave());
   savedText = lokal && lokal.doc ? bootText : null;     // nach dem Laden so, wie der Kern es schreibt
@@ -2434,8 +2446,10 @@ async function prjRestore() {
     stand.konto = 'connected';
     const unberuehrt = str(X.scSave()) === bootText;
     if (d && typeof d.doc === 'string' && d.t > lokalT && unberuehrt) {
-      loadDoc(d.doc); savedText = str(X.scSave()); prjLocalPut({doc: d.doc, t: d.t, v: 1});
-      saveInfo('Project loaded from your account.');
+      if (loadDoc(d.doc)) {
+        savedText = str(X.scSave()); prjLocalPut({doc: d.doc, t: d.t, v: 1});
+        saveInfo('Project loaded from your account.');
+      }
     } else {
       standZeigen();
       prjSave(); cloudPush();
@@ -2446,10 +2460,12 @@ async function prjRestore() {
 setInterval(() => prjSave(false), 1500);
 document.addEventListener('visibilitychange', () => { if (document.hidden) prjSave(false); });
 window.addEventListener('pagehide', () => prjSave(false));
-el('docSave').onclick = () => { prjSave(true); el('docSave').textContent = 'SAVED'; setTimeout(() => el('docSave').textContent = 'SAVE NOW', 1500); };
+el('docSave').onclick = () => { if (!prjSave(true)) return; el('docSave').textContent = 'SAVED'; setTimeout(() => el('docSave').textContent = 'SAVE NOW', 1500); };
 // Als Datei: der sicherste Weg, ein Projekt aufzuheben oder auf ein anderes Geraet zu bringen.
 el('docFile').onclick = () => {
-  speichern('synthcity-' + zeitName() + '.txt', new Blob([str(X.scSave())], {type: 'text/plain'}), t => saveInfo(t));
+  const text = projectText();
+  if (text === null) return;
+  speichern('synthcity-' + zeitName() + '.txt', new Blob([text], {type: 'text/plain'}), t => saveInfo(t));
 };
 el('docOpen').onclick = () => el('docOpenIn').click();
 el('docOpenIn').onchange = async () => {
@@ -2457,7 +2473,8 @@ el('docOpenIn').onchange = async () => {
   const t = await f.text();
   el('docOpenIn').value = '';
   if (!/=/.test(t)) { saveInfo('The file is not a SYNTH CITY project.'); return; }
-  loadDoc(t); prjSave(true); saveInfo('Project loaded from file.');
+  if (!loadDoc(t)) return;
+  prjSave(true); saveInfo('Project loaded from file.');
   el('doc').close();
 };
 el('docCopy').onclick = async () => {

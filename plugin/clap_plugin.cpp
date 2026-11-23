@@ -163,6 +163,7 @@ static bool stSave(const clap_plugin_t* pl, const clap_ostream_t* os) {
     d.clear();
     projectToDoc(P->eng.P, d);
     d.set("ui.track", P->focus);
+    if (d.overflow) return false;
     char buf[DOC_KEY + 32];
     for (int i = 0; i < d.n; i++) {
         int len = snprintf(buf, sizeof buf, "%s = %d\n", d.e[i].k, d.e[i].v);
@@ -181,9 +182,12 @@ static bool stLoad(const clap_plugin_t* pl, const clap_istream_t* is) {
     size_t got = 0;
     while (got + 1 < sizeof text) {
         int64_t r = is->read(is, text + got, sizeof text - got - 1);
-        if (r <= 0) break;
+        if (r < 0) return false;
+        if (r == 0) break;
         got += (size_t)r;
     }
+    char extra;
+    if (got == sizeof text - 1 && is->read(is, &extra, 1) != 0) return false;
     text[got] = 0;
     static Doc d; d.clear();
     char* line = text;
@@ -199,6 +203,7 @@ static bool stLoad(const clap_plugin_t* pl, const clap_istream_t* is) {
         }
         line = nl ? nl + 1 : nullptr;
     }
+    if (d.overflow) return false;
     projectFromDoc(d, P->eng.P);
     P->focus = d.get("ui.track", 0);
     P->eng.seq.bpm = P->eng.effTempo(P->eng.pat);

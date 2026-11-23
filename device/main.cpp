@@ -419,17 +419,14 @@ static const char* snapshotDoc() {
     projectToDoc(snap, d);
     if (poolSnap) poolToDoc(*poolSnap, d);
     d.set("prj.pat", pat);
-    int at = 0;
-    for (int i = 0; i < d.n && at < (int)sizeof out - 64; i++) at += snprintf(out + at, sizeof out - at, "%s = %d\n", d.e[i].k, d.e[i].v);
-    for (int i = 0; i < d.ns && at < (int)sizeof out - 64; i++) at += snprintf(out + at, sizeof out - at, "%s = %s\n", d.se[i].k, d.se[i].v);
-    out[at] = 0;
-    return out;
+    return d.writeText(out, sizeof out) ? out : nullptr;
 }
-static bool prjSave() {
+static bool prjSave(const char* name = gPrjName) {
     NoLock nl;
-    char p[800], tmp[820]; prjPath(gPrjName, p, sizeof p);
+    char p[800], tmp[820]; prjPath(name, p, sizeof p);
     snprintf(tmp, sizeof tmp, "%s.tmp", p);
     const char* doc = snapshotDoc();
+    if (!doc) return false;
     FILE* f = fopen(tmp, "w");
     bool ok = f && fputs("# synthcity 1\n", f) >= 0 && fputs(doc, f) >= 0;
     if (f) ok = (fclose(f) == 0) && ok;
@@ -444,12 +441,16 @@ static bool prjLoad(const char* name) {
     if (!f) return false;
     static char buf[DOC_MAX * 48];
     size_t n = fread(buf, 1, sizeof buf - 1, f);
+    bool ok = (n < sizeof buf - 1 || fgetc(f) == EOF) && !ferror(f);
     fclose(f);
+    if (!ok) return false;
     buf[n] = 0;
+    static Doc d;
+    if (!readProjectText(buf, d)) return false;
     lockA();
     scStop();
     scSmpClear();
-    scLoad(buf);
+    applyProjectDoc(d);
     unlockA();
     poolResolveWanted();
     return true;
@@ -962,7 +963,9 @@ static void menuDo(int i) {
     int p = scPattern();
     U.modal = M_NONE;
     switch (i) {
-    case MI_SAVE: toast(prjSave() ? "Saved %s" : "Could not save %s", gPrjName); U.dirty = false; return;
+    case MI_SAVE: { bool ok = prjSave();
+                    if (ok) U.dirty = false;
+                    toast(ok ? "Saved %s" : "Could not save %s", gPrjName); return; }
     case MI_COPYPAT: scClipPat(p); toast("Pattern %02d copied", p + 1); return;
     case MI_PASTEPAT: if (!scHasClipPat()) { toast("Nothing copied"); return; } scPastePat(p); toast("Pasted into pattern %02d", p + 1); break;
     case MI_CLEARPAT: scPatClear(p); toast("Pattern %02d cleared", p + 1); break;
@@ -1207,11 +1210,12 @@ static void keysDone() {
     if (!nameOk(n)) { toast("Name: letters, digits, space, - and _"); return; }
     U.modal = M_NONE;
     if (U.keyMode == KM_SAVEAS) {
+        if (!prjSave(n)) { toast("Could not save %s", n); return; }
         snprintf(gPrjName, sizeof gPrjName, "%s", n);
-        toast(prjSave() ? "Saved as %s" : "Could not save %s", gPrjName);
+        toast("Saved as %s", gPrjName);
         U.dirty = false;
     } else {
-        if (U.dirty) prjSave();
+        if (U.dirty && !prjSave()) { toast("Could not save %s", gPrjName); return; }
         if (prjExists(n)) { toast("%s exists - open it with OPEN PROJECT", n); return; }
         lockA(); scStop(); scSmpClear(); scLoad(""); unlockA();
         snprintf(gPrjName, sizeof gPrjName, "%s", n);
@@ -1248,13 +1252,15 @@ static void prAction() {
     case PR_OPEN: {
         char n[48]; snprintf(n, sizeof n, "%s", browseName());
         if (!strcmp(n, gPrjName) && !prjExists(n)) { toast("%s is not saved yet", n); break; }
-        if (U.dirty) prjSave();
+        if (U.dirty && !prjSave()) { toast("Could not save %s", gPrjName); break; }
         if (prjLoad(n)) { snprintf(gPrjName, sizeof gPrjName, "%s", n); toast("Opened %s", gPrjName); U.dirty = false; settingsSave(); }
         else toast("Could not open %s", n);
         gPrjBrowse = -1;
         break;
     }
-    case PR_SAVE: toast(prjSave() ? "Saved %s" : "Could not save %s", gPrjName); U.dirty = false; settingsSave(); break;
+    case PR_SAVE: { bool ok = prjSave();
+                    if (ok) { U.dirty = false; settingsSave(); }
+                    toast(ok ? "Saved %s" : "Could not save %s", gPrjName); break; }
     case PR_SAVEAS: openKeys(KM_SAVEAS, gPrjName); break;
     case PR_NEW: openKeys(KM_NEW, ""); break;
     case PR_DEMO:
@@ -2599,7 +2605,9 @@ int main(int argc, char** argv) {
         pollPower();
         // automatisch sichern: 4 s nach der letzten Aenderung, hoechstens alle 20 s
         if (U.dirty && U.now - U.editAt > 4000 && U.now - lastSave > 20000) {
-            if (prjSave()) { U.dirty = false; lastSave = U.now; settingsSave(); }
+            lastSave = U.now;
+            if (prjSave()) { U.dirty = false; settingsSave(); }
+            else toast("Could not save %s", gPrjName);
         }
         // USB: Geraet umgebaut? USB-Audio und PC-Eingang folgen dem Modus
         if (gUsbJob == 2) {
