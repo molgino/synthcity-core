@@ -707,6 +707,15 @@ Gerät liegt der Messbericht zusätzlich neben der WAV-Datei. Der Limiter verwen
 Sicherheitsreserve für diese Interpolation. Ältere Projekte starten mit ausgeschalteter
 Mastering-Kette.
 
+Am R36S öffnet **SELECT → Visual Master EQ** die Frequenzkurve mit Live-Spektrum
+des Master-Ausgangs. Auf einem Regler unter **FX → Master EQ** geht das direkt mit
+**SELECT + X**. Mit **Links/Rechts** wählst du Tiefen-Shelf, Mitten-Bell oder Höhen-Shelf.
+**Hoch/Runter** ändert den Gain in 1-dB-Schritten, **L1/R1** verschiebt die Mittenfrequenz,
+und **Y** setzt den Gain des gewählten Bands auf 0 dB. **A** schaltet die gesamte
+Mastering-Kette ein oder aus, **X** wechselt zwischen bearbeitetem Mix und **A/B Dry**.
+**START** steuert die Wiedergabe, **B** schließt die Ansicht. Die EQ-Einstellungen werden
+mit dem Projekt gespeichert.
+
 ## Insert-Effekte
 
 Auf jeder Audiospur stehen im Reiter **INS** zwei serielle Stereo-Inserts zur Verfügung.
