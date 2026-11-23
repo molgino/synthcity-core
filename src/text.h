@@ -119,8 +119,16 @@ inline void paramText(const ParamDef& d, float v, char* out, int n, int mach = -
         const char* field = d.id + 9;
         int value = (int)v;
         if (!strcmp(field, "type")) {
-            static const char* names[] = {"OFF", "CRUSH / DRIVE", "COMPRESSOR"};
+            static const char* names[] = {"OFF", "CRUSH / DRIVE", "COMPRESSOR", "CHORUS"};
             snprintf(out, n, "%s", names[value >= 0 && value < INS_TYPE_COUNT ? value : 0]);
+            return;
+        }
+        if (!strcmp(field, "ch.mode")) {
+            snprintf(out, n, "%s", value ? "ENSEMBLE" : "CLASSIC");
+            return;
+        }
+        if (!strcmp(field, "ch.rate")) {
+            snprintf(out, n, "%.2f Hz", value * 0.01);
             return;
         }
         if (!strcmp(field, "source")) {

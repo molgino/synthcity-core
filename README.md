@@ -684,6 +684,9 @@ Auf jeder Audiospur stehen im Reiter **INS** zwei serielle Stereo-Inserts zur Ve
 vor der Abtastratenreduktion, Drive, Tone, Output und Mix. **Compressor** bietet Threshold,
 Ratio, Attack, Release, Knee, Output, Mix und einen Sidechain-Hochpass. **Sidechain** wählt
 SELF oder eine der acht Spuren. Die Anzeige GR zeigt die Gain Reduction in dB.
+**Chorus** hat die Charaktere **Classic** (ein modulierter Delay-Abgriff pro Seite)
+und **Ensemble** (zwei versetzte Abgriffe pro Seite). Rate, Depth, Width, Mix und Output
+sind einstellbar. Bei Width = 0 bleibt ein Mono-Signal in der Mitte.
 
 Die Inserts bearbeiten die Summe der Stimmen einer Spur. Eine externe Sidechain greift
 vor den Inserts ihrer Quellspur ab. Die Sends bleiben vor den Inserts, damit bestehende

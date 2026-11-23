@@ -7,6 +7,77 @@ inline float crushRate(int value) {
     return 500.0f * exp2f((value - 1) * (6.5849625f / 126.0f));
 }
 
+struct StereoChorus {
+    // Fixed buffers for the audio thread. Reset only the cursor and valid length.
+    enum { BUFFER = 8192, TABLE = 256 };
+    float delay[2][BUFFER];
+    int write = 0, valid = 0;
+    double phase = 0.0;
+    float depth = 0.0f, width = 0.0f;
+
+    struct SineTable {
+        float val[TABLE + 1];
+        SineTable() {
+            for (int i = 0; i < TABLE; i++) val[i] = sinf(i * (6.283185307f / TABLE));
+            val[TABLE] = val[0];
+        }
+    };
+    static const SineTable& sineTable() { static const SineTable table; return table; }
+    static float mod(const float* t, float phase) {
+        if (phase < 0.0f) phase += 1.0f;
+        if (phase >= 1.0f) phase -= 1.0f;
+        float index = phase * TABLE;
+        int i = (int)index;
+        return t[i] + (index - i) * (t[i + 1] - t[i]);
+    }
+    static void warm() { sineTable(); }
+
+    void reset(float d, float w) {
+        write = valid = 0;
+        phase = 0.0f;
+        depth = d;
+        width = w;
+    }
+    float tap(int channel, float frames) const {
+        int n = (int)frames;
+        float fraction = frames - n;
+        const float* line = delay[channel];
+        float a = line[(write - n) & (BUFFER - 1)];
+        float b = line[(write - n - 1) & (BUFFER - 1)];
+        return a + fraction * (b - a);
+    }
+    void run(float* y, int mode, float speed, float targetDepth, float targetWidth,
+             float samplesPerMs, float smoothing) {
+        depth += smoothing * (targetDepth - depth);
+        width += smoothing * (targetWidth - width);
+
+        delay[0][write] = y[0];
+        delay[1][write] = y[1];
+        if (valid < 2 * BUFFER) valid++;
+        // Wait for valid history, then bring in the delayed signal softly.
+        const float longest = (mode ? 18.0f : 13.0f) * samplesPerMs;
+        float ready = (valid - longest - 2.0f) / (5.0f * samplesPerMs);
+        if (ready > 1.0f) ready = 1.0f;
+        if (ready > 0.0f) {
+            const float* table = sineTable().val;
+            float excursion = depth * (mode ? 3.0f : 4.0f);
+            for (int channel = 0; channel < 2; channel++) {
+                float p = (float)phase + (channel ? -width : width) * 0.25f;
+                float first = tap(channel, (9.0f + excursion * mod(table, p)) * samplesPerMs);
+                if (mode) {
+                    float second = tap(channel, (15.0f + excursion * mod(table, p + 0.25f)) * samplesPerMs);
+                    first = 0.5f * (first + second);
+                }
+                y[channel] += 0.5f * ready * (first - y[channel]);
+            }
+        }
+
+        write = (write + 1) & (BUFFER - 1);
+        phase += speed;
+        if (phase >= 1.0f) phase -= 1.0f;
+    }
+};
+
 struct StereoInsert {
     struct Settings {
         InsertType type = INS_OFF;
@@ -16,6 +87,8 @@ struct StereoInsert {
         float pre = 0.0f, tone = 0.0f;
         float threshold = -18.0f, knee = 6.0f, slope = 0.75f, quiet = 0.0f;
         float attack = 0.0f, release = 0.0f, hp = 0.0f;
+        int chorusMode = 0;
+        float chorusSpeed = 0.0f, chorusDepth = 0.0f, chorusWidth = 1.0f, chorusSamplesPerMs = 48.0f;
     };
 
     Settings active, next;
@@ -25,6 +98,7 @@ struct StereoInsert {
     float phase = 1.0f, held[2] = {}, pre1[2] = {}, pre2[2] = {}, tone[2] = {};
     float detector[2] = {}, peak = 0.0f, wantedGain = 1.0f, gain = 1.0f;
     unsigned detectorClock = 0;
+    StereoChorus chorus;
 
     static float filterCoeff(float hz, float sr) {
         return 1.0f - expf(-6.283185307f * hz / sr);
@@ -75,9 +149,36 @@ struct StereoInsert {
             s.attack = 1.0f - expf(-1000.0f / (p[INS_ATTACK] * sr));
             s.release = 1.0f - expf(-1000.0f / (p[INS_RELEASE] * sr));
             if (p[INS_SC_HPF]) s.hp = filterCoeff((float)p[INS_SC_HPF], sr);
+        } else if (s.type == INS_CHORUS) {
+            s.chorusMode = p[INS_CH_MODE];
+            s.chorusSpeed = p[INS_CH_RATE] * 0.01f / sr;
+            s.chorusDepth = p[INS_CH_DEPTH] * 0.01f;
+            s.chorusWidth = p[INS_CH_WIDTH] * 0.01f;
+            constexpr float limit = (StereoChorus::BUFFER - 3.0f) / 18.0f;
+            float samplesPerMs = sr * 0.001f;
+            s.chorusSamplesPerMs = samplesPerMs < limit ? samplesPerMs : limit;
         }
         next = s;
-        if (active.type == next.type) active = next;
+        if (sameAlgorithm()) active = next;
+    }
+    bool sameAlgorithm() const {
+        return active.type == next.type && (active.type != INS_CHORUS || active.chorusMode == next.chorusMode);
+    }
+    void resetState() {
+        trim = active.trim;
+        drive = active.drive;
+        phase = 1.0f;
+        for (int c = 0; c < 2; c++) held[c] = pre1[c] = pre2[c] = tone[c] = detector[c] = 0.0f;
+        peak = 0.0f;
+        gain = wantedGain = 1.0f;
+        detectorClock = 0;
+    }
+    void reset() {
+        active = next = Settings{};
+        rateHz = 0.0f;
+        wet = 0.0f;
+        resetState();
+        chorus.reset(0.0f, 0.0f);
     }
     bool processing() const { return active.type != INS_OFF || next.type != INS_OFF; }
     unsigned sources() const {
@@ -87,17 +188,15 @@ struct StereoInsert {
     }
     // Call before looking up an external detector source so the switch is sample accurate.
     void advance() {
-        if (active.type != next.type && wet == 0.0f) {
+        bool matches = sameAlgorithm();
+        if (!matches && wet == 0.0f) {
+            bool enteringChorus = active.type != INS_CHORUS && next.type == INS_CHORUS;
             active = next;
-            trim = active.trim;
-            drive = active.drive;
-            phase = 1.0f;
-            for (int c = 0; c < 2; c++) held[c] = pre1[c] = pre2[c] = tone[c] = detector[c] = 0.0f;
-            peak = 0.0f;
-            gain = wantedGain = 1.0f;
-            detectorClock = 0;
+            resetState();
+            if (enteringChorus) chorus.reset(active.chorusDepth, active.chorusWidth);
+            matches = true;
         }
-        wet = slew(wet, active.type == next.type ? active.mix : 0.0f, fadeStep);
+        wet = slew(wet, matches ? active.mix : 0.0f, fadeStep);
     }
     void process(float& l, float& r, float keyL, float keyR) {
         if (active.type == INS_OFF) return;
@@ -124,6 +223,9 @@ struct StereoInsert {
                     y[c] = tone[c];
                 } else tone[c] = y[c];
             }
+        } else if (active.type == INS_CHORUS) {
+            chorus.run(y, active.chorusMode, active.chorusSpeed, active.chorusDepth,
+                       active.chorusWidth, active.chorusSamplesPerMs, fadeStep);
         } else {
             if (!active.source) { keyL = l; keyR = r; }
             if (active.hp) {

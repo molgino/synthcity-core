@@ -26,11 +26,11 @@ struct ParamDef {
 };
 
 enum { VOICE_PARAM_CAP = 64, TRACK_PARAM_CAP = 96, INSERT_STAGES = 2 };
-enum InsertType { INS_OFF, INS_CRUSH, INS_COMPRESS, INS_TYPE_COUNT };
+enum InsertType { INS_OFF, INS_CRUSH, INS_COMPRESS, INS_CHORUS, INS_TYPE_COUNT };
 enum InsertField {
     INS_TYPE, INS_MIX, INS_TRIM, INS_RATE, INS_BITS, INS_DRIVE, INS_TONE, INS_PREFILTER,
     INS_THRESHOLD, INS_RATIO, INS_ATTACK, INS_RELEASE, INS_KNEE, INS_SOURCE, INS_SC_HPF,
-    INSERT_FIELDS
+    INS_CH_MODE, INS_CH_RATE, INS_CH_DEPTH, INS_CH_WIDTH, INSERT_FIELDS
 };
 
 #define INSERT_PARAMS(id) \
@@ -48,7 +48,11 @@ enum InsertField {
     {id ".release",   "RELEASE",    PS_TRACK, PK_NUM,   10, 1000, 120, "ms", 0}, \
     {id ".knee",      "KNEE",       PS_TRACK, PK_NUM,    0,  24,   6, "dB", 0}, \
     {id ".source",    "SIDECHAIN",  PS_TRACK, PK_ENUM,   0,   8,   0, "", 0}, \
-    {id ".sc.hpf",    "SC HPF",     PS_TRACK, PK_NUM,    0, 500,   0, "Hz", 0}
+    {id ".sc.hpf",    "SC HPF",     PS_TRACK, PK_NUM,    0, 500,   0, "Hz", 0}, \
+    {id ".ch.mode",   "CHARACTER",  PS_TRACK, PK_ENUM,   0,   1,   0, "", 0}, \
+    {id ".ch.rate",   "RATE",       PS_TRACK, PK_NUM,    5, 500,  45, "", 0}, \
+    {id ".ch.depth",  "DEPTH",      PS_TRACK, PK_NUM,    0, 100,  55, "%", 0}, \
+    {id ".ch.width",  "WIDTH",      PS_TRACK, PK_NUM,    0, 100, 100, "%", 0}
 
 // Reihenfolge ist Anzeigereihenfolge; sie darf sich aendern, ohne Dateien zu brechen.
 static constexpr ParamDef PARAMS[] = {
@@ -136,7 +140,8 @@ inline int insertField(int index) { return (index - INSERT_FIRST) % INSERT_FIELD
 inline bool insertFieldVisible(int type, int field) {
     if (field == INS_TYPE) return true;
     if (type == INS_CRUSH) return field <= INS_PREFILTER;
-    return type == INS_COMPRESS && (field <= INS_TRIM || field >= INS_THRESHOLD);
+    if (type == INS_COMPRESS) return field <= INS_TRIM || (field >= INS_THRESHOLD && field <= INS_SC_HPF);
+    return type == INS_CHORUS && (field <= INS_TRIM || field >= INS_CH_MODE);
 }
 // Index innerhalb des Gueltigkeitsbereichs (global bzw. Spur) - so liegen die Werte im Modell.
 inline int paramSlot(int i) {

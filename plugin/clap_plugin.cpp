@@ -46,7 +46,15 @@ static void buildParams() {
     gPar[gNPar++] = {pidHash("ui.track"), "SPUR", "Spur", 1, NTRACKS, 1, PX_FOCUS, 0, -1};
     for (int i = 0; i < NPARAMS && gNPar < 128; i++) {
         if (PARAMS[i].scope != PS_TRACK) continue;
-        gPar[gNPar++] = {pidHash(PARAMS[i].id), PARAMS[i].name, isInsertParam(i) ? (insertStage(i) ? "Spur/Insert 2" : "Spur/Insert 1") : "Spur",
+        const char* module = "Spur";
+        if (isInsertParam(i)) {
+            static const char* paths[INSERT_STAGES][2] = {
+                {"Spur/Insert 1", "Spur/Insert 1/Chorus"},
+                {"Spur/Insert 2", "Spur/Insert 2/Chorus"},
+            };
+            module = paths[insertStage(i)][insertField(i) >= INS_CH_MODE];
+        }
+        gPar[gNPar++] = {pidHash(PARAMS[i].id), PARAMS[i].name, module,
                          (double)PARAMS[i].lo, (double)PARAMS[i].hi, (double)PARAMS[i].def,
                          PX_TRACK, (int16_t)paramSlot(i), (int16_t)i};
     }
