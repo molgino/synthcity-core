@@ -1584,6 +1584,57 @@ int main() {
             && restored[INS_SOURCE] == 2, "insert selection does not survive project save and load");
     }
 
+    grp("Stereo chorus: characters, width and block independence");
+    {
+        const int frames = 48000;
+        static float classic[frames * 2], ensemble[frames * 2], blocks[frames * 2], centered[frames * 2];
+        auto chorusRender = [&](float* dst, int block, int mode, int width) {
+            e.prepare(48000);
+            e.pat = 0;
+            setupBeat(e, 57);
+            Track& track = e.P.pat[0].t[0];
+            track.p[SL("trk.amp.sus")] = 100;
+            track.p[SL("trk.len")] = 127;
+            for (int i = 1; i < NSTEPS; i++) track.s[i].on = 0;
+            auto* fx = track.p + insertParamSlot(1);
+            fx[INS_TYPE] = INS_CHORUS;
+            fx[INS_CH_MODE] = (int16_t)mode;
+            fx[INS_CH_RATE] = 73;
+            fx[INS_CH_DEPTH] = 78;
+            fx[INS_CH_WIDTH] = (int16_t)width;
+            e.start();
+            for (int i = 0; i < frames; i += block)
+                e.render(dst + 2 * i, block < frames - i ? block : frames - i);
+        };
+        auto side = [&](const float* dst) {
+            double power = 0;
+            for (int i = 2000; i < frames; i++) {
+                float delta = dst[2 * i] - dst[2 * i + 1];
+                power += delta * delta;
+            }
+            return sqrt(power / (frames - 2000));
+        };
+        chorusRender(classic, 64, 0, 100);
+        chorusRender(blocks, 977, 0, 100);
+        chk(!memcmp(classic, blocks, sizeof classic), "classic chorus depends on block size");
+        chorusRender(ensemble, 64, 1, 100);
+        chorusRender(blocks, 977, 1, 100);
+        chk(!memcmp(ensemble, blocks, sizeof ensemble), "ensemble chorus depends on block size");
+        chorusRender(centered, 977, 1, 0);
+        chk(side(classic) > 0.01 && side(ensemble) > 0.01, "chorus does not widen a mono source");
+        chk(side(centered) < 1e-6, "zero chorus width changes a mono source's panorama");
+        chk(memcmp(classic, ensemble, sizeof classic) && sane(ensemble, frames * 2),
+            "the two characters sound identical or produce an invalid signal");
+
+        static Doc doc;
+        static Project reloaded;
+        projectToDoc(e.P, doc);
+        projectFromDoc(doc, reloaded);
+        const auto* fx = reloaded.pat[0].t[0].p + insertParamSlot(1);
+        chk(fx[INS_TYPE] == INS_CHORUS && fx[INS_CH_MODE] == 1 && fx[INS_CH_RATE] == 73
+            && fx[INS_CH_DEPTH] == 78 && fx[INS_CH_WIDTH] == 0, "chorus settings do not survive project save and load");
+    }
+
     grp("Referenz-Aufnahme");
     {
         const int N = 96000;                         // zwei Sekunden

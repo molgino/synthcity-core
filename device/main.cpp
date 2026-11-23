@@ -2549,8 +2549,12 @@ static int selfTest(const char* shotDir) {
     tap(BT_X);
     CHECK(scGet(0, slotOf(type)) == INS_COMPRESS && scInsertVisible(0, pIndex("trk.ins1.source"))
           && !scInsertVisible(0, pIndex("trk.ins1.bits")), "INS: compressor and sidechain controls appear");
+    tap(BT_X);
+    CHECK(scGet(0, slotOf(type)) == INS_CHORUS && scInsertVisible(0, pIndex("trk.ins1.ch.width"))
+          && !scInsertVisible(0, pIndex("trk.ins1.threshold")), "INS: chorus controls appear");
+    CHECK(!strcmp(scParamText(pIndex("trk.ins1.ch.mode"), 1, -1), "ENSEMBLE"), "INS: chorus characters have names");
     shot("04a-inserts");
-    tap(BT_Y); tap(BT_Y);
+    tap(BT_Y); tap(BT_Y); tap(BT_Y);
     U.tab = TAB_SRC;
     // Scene B bearbeiten: der Wert landet in der Scene, nicht im Grundwert
     tap(BT_LEFT, 1u << BT_B); tap(BT_LEFT, 1u << BT_B);   // Reiter TRIG

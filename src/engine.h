@@ -321,7 +321,7 @@ struct Engine : Sink {
         }
     }
     void resetInserts() {
-        for (auto& track : inserts) for (StereoInsert& stage : track) stage = StereoInsert{};
+        for (auto& track : inserts) for (StereoInsert& stage : track) stage.reset();
     }
     void configureInserts() {
         const Pattern& pattern = P.pat[pat];
@@ -371,7 +371,7 @@ struct Engine : Sink {
     static void warmTables() {
         float lo, hi;
         knobSlot(0); modDestSlot(1); modDestRange(1, lo, hi); modSlots();
-        Voice::liveSlots(); Voice::S(); insertParamSlot(0);
+        Voice::liveSlots(); Voice::S(); insertParamSlot(0); StereoChorus::warm();
         for (int i = 0; i < machineCount(); i++) machineAt(i);
     }
 
