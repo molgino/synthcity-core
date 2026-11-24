@@ -600,6 +600,11 @@ Gerät und umgekehrt.
 
 **Ansichten** (L2/R2): TRACK, SONG, PROJ, SYSTEM.
 
+Die Kopfzeile zeigt den Akkustand mit Ladeblitz, sobald der Akku erkannt wird. Die Prozentanzeige
+nutzt die geglättete Akkuspannung aus dem ursprünglichen Synth City. Der Ladeblitz berücksichtigt
+auch die separate Ladebuchse des R36S. **SYSTEM → BATTERY** zeigt Spannung, Strom und den
+Prozentwert des Akku-Treibers zum Vergleich.
+
 * **PROJ:** Projekte haben **freie Namen**. OPEN PROJECT blättert mit X/Y durch alle Dateien in
   `projects/`, A öffnet. SAVE AS und NEW PROJECT fragen den Namen über eine Bildschirmtastatur
   (A tippt, B löscht, X Leerzeichen, Y Groß/Klein, START fertig). Der Name steht oben links,

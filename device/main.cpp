@@ -13,6 +13,7 @@
 #include "input.h"
 #include "drm.h"
 #include "midi.h"
+#include "battery.h"
 #include "master_eq.h"
 #include "usbaudio.h"
 #include "web.h"
@@ -70,6 +71,7 @@ void operator delete(void* p, unsigned long) noexcept { free(p); }
 // ============================================================================================
 enum { SW = 640, SH = 480 };
 static uint32_t FB[SW * SH];
+static Battery gBattery;
 
 enum : uint32_t {
     C_BG = 0x0e0f12, C_PANEL = 0x16181d, C_SEL = 0x252a35, C_LINE = 0x343945, C_TXT = 0xdde1e8,
@@ -1674,9 +1676,9 @@ static void deviceAddr(char* out, int n) {
 }
 
 // --- SYSTEM-Ansicht ------------------------------------------------------------------------------
-enum { SY_OUT, SY_VOL, SY_TONE, SY_BUF, SY_CORES, SY_STATS, SY_USB, SY_ADDR, SY_USBAUD, SY_USBVOL, SY_PCIN, SY_MIDIIN, SY_CLKIN, SY_CLKOUT,
+enum { SY_OUT, SY_VOL, SY_TONE, SY_BUF, SY_CORES, SY_STATS, SY_BAT, SY_USB, SY_ADDR, SY_USBAUD, SY_USBVOL, SY_PCIN, SY_MIDIIN, SY_CLKIN, SY_CLKOUT,
        SY_NOTESOUT, SY_MIDIDEV, SY_DISP, SY_LEARN, SY_QUIT, SY_N };
-static const char* SYNAME[SY_N] = {"AUDIO OUT", "VOLUME", "TEST TONE", "AUDIO BUFFER", "AUDIO CORES", "AUDIO STATS", "USB MODE", "WEB ADDRESS", "USB AUDIO", "USB VOLUME",
+static const char* SYNAME[SY_N] = {"AUDIO OUT", "VOLUME", "TEST TONE", "AUDIO BUFFER", "AUDIO CORES", "AUDIO STATS", "BATTERY", "USB MODE", "WEB ADDRESS", "USB AUDIO", "USB VOLUME",
     "PC AUDIO IN", "MIDI IN", "CLOCK IN", "CLOCK OUT", "NOTES OUT", "MIDI DEVICES", "DISPLAY SHIFT", "LEARN BUTTONS", "QUIT"};
 static bool syDivider(int r) { return r == SY_USB || r == SY_MIDIIN || r == SY_DISP; }
 static int gOutWant = -2;                   // AUDIO OUT: -2 = nichts gewaehlt, -1 = Standard, sonst Index in gDevs
@@ -2223,7 +2225,31 @@ static void handleInput() {
 // Zeichnen
 // ============================================================================================
 enum { HEAD_H = 26, RAIL_W = 118, LIST_X = 124, STEPS_Y = 340, HELP_Y = 458 };
-static void drawHeader() {
+static void drawBattery(const Battery& battery, int x, int y, uint32_t now) {
+    if (battery.percent < 0) return;
+    uint32_t color = battery.plugged ? C_PLAY : battery.percent <= 15 ? C_REC
+                                  : battery.percent <= 30 ? C_LOCK : C_DIM;
+    if (!battery.plugged && battery.percent <= 10 && (now / 500) % 2)
+        color = mix(C_PANEL, color, 102);
+    frame(x, y, 17, 11, color);
+    fill(x + 17, y + 3, 2, 5, color);
+    const int width = battery.percent * 13 / 100;
+    if (battery.plugged && !battery.full) {
+        const int moving = width + (13 - width) * (now % 1667) / 1667;
+        fill(x + 2, y + 2, moving, 7, mix(C_PANEL, color, 112));
+    }
+    fill(x + 2, y + 2, width, 7, color);
+    if (battery.plugged) {
+        const int bx = x - 8, by = y - 2;
+        for (int i = 0; i < 6; i++) fill(bx + 4 - i / 2, by + i, 2, 1, C_LOCK);
+        fill(bx + 1, by + 6, 6, 2, C_LOCK);
+        for (int i = 0; i < 5; i++) fill(bx + 4 - i / 2, by + 8 + i, 2, 1, C_LOCK);
+    }
+    char label[8];
+    snprintf(label, sizeof label, "%d%%", battery.percent);
+    text(x + 21, y - 2, label, color);
+}
+static void drawHeader(const Battery& battery = gBattery) {
     fill(0, 0, SW, HEAD_H, C_PANEL);
     for (int x = 0; x < SW; x++) FB[(HEAD_H - 1) * SW + x] = mix(0xff4d9d, 0x5ec8ff, x * 256 / SW);
     char b[64];
@@ -2240,15 +2266,22 @@ static void drawHeader() {
     else if (scIsFill()) text(238, 5, "FILL", C_LOCK);
     // Scene-Crossfader
     float m = scGetMorph();
-    fill(278, 11, 44, 3, C_LINE);
-    fill(278 + (int)(m * 40), 7, 4, 11, C_SCENE);
+    const bool showBattery = battery.percent >= 0;
+    const int morphWidth = showBattery ? 22 : 44;
+    fill(278, 11, morphWidth, 3, C_LINE);
+    fill(278 + (int)(m * (morphWidth - 4)), 7, 4, 11, C_SCENE);
     if (gAudio) {
-        snprintf(b, sizeof b, "%d%%", (int)(gCpu * 100 + 0.5f));
-        text(330, 5, "CPU", C_FAINT); text(356, 5, b, gCpu > 0.8f ? C_REC : C_DIM);
+        snprintf(b, sizeof b, "%d%%", (int)fminf(999, gCpu * 100 + 0.5f));
+        text(showBattery ? 304 : 330, 5, "CPU", C_FAINT);
+        text(showBattery ? 331 : 356, 5, b, gCpu > 0.8f ? C_REC : C_DIM);
     }
+    drawBattery(battery, 372, 7, U.now);
     static int lastMidi = 0; static uint32_t midiAt = 0;
     if (gMidiInSeen != lastMidi) { lastMidi = gMidiInSeen; midiAt = U.now; }
-    if (U.now - midiAt < 150) fill(396, 9, 6, 6, C_PLAY);   // MIDI kommt an
+    if (U.now - midiAt < 150) {
+        if (showBattery) fill(216, 16, 4, 4, C_PLAY);
+        else fill(396, 9, 6, 6, C_PLAY);
+    }
     // Ansichten
     int x = SW - 8;
     for (int v = V_N - 1; v >= 0; v--) {
@@ -2530,9 +2563,12 @@ static void box(int x, int y, int w, int h, const char* title);
 static void drawSystem() {
     int x0 = LIST_X, y = HEAD_H + 4, w = SW - x0 - 4;
     fill(x0 - 2, HEAD_H, SW - x0 + 2, STEPS_Y - HEAD_H - 4, C_BG);
-    int rowH = 19;
+    const int rowH = 19, bottom = STEPS_Y - 4;
     bool os = haveUsbScript();
-    for (int r = 0; r < SY_N && y < STEPS_Y - rowH; r++, y += rowH) {
+    int first = 0, needed = 0;
+    for (int r = 0; r <= U.sysRow; r++) needed += rowH + (syDivider(r) ? 4 : 0);
+    while (needed > bottom - y) needed -= rowH + (syDivider(first++) ? 4 : 0);
+    for (int r = first; r < SY_N && y + rowH + (syDivider(r) ? 4 : 0) <= bottom; r++, y += rowH) {
         if (syDivider(r)) { fill(x0 + 4, y + 1, w - 8, 1, C_LINE); y += 4; }
         bool s = r == U.sysRow;
         fill(x0, y, w, rowH - 2, s ? C_SEL : C_PANEL);
@@ -2551,6 +2587,16 @@ static void drawSystem() {
         case SY_CORES: snprintf(b, sizeof b, "%d%s", gCfg.cores, gHelper.on ? "" : " (only 1 available)"); break;
         case SY_STATS: snprintf(b, sizeof b, "late blocks %u, worst block %d %%  A = reset", gLate, (int)(gWorkMax * 100 + 0.5f));
                        if (gLate) c = C_LOCK; break;
+        case SY_BAT: {
+            if (gBattery.percent < 0) { snprintf(b, sizeof b, "No battery reading"); break; }
+            char chip[8] = "--";
+            if (gBattery.chipPercent >= 0) snprintf(chip, sizeof chip, "%d%%", gBattery.chipPercent);
+            snprintf(b, sizeof b, "%d%%%s  %.2f V  %d mA  CHIP %s", gBattery.percent,
+                     gBattery.full ? " FULL" : gBattery.plugged ? " CHG" : "", gBattery.mv / 1000.0, gBattery.ma, chip);
+            if (gBattery.plugged) c = C_PLAY;
+            else if (gBattery.percent <= 15) c = C_REC;
+            break;
+        }
         case SY_TONE: snprintf(b, sizeof b, "%s", gToneLeft > 0 ? "playing ..." : "A = 2 s 440 Hz on every output"); break;
         case SY_USB:
             if (!os) snprintf(b, sizeof b, "Groovebox-OS only");
@@ -3223,10 +3269,80 @@ static void simFrame(unsigned mask) {
 static void tap(int b, unsigned hold = 0) { simFrame(hold | 1u << b); simFrame(hold); }
 static void idle(int n = 1) { for (int i = 0; i < n; i++) simFrame(0); }
 #define CHECK(c, msg) do { if (!(c)) { printf("FEHLER: %s (Zeile %d)\n", msg, __LINE__); gFails++; } else printf("ok: %s\n", msg); } while (0)
+static void testBattery() {
+    char root[] = "/tmp/synthcity-battery-XXXXXX";
+    const bool created = mkdtemp(root) != nullptr;
+    CHECK(created, "Battery test sysfs fixture");
+    if (!created) return;
+    char cell[128], usb[128];
+    snprintf(cell, sizeof cell, "%s/cell", root);
+    snprintf(usb, sizeof usb, "%s/usb", root);
+    mkdir(cell, 0700);
+    mkdir(usb, 0700);
+    auto write = [](const char* dir, const char* name, const char* value) {
+        char path[160];
+        snprintf(path, sizeof path, "%s/%s", dir, name);
+        FILE* file = fopen(path, "w");
+        if (!file) return false;
+        const bool ok = fputs(value, file) >= 0;
+        return fclose(file) == 0 && ok;
+    };
+    const bool seeded = write(cell, "type", "Battery\n") && write(usb, "type", "USB\n")
+        && write(cell, "voltage_now", "3825000\n") && write(cell, "current_now", "-100000\n")
+        && write(cell, "capacity", "100\n") && write(cell, "status", "Not charging\n")
+        && write(usb, "online", "0\n");
+    CHECK(seeded, "Battery test readings written");
+    Battery gauge;
+    gauge.poll(0, root);
+    CHECK(gauge.percent == 50 && gauge.chipPercent == 100 && !gauge.plugged,
+          "Original voltage estimate works with a stuck chip counter");
+    write(cell, "voltage_now", "3650000\n");
+    gauge.poll(4999, root);
+    CHECK(gauge.percent == 50, "Battery polling is limited to once every five seconds");
+    gauge.poll(5000, root);
+    CHECK(gauge.percent >= 40 && gauge.percent < 50, "Battery voltage changes are smoothed");
+    const int beforeCharging = gauge.percent;
+    write(usb, "online", "1\n");
+    gauge.poll(10000, root);
+    CHECK(gauge.plugged && gauge.percent == beforeCharging, "An online supply shows charging without dropping the estimate");
+    drawHeader(gauge);
+    CHECK(FB[7 * SW + 372] == C_PLAY && FB[5 * SW + 368] == C_LOCK,
+          "The header draws a green battery and a yellow charging bolt");
+    write(cell, "status", "Full\n");
+    gauge.poll(15000, root);
+    CHECK(gauge.full && gauge.percent == 100, "A full battery shows 100 percent");
+
+    write(cell, "voltage_now", "0\n");
+    write(cell, "capacity", "8\n");
+    write(cell, "status", "Discharging\n");
+    write(usb, "online", "0\n");
+    gauge.poll(20000, root);
+    CHECK(gauge.percent == 8 && !gauge.plugged, "The driver percentage is used if voltage is unavailable");
+    drawBattery(gauge, 372, 7, 0);
+    const uint32_t low = FB[7 * SW + 372];
+    drawBattery(gauge, 372, 7, 500);
+    CHECK(low == C_REC && FB[7 * SW + 372] != low, "A critically low battery flashes red");
+
+    char path[160];
+    const char* cellFiles[] = {"type", "voltage_now", "current_now", "capacity", "status"};
+    const char* usbFiles[] = {"type", "online"};
+    for (const char* name : cellFiles) {
+        snprintf(path, sizeof path, "%s/%s", cell, name);
+        unlink(path);
+    }
+    for (const char* name : usbFiles) {
+        snprintf(path, sizeof path, "%s/%s", usb, name);
+        unlink(path);
+    }
+    rmdir(cell);
+    rmdir(usb);
+    rmdir(root);
+}
 static int selfTest(const char* shotDir) {
     char p[800];
     auto shot = [&](const char* n) { if (!shotDir) return; snprintf(p, sizeof p, "%s/%s.bmp", shotDir, n); saveBmp(p); };
     scLoad("");
+    testBattery();
     idle(2);
     shot("01-track");
     tap(BT_DOWN, 1u << BT_B);
@@ -3894,6 +4010,7 @@ int main(int argc, char** argv) {
     if (isGrooveboxOS()) { hwVolumeSet(gCfg.hwVol); gJack = audioJackPoll(); }
 
     uint32_t lastSave = 0, usbAt = 0, smpChangedAt = 0, updAt = 0;
+    const char* powerSupply = getenv("GB_POWER_SUPPLY");
     int smpSeq = webSampleSeq(), prjSeqSeen = webProjectSeq(), evSeen = 0;
     { char b[8]; evSeen = webLastEvent(b, sizeof b); }
     while (!U.quit) {
@@ -3913,6 +4030,7 @@ int main(int argc, char** argv) {
         finishTake();
         if (gExp.on) exportStep(gRate / 5);
         pollPower();
+        gBattery.poll(U.now, powerSupply);
         // automatisch sichern: 4 s nach der letzten Aenderung, hoechstens alle 20 s
         if (U.dirty && U.now - U.editAt > 4000 && U.now - lastSave > 20000) {
             lastSave = U.now;
