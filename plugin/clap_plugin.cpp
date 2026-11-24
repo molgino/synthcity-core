@@ -155,6 +155,19 @@ static bool paFromText(const clap_plugin_t*, clap_id id, const char* txt, double
     buildParams();
     const PParam* p = findPar(id);
     if (!p) return false;
+    if (p->pidx >= 0 && isChordParam(PARAMS[p->pidx])) {
+        if (!strcmp(txt, "OFF") || !strcmp(txt, "off")) {
+            *out = CHORD_OFF;
+            return true;
+        }
+        char* end;
+        const long offset = strtol(txt, &end, 10);
+        if (end == txt) return false;
+        constexpr long range = CHORD_RANGE;
+        const long bounded = offset < -range ? -range : offset > range ? range : offset;
+        *out = CHORD_UNISON + bounded;
+        return true;
+    }
     *out = atof(txt);
     if (*out < p->lo) *out = p->lo;
     if (*out > p->hi) *out = p->hi;

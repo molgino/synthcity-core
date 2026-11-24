@@ -63,6 +63,8 @@ inline void demoProject(Engine& e) {
     for (int s = 0; s < 12; s++)
         if (ns[s]) { lead.s[s].on = 1; lead.s[s].setLock(NOTE, (int16_t)ns[s]); }
     lead.s[5].setLock(paramSlot(paramFind("trk.prob")), 70);
+    // These five demo sounds use a decaying envelope.
+    for (int t = 0; t < 5; t++) pt.t[t].p[SUS] = 0;
 
     Track& pad = pt.t[5];                                // Spur 6: Flaeche, nur jede zweite Runde
     pad.speed = 2;

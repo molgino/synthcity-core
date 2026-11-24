@@ -188,6 +188,13 @@ inline float effectiveF(const Pattern& pt, int t, int step, int slot, float morp
     return l ? (float)l->val : sceneValue(pt, t, slot, morph);
 }
 
+// Keep the original file default. Writing 0 dB sustain explicitly lets older builds
+// also play newly saved tracks at their intended level.
+inline int trackDocDefault(int param) {
+    static const int sustain = paramFind("trk.amp.sus");
+    return param == sustain ? 0 : PARAMS[param].def;
+}
+
 // --- Dokument schreiben ---------------------------------------------------------------------
 // Geschrieben wird nur, was vom Standard abweicht: die Datei bleibt klein und lesbar, und ein
 // Parameter, den es spaeter nicht mehr gibt, stoert niemanden.
@@ -229,7 +236,7 @@ inline void projectToDoc(const Project& P, Doc& d) {
             for (int i = 0; i < NPARAMS; i++) {
                 if (PARAMS[i].scope != PS_TRACK) continue;
                 int slot = paramSlot(i);
-                if (tr.p[slot] == PARAMS[i].def) continue;
+                if (tr.p[slot] == trackDocDefault(i)) continue;
                 docKeyTrack(k, sizeof k, pi, t, PARAMS[i].id);
                 d.set(k, tr.p[slot]);
             }
@@ -336,11 +343,8 @@ inline void projectFromDoc(const Doc& d, Project& P) {
             for (int i = 0; i < NPARAMS; i++) {
                 if (PARAMS[i].scope != PS_TRACK) continue;
                 docKeyTrack(k, sizeof k, pi, t, PARAMS[i].id);
-                int v = d.get(k, PARAMS[i].def);
-                if (isInsertParam(i)) {
-                    const ParamDef& p = PARAMS[i];
-                    v = v < p.lo ? p.lo : v > p.hi ? p.hi : v;
-                }
+                int v = d.get(k, trackDocDefault(i));
+                if (isInsertParam(i) || isExtendedVoiceParam(i)) v = clampParam(i, v);
                 tr.p[paramSlot(i)] = (int16_t)v;
             }
             for (int k2i = 0; k2i < NSCENES; k2i++) {
@@ -349,7 +353,11 @@ inline void projectFromDoc(const Doc& d, Project& P) {
                 for (int i = 0; i < NPARAMS; i++) {
                     if (PARAMS[i].scope != PS_TRACK || !(PARAMS[i].flags & PF_LOCK)) continue;
                     docKeyScene(k, sizeof k, pi, k2i, t, PARAMS[i].id);
-                    if (d.has(k)) sct.set(paramSlot(i), (int16_t)d.get(k, 0));
+                    if (d.has(k)) {
+                        int value = d.get(k, 0);
+                        if (isExtendedVoiceParam(i)) value = clampParam(i, value);
+                        sct.set(paramSlot(i), (int16_t)value);
+                    }
                 }
             }
             for (int s = 0; s < NSTEPS; s++) {
@@ -363,6 +371,7 @@ inline void projectFromDoc(const Doc& d, Project& P) {
                     docKeyStep(k, sizeof k, pi, t, s, sub);
                     if (!d.has(k)) continue;
                     int v = d.get(k, 0);
+                    if (isExtendedVoiceParam(i)) v = clampParam(i, v);
                     char sub2[56]; snprintf(sub2, sizeof sub2, "%s.slide", sub);
                     char k2[DOC_KEY]; docKeyStep(k2, sizeof k2, pi, t, s, sub2);
                     st.setLock(paramSlot(i), (int16_t)v, (uint8_t)d.get(k2, 0));

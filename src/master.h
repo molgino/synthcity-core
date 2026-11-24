@@ -15,20 +15,36 @@ struct MasterBiquad {
         z[ch][1] = b2 * x - a2 * y;
         return y;
     }
-    void eq(float hz, float db, float sr, int kind) {
+    void eq(float hz, float db, float sr, EqShape shape, float q) {
         float angle = 6.283185307f * (hz < sr * 0.45f ? hz : sr * 0.45f) / sr;
-        float C = cosf(angle), S = sinf(angle);
-        float A = StereoInsert::dbGain(db * 0.5f), a = S * 0.70710678f;
-        if (kind == 0) {
-            float ap = A + 1, am = A - 1, t = 2 * sqrtf(A) * a;
-            set(A * (ap - am*C + t), 2*A*(am - ap*C), A*(ap - am*C - t),
-                ap + am*C + t, -2*(am + ap*C), ap + am*C - t);
-        } else if (kind == 1) {
-            set(1 + a*A, -2*C, 1 - a*A, 1 + a/A, -2*C, 1 - a/A);
-        } else {
-            float ap = A + 1, am = A - 1, t = 2 * sqrtf(A) * a;
-            set(A * (ap + am*C + t), -2*A*(am + ap*C), A*(ap + am*C - t),
-                ap - am*C + t, 2*(am - ap*C), ap - am*C - t);
+        const float halfSin = sinf(angle * 0.5f), halfPower = halfSin * halfSin;
+        const float C = 1.0f - 2.0f * halfPower;
+        const float a = halfSin * sqrtf(1.0f - halfPower) / q;
+        if (shape == EQ_LOW_SHELF || shape == EQ_BELL || shape == EQ_HIGH_SHELF) {
+            float A = StereoInsert::dbGain(db * 0.5f);
+            if (shape == EQ_LOW_SHELF) {
+                float ap = A + 1, am = A - 1, t = 2 * sqrtf(A) * a;
+                set(A * (ap - am*C + t), 2*A*(am - ap*C), A*(ap - am*C - t),
+                    ap + am*C + t, -2*(am + ap*C), ap + am*C - t);
+            } else if (shape == EQ_BELL) {
+                set(1 + a*A, -2*C, 1 - a*A, 1 + a/A, -2*C, 1 - a/A);
+            } else {
+                float ap = A + 1, am = A - 1, t = 2 * sqrtf(A) * a;
+                set(A * (ap + am*C + t), -2*A*(am + ap*C), A*(ap + am*C - t),
+                    ap - am*C + t, 2*(am - ap*C), ap - am*C - t);
+            }
+            return;
+        }
+        if (shape == EQ_LOW_PASS || shape == EQ_LOW_PASS_24) {
+            const float b = halfPower;
+            set(b, 2*b, b, 1+a, -2*C, 1-a);
+        } else if (shape == EQ_HIGH_PASS || shape == EQ_HIGH_PASS_24) {
+            const float b = 1.0f - halfPower;
+            set(b, -2*b, b, 1+a, -2*C, 1-a);
+        } else if (shape == EQ_NOTCH) {
+            set(1, -2*C, 1, 1+a, -2*C, 1-a);
+        } else if (shape == EQ_BAND_PASS) {
+            set(a, 0, -a, 1+a, -2*C, 1-a);
         }
     }
 };
@@ -116,29 +132,102 @@ struct MasterMeter {
     }
 };
 
+inline const char* eqShapeName(int shape) {
+    static const char* names[] = {"Off", "Bell", "Low Shelf", "High Shelf", "LP 12",
+                                 "LP 24", "HP 12", "HP 24", "Notch", "Band Pass"};
+    return names[shape >= 0 && shape < EQ_SHAPES ? shape : EQ_OFF];
+}
+inline bool eqShapeHasGain(int shape) { return shape >= EQ_BELL && shape <= EQ_HIGH_SHELF; }
+
+struct MasterEq {
+    enum { BANDS = 8 };
+    enum Field { SHAPE, FREQ, GAIN, Q, FIELDS };
+    struct Band {
+        MasterBiquad filter[2];
+        int count = 0;
+        int16_t values[FIELDS] = {};
+    };
+    Band bands[BANDS];
+    int enabled[BANDS], count = 0;
+
+    static const int* slots(int band) {
+        struct Slots {
+            int values[BANDS][FIELDS];
+            Slots() {
+                const char* fields[] = {"shape", "freq", "gain", "q"};
+                for (int b = 0; b < BANDS; b++) for (int f = 0; f < FIELDS; f++) {
+                    char id[24]; snprintf(id, sizeof id, "master.eq%d.%s", b + 1, fields[f]);
+                    values[b][f] = paramSlot(paramFind(id));
+                }
+                // Preserve the IDs used by older projects and host automation.
+                values[0][GAIN] = paramSlot(paramFind("master.low"));
+                values[3][GAIN] = paramSlot(paramFind("master.mid"));
+                values[3][FREQ] = paramSlot(paramFind("master.freq"));
+                values[7][GAIN] = paramSlot(paramFind("master.high"));
+            }
+        };
+        static const Slots ids;
+        return ids.values[band];
+    }
+
+    void configure(const int16_t* global, float sr, bool force = false) {
+        count = 0;
+        for (int b = 0; b < BANDS; b++) {
+            Band& band = bands[b];
+            const int* index = slots(b);
+            int16_t next[FIELDS];
+            bool changed = force;
+            for (int f = 0; f < FIELDS; f++) {
+                next[f] = global[index[f]];
+                if (next[f] != band.values[f]) changed = true;
+            }
+            if (changed) {
+                const int shape = next[SHAPE];
+                const bool steep = shape == EQ_LOW_PASS_24 || shape == EQ_HIGH_PASS_24;
+                const int n = shape == EQ_OFF || (eqShapeHasGain(shape) && !next[GAIN]) ? 0 : steep ? 2 : 1;
+                if (force || n != band.count || shape != band.values[SHAPE]) {
+                    band.filter[0] = MasterBiquad{};
+                    band.filter[1] = MasterBiquad{};
+                }
+                band.count = n;
+                if (n) {
+                    const float q = next[Q] == 71 ? 0.70710678f : next[Q] * 0.01f;
+                    band.filter[0].eq(next[FREQ], next[GAIN], sr, (EqShape)shape, steep ? q * 0.765366865f : q);
+                    if (steep) band.filter[1].eq(next[FREQ], 0, sr, (EqShape)shape, q * 1.847759065f);
+                }
+                memcpy(band.values, next, sizeof next);
+            }
+            if (band.count) enabled[count++] = b;
+        }
+    }
+
+    void run(float& l, float& r) {
+        for (int i = 0; i < count; i++) {
+            Band& band = bands[enabled[i]];
+            for (int j = 0; j < band.count; j++) {
+                l = band.filter[j].tick(l, 0);
+                r = band.filter[j].tick(r, 1);
+            }
+        }
+    }
+};
+
 struct MasterChain {
     enum Field { ON, TRIM, LOW, MID, FREQ, HIGH, THRESHOLD, RATIO, ATTACK, RELEASE,
-                 MAKEUP, CLIP, LIMIT, CEILING, AB, FIELDS };
-    static constexpr int LOW_HZ = 100, HIGH_HZ = 9000;
+                 MAKEUP, CLIP, LIMIT, CEILING, AB, KNEE, DETECT, AUTO, COMP_MIX, LIMREL, FIELDS };
     int16_t values[FIELDS] = {};
     float sr = 0, inputTrim = 1, clip = 1, ceiling = 1, gain = 1, release = 1, mix = 0;
     float audPower = 0, dspPower = 0, smooth = 0;
     bool enabled = false;
     StereoInsert compressor;
-    MasterBiquad eq[3];
-
-    static void configureEq(MasterBiquad (&bands)[3], float rate, int low, int mid, int freq, int high) {
-        bands[0].eq(LOW_HZ, low, rate, 0);
-        bands[1].eq(freq, mid, rate, 1);
-        bands[2].eq(HIGH_HZ, high, rate, 2);
-    }
+    MasterEq eq;
 
     static const int* slots() {
         static int index[FIELDS] = {};
         static bool init = false;
         if (!init) {
             const char* fields[FIELDS] = {"on", "trim", "low", "mid", "freq", "high", "threshold", "ratio",
-                "attack", "release", "makeup", "clip", "limit", "ceiling", "ab"};
+                "attack", "release", "makeup", "clip", "limit", "ceiling", "ab", "knee", "detect", "auto", "comp_mix", "limrel"};
             for (int i = 0; i < FIELDS; i++) {
                 char id[32]; snprintf(id, sizeof id, "master.%s", fields[i]);
                 index[i] = paramSlot(paramFind(id));
@@ -150,7 +239,7 @@ struct MasterChain {
     void reset() {
         sr = 0; gain = 1; mix = 0; enabled = false; audPower = dspPower = 0;
         compressor.reset();
-        for (auto& band : eq) band = MasterBiquad{};
+        eq = MasterEq{};
     }
     void configure(const int16_t* global, float rate) {
         const int* index = slots();
@@ -158,7 +247,9 @@ struct MasterChain {
             if (enabled) reset();
             return;
         }
-        bool dirty = !enabled || rate != sr;
+        const bool rateChanged = !enabled || rate != sr;
+        eq.configure(global, rate, rateChanged);
+        bool dirty = rateChanged;
         for (int i = 0; i < FIELDS; i++) {
             if (values[i] != global[index[i]]) dirty = true;
             values[i] = global[index[i]];
@@ -171,23 +262,20 @@ struct MasterChain {
         // A Catmull–Rom interpolator has a maximum L1 kernel norm of 1.25.
         // Bounding each sample by 0.8*ceiling keeps its interpolated peak below ceiling.
         ceiling = 0.8f * StereoInsert::dbGain(values[CEILING] * 0.1f);
-        release = 1 - expf(-1 / (0.08f * rate));
+        release = 1 - expf(-1000.0f / (values[LIMREL] * rate));
         smooth = 1 - expf(-1 / (0.3f * rate));
-        configureEq(eq, rate, values[LOW], values[MID], values[FREQ], values[HIGH]);
         int16_t p[INSERT_FIELDS] = {};
-        p[INS_TYPE] = INS_COMPRESS; p[INS_MIX] = 100; p[INS_TRIM] = values[MAKEUP];
+        p[INS_TYPE] = INS_COMPRESS; p[INS_MIX] = values[COMP_MIX]; p[INS_TRIM] = values[MAKEUP];
         p[INS_THRESHOLD] = values[THRESHOLD]; p[INS_RATIO] = values[RATIO];
         p[INS_ATTACK] = values[ATTACK]; p[INS_RELEASE] = values[RELEASE];
-        p[INS_KNEE] = 6; p[INS_SC_HPF] = 80;
+        p[INS_KNEE] = values[KNEE]; p[INS_SC_HPF] = 80;
+        p[INS_DETECT] = values[DETECT]; p[INS_AUTO_RELEASE] = values[AUTO];
         compressor.configure(p, rate);
     }
     void run(float& l, float& r, bool offline) {
         float dryL = l, dryR = r;
         l *= inputTrim; r *= inputTrim;
-        for (int i = 0; i < 3; i++) {
-            // Keep even a zero-gain band's state current across edits.
-            l = eq[i].tick(l, 0); r = eq[i].tick(r, 1);
-        }
+        eq.run(l, r);
         compressor.advance();
         compressor.process(l, r, 0, 0);
         if (values[CLIP]) { l = softClip(l * clip); r = softClip(r * clip); }

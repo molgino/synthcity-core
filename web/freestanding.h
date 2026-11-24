@@ -84,6 +84,19 @@ static inline float tanhf(float x) {
     return (e - 1.0f) / (e + 1.0f);
 }
 
+static inline float atanf(float x) {
+    const float a = fabsf(x);
+    float t = a > 1.0f ? 1.0f / a : a;
+    const bool rotate = t > 0.414213562f;
+    if (rotate) t = (t - 1.0f) / (t + 1.0f);
+    const float z = t * t;
+    float angle = t * (1.0f + z * (-1.0f / 3.0f + z * (1.0f / 5.0f
+                    + z * (-1.0f / 7.0f + z * (1.0f / 9.0f - z / 11.0f)))));
+    if (rotate) angle += SC_PI * 0.25f;
+    if (a > 1.0f) angle = SC_PI * 0.5f - angle;
+    return x < 0.0f ? -angle : angle;
+}
+
 // snprintf kennt genau die Formate, die der Kern benutzt: %d %s %.Nf %+d
 int snprintf(char* out, size_t size, const char* fmt, ...);
 

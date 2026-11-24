@@ -45,6 +45,7 @@ const char* scMachName(int m)  { return machineAt(m)->name(); }
 const char* scMachLabel(int m, int which) {
     return machineAt(m)->label(which);
 }
+int scSourceVisible(int i, int mach) { return i >= 0 && i < NPARAMS && sourceParamVisible(PARAMS[i].id, mach); }
 int scMachCount() { return machineCount(); }
 int scMachSteps(int m, int k) { return machineAt(m)->steps(k); }
 int scMachUsesSmp(int m) { return machineAt(m)->usesSample() ? 1 : 0; }
@@ -56,8 +57,8 @@ static Pattern& WP(int p) { gEng.P.pat[p].used = 1; return gEng.P.pat[p]; }
 
 // --- Werte ------------------------------------------------------------------------------------
 int  scGet(int track, int slot) {
-    if (track < 0) return gEng.P.g[slot];
-    if (track >= NTRACKS) return 0;                 // die FX-Spur hat keine eigenen Grundwerte
+    if (track < 0) return slot >= 0 && slot < GLOBAL_PARAM_CAP ? gEng.P.g[slot] : 0;
+    if (track >= NTRACKS || slot < 0 || slot >= TRACK_PARAM_CAP) return 0;                 // die FX-Spur hat keine eigenen Grundwerte
     return gEng.P.pat[gEng.pat].t[track].p[slot];
 }
 void scSet(int track, int slot, int v) {
@@ -70,11 +71,9 @@ void scSet(int track, int slot, int v) {
         if (slot == paramSlot(paramFind("bpm"))) gEng.setTempo(gEng.effTempo(gEng.pat));
     } else if (track < NTRACKS && slot >= 0 && slot < TRACK_PARAM_CAP) {
         const int first = insertParamSlot(0);
-        if (slot >= first) {
-            int p = INSERT_FIRST + slot - first;
-            if (p >= NPARAMS) return;
-            v = v < PARAMS[p].lo ? PARAMS[p].lo : v > PARAMS[p].hi ? PARAMS[p].hi : v;
-        }
+        int p = paramOfSlot(PS_TRACK, slot);
+        if (p < 0) return;
+        if (slot >= first || isExtendedVoiceParam(p)) v = clampParam(p, v);
         W().t[track].p[slot] = (int16_t)v;
     }
 }
@@ -99,7 +98,11 @@ int  scLockGet(int t, int s, int slot) {
     return l ? l->val : -32768;
 }
 void scLockSet(int t, int s, int slot, int v, int slide) {
-    if (t < NTRACKS && slot >= insertParamSlot(0)) return;
+    if (t < NTRACKS) {
+        int p = paramOfSlot(PS_TRACK, slot);
+        if (p < 0 || slot >= insertParamSlot(0)) return;
+        if (isExtendedVoiceParam(p)) v = clampParam(p, v);
+    }
     if (t == NTRACKS) {
         int p = paramOfSlot(PS_GLOBAL, slot);
         if (p < 0 || !fxLockable(p)) return;
@@ -158,7 +161,11 @@ void scSetPattern(int p) {
 // Quelle geschieht, aendert die Ablage nicht mehr.
 static Pattern gClipPat;  static int gHasPat = 0;
 static Track   gClipTrk;  static int gHasTrk = 0;
-static Step    gClipStep; static int gHasStep = 0; static bool gClipStepFx = false;
+static struct StepClipboard {
+    Step steps[NTRACKS][NSTEPS];
+    int rows = 0, length[NTRACKS];
+    bool fx = false;
+} gClipSteps;
 void scClipPat(int p)   { if (p < 0 || p >= NPATTERNS) return; gClipPat = gEng.P.pat[p]; gHasPat = 1; }
 int  scHasClipPat()     { return gHasPat; }
 void scPastePat(int p) {
@@ -181,15 +188,49 @@ void scClearTrigs(int t) {
     Track& tr = TRW(t);
     for (int s = 0; s < NSTEPS; s++) { tr.s[s].on = 0; tr.s[s].nLock = 0; }
 }
+int scClipStepRange(int firstTrack, int firstStep, int lastTrack, int lastStep) {
+    if (firstTrack < 0 || lastTrack > NTRACKS || firstTrack > lastTrack ||
+        (firstTrack != NTRACKS && lastTrack == NTRACKS) ||
+        firstStep < 0 || firstStep > lastStep || lastStep >= NSTEPS) return 0;
+    int copied = 0;
+    gClipSteps.fx = firstTrack == NTRACKS;
+    gClipSteps.rows = lastTrack - firstTrack + 1;
+    for (int row = 0; row < gClipSteps.rows; row++) {
+        const Track& track = TR(firstTrack + row);
+        const int end = lastStep < track.len ? lastStep + 1 : track.len;
+        const int count = end > firstStep ? end - firstStep : 0;
+        memcpy(gClipSteps.steps[row], track.s + firstStep, count * sizeof(Step));
+        gClipSteps.length[row] = count;
+        copied += count;
+    }
+    if (!copied) gClipSteps.rows = 0;
+    return copied;
+}
+int scPasteStepRange(int firstTrack, int firstStep) {
+    if (firstTrack < 0 || firstTrack > NTRACKS || firstStep < 0 || firstStep >= NSTEPS ||
+        (firstTrack == NTRACKS) != gClipSteps.fx) return 0;
+    const int trackLimit = gClipSteps.fx ? NTRACKS + 1 : NTRACKS;
+    int pasted = 0;
+    for (int row = 0; row < gClipSteps.rows && firstTrack + row < trackLimit; row++) {
+        const int t = firstTrack + row, room = (int)TR(t).len - firstStep;
+        const int n = gClipSteps.length[row] < room ? gClipSteps.length[row] : room;
+        if (n <= 0) continue;
+        memcpy(TRW(t).s + firstStep, gClipSteps.steps[row], n * sizeof(Step));
+        pasted += n;
+    }
+    return pasted;
+}
 void scClipStep(int t, int s) {
     if (t < 0 || t > NTRACKS || s < 0 || s >= NSTEPS) return;
-    gClipStep = TR(t).s[s]; gHasStep = 1; gClipStepFx = t == NTRACKS;
+    gClipSteps.steps[0][0] = TR(t).s[s];
+    gClipSteps.rows = gClipSteps.length[0] = 1;
+    gClipSteps.fx = t == NTRACKS;
 }
-int  scHasClipStep()    { return gHasStep; }
+int scHasClipStep() { return gClipSteps.rows != 0; }
 void scPasteStep(int t, int s) {
-    if (!gHasStep || t < 0 || t > NTRACKS || s < 0 || s >= NSTEPS) return;
-    if ((t == NTRACKS) != gClipStepFx) return;         // Spur-Locks passen nicht auf die FX-Spur
-    TRW(t).s[s] = gClipStep;
+    if (!gClipSteps.rows || !gClipSteps.length[0] || t < 0 || t > NTRACKS || s < 0 || s >= NSTEPS) return;
+    if ((t == NTRACKS) != gClipSteps.fx) return;
+    TRW(t).s[s] = gClipSteps.steps[0][0];
 }
 int  scPatUsed(int p)   { return (p >= 0 && p < NPATTERNS) ? gEng.P.pat[p].used : 0; }
 void scPatCopy(int a, int b) { patternCopy(gEng.P, a, b); }
@@ -400,7 +441,10 @@ void  scStepLoop(int on, int from, int len) {
     gEng.seq.loopOn = on != 0; gEng.seq.loopFrom = from; gEng.seq.loopLen = len;
 }
 void scSceneSet(int scene, int t, int slot, int v) {
-    if (slot >= insertParamSlot(0)) return;
+    if (scene < 0 || scene >= NSCENES || t < 0 || t >= NTRACKS || slot >= insertParamSlot(0)) return;
+    const int p = paramOfSlot(PS_TRACK, slot);
+    if (p < 0) return;
+    if (isExtendedVoiceParam(p)) v = clampParam(p, v);
     W().sc[scene][t].set(slot, (int16_t)v);
 }
 void  scSceneClear(int scene, int t, int slot) {

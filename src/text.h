@@ -7,6 +7,7 @@
 #include "machine.h"
 #include "fx.h"
 #include "insert.h"
+#include "master.h"
 #include "seq.h"
 #include "mod.h"
 #include <stdio.h>
@@ -42,14 +43,14 @@ inline void condText(int v, char* out, int n) {
 }
 // Abstand einer Akkordnote: 0 = aus, sonst Halbtoene um 25 herum, mit dem Namen des Intervalls.
 inline void chordText(int v, char* out, int n) {
-    if (v <= 0) { snprintf(out, n, "OFF"); return; }
-    static const char* iv[12] = {"unison", "min 2nd", "maj 2nd", "min 3rd", "maj 3rd",
+    if (v <= CHORD_OFF) { snprintf(out, n, "OFF"); return; }
+    if (v == CHORD_UNISON) { snprintf(out, n, "0"); return; }
+    static const char* iv[12] = {"octave", "min 2nd", "maj 2nd", "min 3rd", "maj 3rd",
                                  "4th", "tritone", "5th", "min 6th", "maj 6th",
                                  "min 7th", "maj 7th"};
-    int d = v - 25;
+    int d = v - CHORD_UNISON;
     int a = d < 0 ? -d : d;
-    if (a == 12 || a == 24) snprintf(out, n, "%+d octave", d);
-    else                    snprintf(out, n, "%+d %s", d, iv[a % 12]);
+    snprintf(out, n, "%+d %s", d, iv[a % 12]);
 }
 inline const char* vmodeName(int v) {
     static const char* n[] = {"POLY", "MONO", "LEGATO"};
@@ -76,6 +77,7 @@ inline const char* modDestinationName(int v, int mach) {
     if (v < 0 || v >= MOD_NDEST) return "NONE";
     const char* id = MOD_DESTS[v].id;
     if (id && mach >= 0) {
+        if (!sourceParamVisible(id, mach)) return nullptr;
         if (!strncmp(id, "trk.src.", 8)) {
             const char* name = machineAt(mach)->label(id[8] - 'a');
             return name[0] ? name : nullptr;
@@ -87,7 +89,7 @@ inline const char* modDestinationName(int v, int mach) {
 inline int enumCount(const ParamDef& d) {
     if (!strncmp(d.id, "trk.ins", 7) && d.kind == PK_ENUM) return d.hi + 1;
     if (!strcmp(d.id, "trk.machine"))  return machineCount();
-    if (!strcmp(d.id, "fx.a.div"))     return DELAY_DIV_N;
+    if (d.kind == PK_ENUM && !strncmp(d.id, "fx.", 3)) return d.hi + 1;
     if (!strcmp(d.id, "trk.vmode"))    return 3;
     if (!strncmp(d.id, "trk.lfo", 7) || !strncmp(d.id, "trk.menv.", 9)) {
         const char* f = modField(d.id);
@@ -98,6 +100,8 @@ inline int enumCount(const ParamDef& d) {
         if (!strcmp(f, "mult")) return 24;
     }
     if (!strcmp(d.id, "trk.flt.type")) return FLT_N;
+    if (d.kind == PK_ENUM && (!strncmp(d.id, "master.", 7) || !strncmp(d.id, "trk.poly", 8)
+                          || !strcmp(d.id, "trk.flt.envmode"))) return d.hi + 1;
     if (d.kind == PK_COND)             return 9 + 19 + 34;
     if (d.kind == PK_ONOFF)            return 2;
     return 0;
@@ -136,10 +140,12 @@ inline void paramText(const ParamDef& d, float v, char* out, int n, int mach = -
         const char* field = d.id + 9;
         int value = (int)v;
         if (!strcmp(field, "type")) {
-            static const char* names[] = {"OFF", "CRUSH / DRIVE", "COMPRESSOR", "CHORUS"};
+            static const char* names[] = {"OFF", "CRUSH / DRIVE", "COMPRESSOR", "CHORUS", "CLIPPER"};
             snprintf(out, n, "%s", names[value >= 0 && value < INS_TYPE_COUNT ? value : 0]);
             return;
         }
+        if (!strcmp(field, "clip.shape")) { snprintf(out, n, "%s", clipShapeName(value)); return; }
+        if (!strcmp(field, "detect")) { snprintf(out, n, "%s", value ? "RMS" : "PEAK"); return; }
         if (!strcmp(field, "ch.mode")) {
             snprintf(out, n, "%s", value ? "ENSEMBLE" : "CLASSIC");
             return;
@@ -170,6 +176,31 @@ inline void paramText(const ParamDef& d, float v, char* out, int n, int mach = -
         if (!strcmp(field, "ratio")) { snprintf(out, n, "%d:1", value); return; }
         if (!strcmp(field, "sc.hpf") && !value) { snprintf(out, n, "OFF"); return; }
     }
+    if (!strncmp(d.id, "master.eq", 9)) {
+        const char* f = modField(d.id);
+        if (!strcmp(f, "shape")) { snprintf(out, n, "%s", eqShapeName((int)v)); return; }
+        if (!strcmp(f, "q")) { snprintf(out, n, "%.2f", v * 0.01); return; }
+    }
+    if (!strcmp(d.id, "master.detect")) { snprintf(out, n, "%s", v > 0.5f ? "RMS" : "PEAK"); return; }
+    if (!strcmp(d.id, "trk.flt.envmode")) { snprintf(out, n, "%s", v > 0.5f ? "FILTER ADSR" : "AMP LINK"); return; }
+    if (!strncmp(d.id, "trk.poly", 8)) {
+        const char* f = modField(d.id);
+        if (!strcmp(f, "wave")) {
+            static const char* names[] = {"SHARED MORPH", "SAW", "PULSE", "SINE"};
+            int i = (int)v;
+            snprintf(out, n, "%s", names[i >= 0 && i < 4 ? i : 0]); return;
+        }
+        if (!strcmp(f, "pw") && !v) { snprintf(out, n, "SHARED"); return; }
+    }
+    if (!strncmp(d.id, "trk.fm", 6)) {
+        const char* f = modField(d.id);
+        if (!strcmp(f, "ratio")) {
+            if (v > 0) snprintf(out, n, "%.2f : 1", v * 0.01);
+            else snprintf(out, n, "LINKED");
+            return;
+        }
+        if (!strcmp(f, "level") && v < 0) { snprintf(out, n, "LINKED"); return; }
+    }
     if (mach >= 0) {
         if (!strncmp(d.id, "trk.src.", 8) && d.id[8] >= 'a' && d.id[8] <= 'h' && !d.id[9]) {
             machineAt(mach)->text(d.id[8] - 'a', v, out, n); return;
@@ -177,10 +208,34 @@ inline void paramText(const ParamDef& d, float v, char* out, int n, int mach = -
     }
     if (!strcmp(d.id, "master.ceiling")) { snprintf(out, n, "%.1f dBTP est.", v * 0.1); return; }
     if (!strcmp(d.id, "master.ratio")) { snprintf(out, n, "%.0f:1", (double)v); return; }
-    if (!strcmp(d.id, "fx.a.div")) {
+    if (!strcmp(d.id, "fx.a.div") || !strcmp(d.id, "fx.a.divr")) {
         int i = (int)(v + 0.5f);
         snprintf(out, n, "%s", DELAY_DIV[i < 0 ? 0 : (i >= DELAY_DIV_N ? DELAY_DIV_N - 1 : i)].name);
         return;
+    }
+    if (!strcmp(d.id, "fx.a.mode")) { snprintf(out, n, "%s", delayTypeName((int)v)); return; }
+    if (!strcmp(d.id, "fx.a.timing")) { snprintf(out, n, "%s", delayTimingName((int)v)); return; }
+    if (!strcmp(d.id, "fx.b.mode")) { snprintf(out, n, "%s", reverbTypeName((int)v)); return; }
+    if (!strcmp(d.id, "fx.a.base") || !strcmp(d.id, "fx.a.width")) {
+        const bool base = !strcmp(d.id, "fx.a.base");
+        if ((base && v <= 0) || (!base && v >= 127)) snprintf(out, n, "OPEN");
+        else if (base) snprintf(out, n, "%.0f Hz", (double)pFreq(v));
+        else snprintf(out, n, "%.1f oct", v * 10.0 / 127.0);
+        return;
+    }
+    if ((!strcmp(d.id, "fx.b.hpf") && v == 0) || (!strcmp(d.id, "fx.b.lpf") && v == 20000)) {
+        snprintf(out, n, "OPEN"); return;
+    }
+    if (!strncmp(d.id, "fx.lfo", 6)) {
+        const char* f = modField(d.id);
+        int i = (int)v;
+        if (!strcmp(f, "wave")) { snprintf(out, n, "%s", lfoWaveName(i)); return; }
+        if (!strcmp(f, "rate")) { snprintf(out, n, "%s", LFO_RATES[ModState::clampRate(v)].name); return; }
+        if (!strcmp(f, "hz")) { snprintf(out, n, "%.2f Hz", v * 0.01); return; }
+        if (!strcmp(f, "phase")) { snprintf(out, n, "%.0f deg", v * 360.0 / 128.0); return; }
+        if (!strcmp(f, "dest")) {
+            snprintf(out, n, "%s", FxControls::destinations()[i >= 0 && i <= FX_LFO_DEST_MAX ? i : 0].name); return;
+        }
     }
     // Werte, deren Einheit nur aus ihrer Bedeutung folgt, stehen vor der allgemeinen Regel.
     if (!strcmp(d.id, "trk.len")) {          // Zwoelftel eines Steps: 12 = ein ganzer Step
@@ -204,7 +259,7 @@ inline void paramText(const ParamDef& d, float v, char* out, int n, int mach = -
         if (v > 126.5f) snprintf(out, n, "OPEN"); else snprintf(out, n, "%.1f oct", (double)(v * 10.0f / 127.0f)); return;
     }
     if (!strcmp(d.id, "trk.flt.type")) { snprintf(out, n, "%s", fltTypeName((int)(v + 0.5f))); return; }
-    if (!strncmp(d.id, "trk.nt", 6))    { chordText((int)(v + 0.5f), out, n); return; }
+    if (isChordParam(d))                { chordText((int)(v + 0.5f), out, n); return; }
     if (!strcmp(d.id, "trk.vmode"))     { snprintf(out, n, "%s", vmodeName((int)(v + 0.5f))); return; }
     if (!strncmp(d.id, "trk.lfo", 7) || !strncmp(d.id, "trk.menv.", 9)) {
         const char* f = modField(d.id);

@@ -2,12 +2,37 @@
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
+#include <dirent.h>
+#include <fcntl.h>
+#include <linux/input.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
 
 const char* const BTN_NAMES[BT_COUNT] = {
-    "UP", "DOWN", "LEFT", "RIGHT", "A", "B", "X", "Y", "L1", "R1", "L2", "R2", "SELECT", "START"
+    "UP", "DOWN", "LEFT", "RIGHT", "A", "B", "X", "Y", "L1", "R1", "L2", "R2", "SELECT", "START", "FN"
 };
 
+static int openFnKey() {
+    DIR* devices = opendir("/dev/input");
+    if (!devices) return -1;
+    int found = -1;
+    while (dirent* entry = readdir(devices)) {
+        if (strncmp(entry->d_name, "event", 5)) continue;
+        const int fd = openat(dirfd(devices), entry->d_name, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+        if (fd < 0) continue;
+        unsigned char keys[(KEY_MAX + 8) / 8] = {};
+        if (ioctl(fd, EVIOCGBIT(EV_KEY, sizeof keys), keys) >= 0 && (keys[KEY_FN / 8] & (1u << (KEY_FN % 8)))) {
+            found = fd;
+            break;
+        }
+        close(fd);
+    }
+    closedir(devices);
+    return found;
+}
+
 void Input::open() {
+    if (fnFd < 0) fnFd = openFnKey();
     int n = SDL_NumJoysticks();
     // Joystick mit den meisten Tasten nehmen
     int best = -1, bestB = -1;
@@ -19,7 +44,7 @@ void Input::open() {
         SDL_JoystickClose(j);
     }
     if (best < 0) return;
-    if (!haveMap && SDL_IsGameController(best)) {
+    if (SDL_IsGameController(best)) {
         gc = SDL_GameControllerOpen(best);
         if (gc) joy = SDL_GameControllerGetJoystick(gc);
     }
@@ -84,7 +109,7 @@ void Input::poll() {
         SDL_SCANCODE_UP, SDL_SCANCODE_DOWN, SDL_SCANCODE_LEFT, SDL_SCANCODE_RIGHT,
         SDL_SCANCODE_Z, SDL_SCANCODE_X, SDL_SCANCODE_S, SDL_SCANCODE_A,
         SDL_SCANCODE_Q, SDL_SCANCODE_W, SDL_SCANCODE_1, SDL_SCANCODE_2,
-        SDL_SCANCODE_BACKSPACE, SDL_SCANCODE_RETURN};
+        SDL_SCANCODE_BACKSPACE, SDL_SCANCODE_RETURN, SDL_SCANCODE_F};
     for (int b = 0; b < BT_COUNT; b++) d[b] = ks[keys[b]] != 0;
     if (ks[SDL_SCANCODE_RSHIFT] || ks[SDL_SCANCODE_LSHIFT]) d[BT_SELECT] = true;
 
@@ -99,7 +124,7 @@ void Input::poll() {
             SDL_CONTROLLER_BUTTON_DPAD_UP, SDL_CONTROLLER_BUTTON_DPAD_DOWN, SDL_CONTROLLER_BUTTON_DPAD_LEFT,
             SDL_CONTROLLER_BUTTON_DPAD_RIGHT, SDL_CONTROLLER_BUTTON_A, SDL_CONTROLLER_BUTTON_B,
             SDL_CONTROLLER_BUTTON_X, SDL_CONTROLLER_BUTTON_Y, SDL_CONTROLLER_BUTTON_LEFTSHOULDER,
-            SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, -1, -1, SDL_CONTROLLER_BUTTON_BACK, SDL_CONTROLLER_BUTTON_START};
+            SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, -1, -1, SDL_CONTROLLER_BUTTON_BACK, SDL_CONTROLLER_BUTTON_START, SDL_CONTROLLER_BUTTON_GUIDE};
         for (int b = 0; b < BT_COUNT; b++)
             if (gcb[b] >= 0 && SDL_GameControllerGetButton(gc, (SDL_GameControllerButton)gcb[b])) d[b] = true;
         if (SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_TRIGGERLEFT) > 16000) d[BT_L2] = true;
@@ -126,6 +151,12 @@ void Input::poll() {
         float gx = axisVal(joy, axLX) * sgnLX, hx = axisVal(joy, axRX) * sgnRX;
         if (fabsf(gx) > fabsf(lx)) lx = gx;
         if (fabsf(hx) > fabsf(rx)) rx = hx;
+    }
+    if (!map[BT_FN].type && gc && SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_GUIDE)) d[BT_FN] = true;
+    if (!map[BT_FN].type && fnFd >= 0) {
+        unsigned char keys[(KEY_MAX + 8) / 8] = {};
+        if (ioctl(fnFd, EVIOCGKEY(sizeof keys), keys) >= 0)
+            d[BT_FN] = d[BT_FN] || (keys[KEY_FN / 8] & (1u << (KEY_FN % 8)));
     }
     Uint32 now = SDL_GetTicks();
     for (int b = 0; b < BT_COUNT; b++) {

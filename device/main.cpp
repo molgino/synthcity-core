@@ -13,6 +13,7 @@
 #include "input.h"
 #include "drm.h"
 #include "midi.h"
+#include "battery.h"
 #include "master_eq.h"
 #include "usbaudio.h"
 #include "web.h"
@@ -70,6 +71,7 @@ void operator delete(void* p, unsigned long) noexcept { free(p); }
 // ============================================================================================
 enum { SW = 640, SH = 480 };
 static uint32_t FB[SW * SH];
+static Battery gBattery;
 
 enum : uint32_t {
     C_BG = 0x0e0f12, C_PANEL = 0x16181d, C_SEL = 0x252a35, C_LINE = 0x343945, C_TXT = 0xdde1e8,
@@ -725,18 +727,20 @@ enum { V_TRACK, V_SONG, V_PROJECT, V_SYSTEM, V_N };
 static const char* VIEWNAME[V_N] = {"TRACK", "SONG", "PROJ", "SYSTEM"};
 enum { TAB_TRIG, TAB_CHRD, TAB_SRC, TAB_FLTR, TAB_AMP, TAB_MIX, TAB_MOD, TAB_INSERT, TAB_N };
 static const char* TABNAME[TAB_N] = {"TRIG", "CHRD", "SRC", "FLTR", "AMP", "MIX", "MOD", "INS"};
-enum { M_NONE, M_MENU, M_SAMPLES, M_HELP, M_KEYS, M_SLICE, M_RECORDER, M_LENGTH, M_PATTERNS, M_SECTIONS, M_VALUE, M_MASTER_EQ };
+enum { M_NONE, M_MENU, M_SAMPLES, M_HELP, M_KEYS, M_SLICE, M_RECORDER, M_LENGTH, M_PATTERNS, M_SECTIONS, M_VALUE, M_MASTER_EQ, M_DETAIL };
 static constexpr int PATTERN_COLUMNS = 4;
 static const int FXT = NTRACKS;   // die FX-Spur des Patterns
 
 struct UI {
     int view = V_TRACK, sel = 0, tab = TAB_TRIG;
-    int rowSel[TAB_N + 1] = {0};      // gewaehlte Zeile je Reiter (+ FX-Spur)
+    int rowSel[TAB_N + 2] = {0};      // gewaehlte Zeile je Reiter (+ FX-Spur)
+    bool fxMod = false;
+    int selectionTrack = -1, selectionStep = 0, selectionPattern = -1;
     int cur = 0;                      // Step-Cursor
     bool aHeld = false, aEdited = false;
     int modal = M_NONE, menuSel = 0, smpSel = 0, smpScroll = 0;
     int patternSel = 0, sectionSel = 0;
-    int eqBand = 0;
+    int eqBand = 0, eqField = MasterEq::GAIN;
     uint32_t eqSpectrumAt = 0;
     int cutAction = 0, cutMarker = 0, cutFrame = 0, cutGrid = 2;
     int recRow = 0, recSource = 0, recLength = 1, recTarget = -1, recLast = -1;
@@ -775,7 +779,8 @@ static int tabOf(const ParamDef& d) {
         {"note", TAB_TRIG}, {"vel", TAB_TRIG}, {"len", TAB_TRIG}, {"prob", TAB_TRIG}, {"cond", TAB_TRIG},
         {"micro", TAB_TRIG}, {"ratchet", TAB_TRIG}, {"quant", TAB_TRIG},
         {"nt2", TAB_CHRD}, {"nt3", TAB_CHRD}, {"nt4", TAB_CHRD}, {"vmode", TAB_CHRD},
-        {"machine", TAB_SRC}, {"smp", TAB_SRC}, {"src", TAB_SRC}, {"flt", TAB_FLTR}, {"bw", TAB_FLTR},
+        {"machine", TAB_SRC}, {"smp", TAB_SRC}, {"src", TAB_SRC}, {"poly1", TAB_SRC}, {"poly2", TAB_SRC},
+        {"fm1", TAB_SRC}, {"fm2", TAB_SRC}, {"fm3", TAB_SRC}, {"fm4", TAB_SRC}, {"flt", TAB_FLTR}, {"bw", TAB_FLTR},
         {"amp", TAB_AMP}, {"vol", TAB_MIX}, {"pan", TAB_MIX}, {"send", TAB_MIX},
         {"lfo1", TAB_MOD}, {"lfo2", TAB_MOD}, {"menv", TAB_MOD}, {"ins1", TAB_INSERT}, {"ins2", TAB_INSERT}};
     for (auto& m : M) if (!strcmp(m.k, key)) return m.t;
@@ -788,22 +793,29 @@ static int srcKnob(const ParamDef& d) {   // trk.src.a..h -> 0..7, sonst -1
 }
 // Zeilen der aktuellen Liste: Parameterindex, oder -1-k = Ueberschrift k
 enum { HDR_LFO1 = -1, HDR_LFO2 = -2, HDR_MENV = -3, HDR_DELAY = -4, HDR_REVERB = -5, HDR_MASTER = -6, HDR_INSERT1 = -7, HDR_INSERT2 = -8,
-       HDR_EQ = -9, HDR_DYNAMICS = -10, HDR_LIMITER = -11 };
+       HDR_EQ = -9, HDR_DYNAMICS = -10, HDR_LIMITER = -11,
+       HDR_OSC1 = -12, HDR_OSC2 = -13, HDR_OP_C = -14, HDR_OP_A = -15, HDR_OP_B1 = -16, HDR_OP_B2 = -17,
+       HDR_FLT_ENV = -18, HDR_FX_LFO1 = -19, HDR_FX_LFO2 = -20 };
 static int gRows[96], gNRows = 0;
 static int fxHeading(const char* id) {
+    if (!strncmp(id, "fx.lfo", 6)) return id[6] == '1' ? HDR_FX_LFO1 : HDR_FX_LFO2;
     if (!strncmp(id, "fx.a.", 5)) return HDR_DELAY;
     if (!strncmp(id, "fx.b.", 5)) return HDR_REVERB;
     const char* field = id + 7;
     if (!strcmp(field, "vol") || !strcmp(field, "on") || !strcmp(field, "trim")) return HDR_MASTER;
-    if (!strcmp(field, "low") || !strcmp(field, "mid") || !strcmp(field, "freq") || !strcmp(field, "high")) return HDR_EQ;
-    if (!strcmp(field, "clip") || !strcmp(field, "limit") || !strcmp(field, "ceiling") || !strcmp(field, "ab")) return HDR_LIMITER;
+    if (!strncmp(field, "eq", 2) || !strcmp(field, "low") || !strcmp(field, "mid") || !strcmp(field, "freq") || !strcmp(field, "high")) return HDR_EQ;
+    if (!strcmp(field, "clip") || !strcmp(field, "limit") || !strcmp(field, "ceiling") || !strcmp(field, "ab") || !strcmp(field, "limrel")) return HDR_LIMITER;
     return HDR_DYNAMICS;
 }
 static void buildRows() {
     gNRows = 0;
     if (U.sel == FXT) {
-        const int headings[] = {HDR_DELAY, HDR_REVERB, HDR_MASTER, HDR_EQ, HDR_DYNAMICS, HDR_LIMITER};
-        for (int heading : headings) {
+        const int effects[] = {HDR_DELAY, HDR_REVERB, HDR_MASTER, HDR_EQ, HDR_DYNAMICS, HDR_LIMITER};
+        const int modulation[] = {HDR_FX_LFO1, HDR_FX_LFO2};
+        const int* headings = U.fxMod ? modulation : effects;
+        const int count = U.fxMod ? 2 : 6;
+        for (int h = 0; h < count; h++) {
+            const int heading = headings[h];
             gRows[gNRows++] = heading;
             for (int i = 0; i < NPARAMS; i++)
                 if ((fxLockable(i) || masterSetting(i)) && fxHeading(PARAMS[i].id) == heading)
@@ -811,15 +823,22 @@ static void buildRows() {
         }
         return;
     }
-    bool smp = scMachUsesSmp(machOf(U.sel)) != 0;
+    const int machine = machOf(U.sel);
+    const bool smp = scMachUsesSmp(machine) != 0;
     int lastHdr = 0;
     const int passes = U.tab == TAB_MOD ? 3 : 1;
     for (int pass = 0; pass < passes; pass++) for (int i = 0; i < NPARAMS && gNRows < 94; i++) {
         const ParamDef& d = PARAMS[i];
         if (d.scope != PS_TRACK || tabOf(d) != U.tab) continue;
-        if (i == P_SMP && !smp) continue;
+        if ((i == P_SMP && !smp) || !sourceParamVisible(d.id, machine)) continue;
+        if (isExtendedVoiceParam(i)) {
+            int h = HDR_FLT_ENV;
+            if (!strncmp(d.id, "trk.poly", 8)) h = HDR_OSC1 - (d.id[8] - '1');
+            if (!strncmp(d.id, "trk.fm", 6)) h = HDR_OP_C - (d.id[6] - '1');
+            if (h != lastHdr) { gRows[gNRows++] = h; lastHdr = h; }
+        }
         int k = srcKnob(d);
-        if (k >= 0 && !scMachLabel(machOf(U.sel), k)[0]) continue;
+        if (k >= 0 && !scMachLabel(machine, k)[0]) continue;
         if (isInsertParam(i)) {
             if (!scInsertVisible(U.sel, i)) continue;
             int h = insertStage(i) ? HDR_INSERT2 : HDR_INSERT1;
@@ -845,10 +864,19 @@ static const char* hdrName(int h) {
     case HDR_EQ: return "MASTER EQ";
     case HDR_DYNAMICS: return "MASTER DYNAMICS";
     case HDR_LIMITER: return "MASTER LIMITER / A-B";
+    case HDR_OSC1: return "OSCILLATOR 1";
+    case HDR_OSC2: return "OSCILLATOR 2";
+    case HDR_OP_C: return "OPERATOR C";
+    case HDR_OP_A: return "OPERATOR A";
+    case HDR_OP_B1: return "OPERATOR B1";
+    case HDR_OP_B2: return "OPERATOR B2";
+    case HDR_FLT_ENV: return "FILTER ENVELOPE";
+    case HDR_FX_LFO1: return "FX LFO 1";
+    case HDR_FX_LFO2: return "FX LFO 2";
     default: return "MASTER";
     }
 }
-static int& rowSelRef() { return U.rowSel[U.sel == FXT ? TAB_N : U.tab]; }
+static int& rowSelRef() { return U.rowSel[U.sel == FXT ? TAB_N + U.fxMod : U.tab]; }
 // gewaehlte Zeile: immer ein Parameter, nie eine Ueberschrift
 static int curParam() {
     if (!gNRows) return -1;
@@ -871,15 +899,16 @@ static const char* rowName(int p) {
     static char b[32];
     const ParamDef& d = PARAMS[p];
     static const struct { const char* id; const char* n; } FXN[] = {
-        {"fx.a.div", "TIME"}, {"fx.a.fb", "FEEDBACK"}, {"fx.a.tone", "TONE"}, {"fx.a.vol", "LEVEL"},
+        {"fx.a.div", "TIME L"}, {"fx.a.fb", "FEEDBACK"}, {"fx.a.tone", "TONE"}, {"fx.a.vol", "LEVEL"},
         {"fx.b.size", "SIZE"}, {"fx.b.dec", "DECAY"}, {"fx.b.damp", "DAMPING"}, {"fx.b.vol", "LEVEL"},
         {"master.vol", "VOLUME"}};
     for (auto& f : FXN) if (!strcmp(f.id, d.id)) return f.n;
     int k = srcKnob(d);
     if (k >= 0) return scMachLabel(machOf(U.sel), k);
-    if (!strncmp(d.id, "trk.lfo", 7) || !strncmp(d.id, "trk.menv.", 9)) {
+    if (!strncmp(d.id, "trk.lfo", 7) || !strncmp(d.id, "trk.menv.", 9) || !strncmp(d.id, "fx.lfo", 6)) {
         const char* s = d.name;
         while (*s && *s != ' ') s++;
+        if (!strncmp(d.id, "fx.lfo", 6) && *s) { s++; while (*s && *s != ' ') s++; }
         snprintf(b, sizeof b, "%s", *s ? s + 1 : d.name);
         return b;
     }
@@ -911,16 +940,20 @@ static const char* valueText(int p, int v) {
     }
     int pat = scPattern();
     bool key = U.sel < FXT && scPatScale(pat) > 0 && scGet(U.sel, slotOf(P_QUANT)) > 0;
-    if (key && (!strcmp(d.id, "trk.nt2") || !strcmp(d.id, "trk.nt3") || !strcmp(d.id, "trk.nt4"))) {
-        if (v <= 0) return "OFF";
-        int deg = v - 25, a = deg < 0 ? -deg : deg, n = scScaleSize();
+    if (key && isChordParam(d)) {
+        if (v <= CHORD_OFF) return "OFF";
+        int deg = v - CHORD_UNISON, a = abs(deg), n = scScaleSize();
         int target = scScaleDeg(baseValue(P_NOTE), deg);
+        if (!deg) {
+            snprintf(b, sizeof b, "0 %s", scParamText(P_NOTE, (float)target, -1));
+            return b;
+        }
         static const char* ST[7] = {"root", "2nd", "3rd", "4th", "5th", "6th", "7th"};
         char nm[24];
-        if (a % n == 0) snprintf(nm, sizeof nm, a ? "%d oct" : "unison", a / n);
+        if (a % n == 0) snprintf(nm, sizeof nm, "%d oct", a / n);
         else if (n == 7) snprintf(nm, sizeof nm, "%s", ST[a % 7]);
         else snprintf(nm, sizeof nm, "%d deg", a);
-        snprintf(b, sizeof b, "%c%d %s %s", deg > 0 ? '+' : deg < 0 ? '-' : ' ', a, nm, scParamText(P_NOTE, (float)target, -1));
+        snprintf(b, sizeof b, "%+d %s %s", deg, nm, scParamText(P_NOTE, (float)target, -1));
         return b;
     }
     if (p == P_NOTE && key && !scScaleHas(v)) {
@@ -970,6 +1003,10 @@ static int stepValue(int p, int v, int dir, bool coarse) {
     }
     int span = d.hi - d.lo;
     int step = coarse ? (span > 32 ? span / 16 : 4) : 1;
+    if (isChordParam(d)) {
+        const int start = v == CHORD_OFF ? CHORD_UNISON : v;
+        return clampi(start + dir * step, CHORD_UNISON - CHORD_RANGE, CHORD_UNISON + CHORD_RANGE);
+    }
     return clampi(v + dir * step, d.lo, d.hi);
 }
 static void editParam(int p, int dir, bool coarse) {
@@ -1026,29 +1063,45 @@ static const ParamSection TRACK_SECTIONS[] = {
     {TAB_FLTR, 0, "FILTER"}, {TAB_AMP, 0, "AMP ENVELOPE"}, {TAB_MIX, 0, "MIXER"},
     {TAB_MOD, HDR_LFO1, nullptr}, {TAB_MOD, HDR_LFO2, nullptr}, {TAB_MOD, HDR_MENV, nullptr},
     {TAB_INSERT, HDR_INSERT1, nullptr}, {TAB_INSERT, HDR_INSERT2, nullptr},
+    {TAB_FLTR, HDR_FLT_ENV, nullptr},
+    {TAB_SRC, HDR_OSC1, nullptr}, {TAB_SRC, HDR_OSC2, nullptr},
+    {TAB_SRC, HDR_OP_C, nullptr}, {TAB_SRC, HDR_OP_A, nullptr},
+    {TAB_SRC, HDR_OP_B1, nullptr}, {TAB_SRC, HDR_OP_B2, nullptr},
 };
 static const ParamSection FX_SECTIONS[] = {
     {TAB_N, HDR_DELAY, nullptr}, {TAB_N, HDR_REVERB, nullptr}, {TAB_N, HDR_MASTER, nullptr},
     {TAB_N, HDR_EQ, nullptr}, {TAB_N, HDR_DYNAMICS, nullptr}, {TAB_N, HDR_LIMITER, nullptr},
+    {TAB_N + 1, HDR_FX_LFO1, nullptr}, {TAB_N + 1, HDR_FX_LFO2, nullptr},
 };
+static bool sectionVisible(const ParamSection& section) {
+    if (section.heading == HDR_OSC1 || section.heading == HDR_OSC2) return machOf(U.sel) == 0;
+    if (section.heading <= HDR_OP_C && section.heading >= HDR_OP_B2) return machOf(U.sel) == 1;
+    return true;
+}
 static int sectionCount() {
-    return U.sel == FXT ? sizeof FX_SECTIONS / sizeof FX_SECTIONS[0]
-                       : sizeof TRACK_SECTIONS / sizeof TRACK_SECTIONS[0];
+    if (U.sel == FXT) return sizeof FX_SECTIONS / sizeof FX_SECTIONS[0];
+    int count = 0;
+    for (auto& section : TRACK_SECTIONS) if (sectionVisible(section)) count++;
+    return count;
 }
-static const ParamSection& activeSection() {
-    return U.sel == FXT ? FX_SECTIONS[U.sectionSel] : TRACK_SECTIONS[U.sectionSel];
+static const ParamSection& sectionAt(int index) {
+    if (U.sel == FXT) return FX_SECTIONS[index];
+    for (auto& section : TRACK_SECTIONS) if (sectionVisible(section) && index-- == 0) return section;
+    return TRACK_SECTIONS[0];
 }
+static const ParamSection& activeSection() { return sectionAt(U.sectionSel); }
 static void openSections() {
     buildRows();
     curParam();
-    const auto* sections = U.sel == FXT ? FX_SECTIONS : TRACK_SECTIONS;
-    const int tab = U.sel == FXT ? TAB_N : U.tab;
+    const int tab = U.sel == FXT ? TAB_N + U.fxMod : U.tab;
     int heading = 0;
     for (int r = rowSelRef(); r >= 0 && r < gNRows; r--)
         if (gRows[r] < 0) { heading = gRows[r]; break; }
     U.sectionSel = 0;
-    for (int i = 0; i < sectionCount(); i++)
-        if (sections[i].tab == tab && sections[i].heading == heading) { U.sectionSel = i; break; }
+    for (int i = 0; i < sectionCount(); i++) {
+        const auto& section = sectionAt(i);
+        if (section.tab == tab && section.heading == heading) { U.sectionSel = i; break; }
+    }
     U.modal = M_SECTIONS;
 }
 static void openPatterns() {
@@ -1061,7 +1114,7 @@ static void openPatterns() {
 enum { PICK_ROWS = 9 };
 struct ValuePicker {
     struct Group { const char* label; int begin, end; };
-    Group groups[6];
+    Group groups[8];
     int values[CND_MAX + 1];
     int param, pattern, nGroups, nValues, group, selected, scroll;
     bool step;
@@ -1070,11 +1123,13 @@ static ValuePicker gValuePick;
 
 static bool canPickValue(int p) {
     return U.view == V_TRACK && U.sel < FXT && p >= 0
-        && (PARAMS[p].kind == PK_COND || isModDestination(PARAMS[p]));
+        && (PARAMS[p].kind == PK_COND || isModDestination(PARAMS[p]) || isChordParam(PARAMS[p]));
 }
 static int destinationGroup(int value) {
     if (!value) return 0;
     const auto& dest = MOD_DESTS[value];
+    if (!strncmp(dest.id, "trk.poly", 8)) return 6;
+    if (!strncmp(dest.id, "trk.fm", 6)) return 7;
     if (dest.trig) return 5;
     if (!strncmp(dest.id, "trk.flt.", 8) || !strncmp(dest.id, "trk.bw.", 7)) return 2;
     if (!strncmp(dest.id, "trk.amp.", 8)) return 3;
@@ -1104,7 +1159,7 @@ static void buildConditionValues() {
 }
 static void buildDestinationValues() {
     auto& p = gValuePick;
-    const char* labels[] = {"Off", "Source / pitch", "Filter", "Amp envelope", "Mixer / sends", "At trig"};
+    const char* labels[] = {"Off", "Source / pitch", "Filter", "Amp envelope", "Mixer / sends", "At trig", "Oscillators", "FM operators"};
     for (int group = 0; group < (int)(sizeof labels / sizeof labels[0]); group++) {
         int begin = p.nValues;
         for (int v = 0; v < MOD_NDEST; v++)
@@ -1112,6 +1167,19 @@ static void buildDestinationValues() {
                 p.values[p.nValues++] = v;
         finishValueGroup(labels[group], begin);
     }
+}
+static void buildChordValues() {
+    auto& p = gValuePick;
+    int begin = p.nValues;
+    for (int i = 1; i <= CHORD_RANGE; i++) p.values[p.nValues++] = CHORD_UNISON - i;
+    finishValueGroup("Negative", begin);
+    begin = p.nValues;
+    p.values[p.nValues++] = CHORD_OFF;
+    p.values[p.nValues++] = CHORD_UNISON;
+    finishValueGroup("Off / zero", begin);
+    begin = p.nValues;
+    for (int i = 1; i <= CHORD_RANGE; i++) p.values[p.nValues++] = CHORD_UNISON + i;
+    finishValueGroup("Positive", begin);
 }
 static int valueInScope() {
     int p = gValuePick.param;
@@ -1136,20 +1204,23 @@ static void openValuePicker(int param) {
     p.step = U.aHeld;
     U.aHeld = false;
     if (PARAMS[param].kind == PK_COND) buildConditionValues();
+    else if (isChordParam(PARAMS[param])) buildChordValues();
     else buildDestinationValues();
     focusPickedValue(valueInScope());
     U.modal = M_VALUE;
 }
 
 // --- Master-EQ ------------------------------------------------------------------------------
-static constexpr MasterChain::Field EQ_GAINS[] = {MasterChain::LOW, MasterChain::MID, MasterChain::HIGH};
 static int masterValue(MasterChain::Field field) { return scGet(-1, MasterChain::slots()[field]); }
-static void setMasterValue(MasterChain::Field field, int value) {
-    int slot = MasterChain::slots()[field];
-    const int before = scGet(-1, slot);
+static int eqValue(int band, int field) { return scGet(-1, MasterEq::slots(band)[field]); }
+static void setViewValue(int track, int slot, int value) {
+    const int before = scGet(track, slot);
     if (before == value) return;
-    scSet(-1, slot, value);
-    if (scGet(-1, slot) != before) touched();
+    scSet(track, slot, value);
+    if (scGet(track, slot) != before) touched();
+}
+static void setMasterValue(MasterChain::Field field, int value) {
+    setViewValue(-1, MasterChain::slots()[field], value);
 }
 static bool eqShortcut(int param) {
     return U.view == V_TRACK && U.sel == FXT && param >= 0
@@ -1157,14 +1228,19 @@ static bool eqShortcut(int param) {
 }
 static void openMasterEq(int param = -1) {
     if (param >= 0) {
-        int slot = slotOf(param);
-        const int* fields = MasterChain::slots();
-        U.eqBand = slot == fields[MasterChain::LOW] ? 0 : slot == fields[MasterChain::HIGH] ? 2 : 1;
+        for (int b = 0; b < MasterEq::BANDS; b++) for (int f = 0; f < MasterEq::FIELDS; f++) {
+            if (MasterEq::slots(b)[f] != slotOf(param)) continue;
+            U.eqBand = b;
+            U.eqField = f;
+        }
     }
     U.aHeld = false;
     U.eqSpectrumAt = U.now;
     gMasterSpectrum.reset(true);
     U.modal = M_MASTER_EQ;
+}
+static int nextEqFrequency(int hz, int direction) {
+    return (int)lroundf(hz * (direction > 0 ? 1.122462f : 1.0f / 1.122462f));
 }
 static void handleMasterEq() {
     if (IN.pressed(BT_B) || IN.pressed(BT_SELECT)) {
@@ -1172,21 +1248,23 @@ static void handleMasterEq() {
         U.modal = M_NONE;
         return;
     }
-    const int band = IN.pressed(BT_RIGHT) - IN.pressed(BT_LEFT);
-    U.eqBand = clampi(U.eqBand + band, 0, 2);
+    const int band = IN.repeat(BT_RIGHT, U.now) - IN.repeat(BT_LEFT, U.now);
+    U.eqBand = clampi(U.eqBand + band, 0, MasterEq::BANDS - 1);
+    if (IN.pressed(BT_X)) U.eqField = (U.eqField + 1) % MasterEq::FIELDS;
+    const int* slots = MasterEq::slots(U.eqBand);
     const int frequency = IN.repeat(BT_R1, U.now) - IN.repeat(BT_L1, U.now);
-    if (frequency) {
-        const float step = frequency > 0 ? 1.122462f : 1.0f / 1.122462f; // two semitones
-        const int hz = (int)lroundf(masterValue(MasterChain::FREQ) * step);
-        setMasterValue(MasterChain::FREQ, hz);
-        U.eqBand = 1;
-    }
-    const MasterChain::Field gain = EQ_GAINS[U.eqBand];
+    if (frequency) setViewValue(-1, slots[MasterEq::FREQ], nextEqFrequency(eqValue(U.eqBand, MasterEq::FREQ), frequency));
     const int delta = IN.repeat(BT_UP, U.now) - IN.repeat(BT_DOWN, U.now);
-    if (delta) setMasterValue(gain, masterValue(gain) + delta);
-    if (IN.pressed(BT_Y)) setMasterValue(gain, 0);
+    if (delta) {
+        const int field = U.eqField, value = eqValue(U.eqBand, field);
+        const int step = field == MasterEq::Q ? clampi(value / 12, 1, 100) : 1;
+        const int next = field == MasterEq::FREQ ? nextEqFrequency(value, delta) : value + delta * step;
+        if (field != MasterEq::GAIN || eqShapeHasGain(eqValue(U.eqBand, MasterEq::SHAPE)))
+            setViewValue(-1, slots[field], next);
+    }
+    if (IN.pressed(BT_Y)) setViewValue(-1, slots[U.eqField], PARAMS[paramOfSlot(PS_GLOBAL, slots[U.eqField])].def);
     if (IN.pressed(BT_A)) setMasterValue(MasterChain::ON, !masterValue(MasterChain::ON));
-    if (IN.pressed(BT_X)) setMasterValue(MasterChain::AB, !masterValue(MasterChain::AB));
+    if (IN.pressed(BT_R2)) setMasterValue(MasterChain::AB, !masterValue(MasterChain::AB));
 }
 
 static void togglePlayback() {
@@ -1197,6 +1275,8 @@ static void togglePlayback() {
     }
     else scStart();
 }
+
+#include "detail_view.h"
 
 // --- Menue (SELECT) -------------------------------------------------------------------------
 enum { MI_PATTERN, MI_SECTIONS, MI_VALUE, MI_MASTER_EQ, MI_SAVE, MI_COPYPAT, MI_PASTEPAT, MI_CLEARPAT, MI_COPYTRK, MI_PASTETRIG, MI_PASTEALL, MI_CLEARTRIG,
@@ -1217,7 +1297,7 @@ static void menuDo(int i) {
     case MI_VALUE: {
         int param = curParam();
         if (canPickValue(param)) openValuePicker(param);
-        else toast("Select Condition or a modulation destination first");
+        else toast("Select Condition, a chord note or a modulation destination");
         return;
     }
     case MI_SAVE: { bool ok = prjSave();
@@ -1596,9 +1676,9 @@ static void deviceAddr(char* out, int n) {
 }
 
 // --- SYSTEM-Ansicht ------------------------------------------------------------------------------
-enum { SY_OUT, SY_VOL, SY_TONE, SY_BUF, SY_CORES, SY_STATS, SY_USB, SY_ADDR, SY_USBAUD, SY_USBVOL, SY_PCIN, SY_MIDIIN, SY_CLKIN, SY_CLKOUT,
+enum { SY_OUT, SY_VOL, SY_TONE, SY_BUF, SY_CORES, SY_STATS, SY_BAT, SY_USB, SY_ADDR, SY_USBAUD, SY_USBVOL, SY_PCIN, SY_MIDIIN, SY_CLKIN, SY_CLKOUT,
        SY_NOTESOUT, SY_MIDIDEV, SY_DISP, SY_LEARN, SY_QUIT, SY_N };
-static const char* SYNAME[SY_N] = {"AUDIO OUT", "VOLUME", "TEST TONE", "AUDIO BUFFER", "AUDIO CORES", "AUDIO STATS", "USB MODE", "WEB ADDRESS", "USB AUDIO", "USB VOLUME",
+static const char* SYNAME[SY_N] = {"AUDIO OUT", "VOLUME", "TEST TONE", "AUDIO BUFFER", "AUDIO CORES", "AUDIO STATS", "BATTERY", "USB MODE", "WEB ADDRESS", "USB AUDIO", "USB VOLUME",
     "PC AUDIO IN", "MIDI IN", "CLOCK IN", "CLOCK OUT", "NOTES OUT", "MIDI DEVICES", "DISPLAY SHIFT", "LEARN BUTTONS", "QUIT"};
 static bool syDivider(int r) { return r == SY_USB || r == SY_MIDIIN || r == SY_DISP; }
 static int gOutWant = -2;                   // AUDIO OUT: -2 = nichts gewaehlt, -1 = Standard, sonst Index in gDevs
@@ -1672,15 +1752,52 @@ static int valueDir(bool* coarse) {
     if (d && (IN.heldMs(BT_X, U.now) > 1200 || IN.heldMs(BT_Y, U.now) > 1200)) *coarse = true;
     return d;
 }
+static bool hasStepSelection() { return U.selectionTrack >= 0 && U.selectionPattern == scPattern(); }
+static int selectionStartTrack() { return U.selectionTrack < U.sel ? U.selectionTrack : U.sel; }
+static int selectionEndTrack() { return U.selectionTrack > U.sel ? U.selectionTrack : U.sel; }
+static int selectionStartStep() { return U.selectionStep < U.cur ? U.selectionStep : U.cur; }
+static int selectionEndStep() { return U.selectionStep > U.cur ? U.selectionStep : U.cur; }
+static void handleStepSelection() {
+    if (IN.pressed(BT_B)) { U.selectionTrack = -1; return; }
+    const int dx = IN.repeat(BT_RIGHT, U.now) - IN.repeat(BT_LEFT, U.now);
+    const int dy = IN.repeat(BT_DOWN, U.now) - IN.repeat(BT_UP, U.now);
+    if (dx || dy) {
+        if (!hasStepSelection()) {
+            U.selectionTrack = U.sel;
+            U.selectionStep = U.cur;
+            U.selectionPattern = scPattern();
+        }
+        if (U.sel == FXT) U.cur = clampi(U.cur + dx + 16 * dy, 0, trackLen() - 1);
+        else {
+            U.sel = clampi(U.sel + dy, 0, NTRACKS - 1);
+            U.cur = clampi(U.cur + dx, 0, trackLen() - 1);
+        }
+        U.aHeld = false;
+    }
+    if (IN.pressed(BT_X)) {
+        int copied = scClipStepRange(hasStepSelection() ? selectionStartTrack() : U.sel,
+                                     hasStepSelection() ? selectionStartStep() : U.cur,
+                                     hasStepSelection() ? selectionEndTrack() : U.sel,
+                                     hasStepSelection() ? selectionEndStep() : U.cur);
+        toast(copied ? "Copied %d steps" : "Nothing to copy", copied);
+    }
+    if (IN.pressed(BT_Y)) {
+        const int pasted = scPasteStepRange(U.sel, U.cur);
+        if (pasted) { touched(); U.selectionTrack = -1; }
+        toast(pasted ? "Pasted %d steps" : "No matching steps to paste", pasted);
+    }
+}
 static void handleTrack() {
     bool B = IN.down[BT_B];
     // Step-Cursor / Reiter
     if (IN.repeat(BT_LEFT, U.now)) {
-        if (B && U.sel != FXT) { U.tab = (U.tab + TAB_N - 1) % TAB_N; }
+        if (B && U.sel == FXT) U.fxMod = false;
+        else if (B) U.tab = (U.tab + TAB_N - 1) % TAB_N;
         else U.cur = (U.cur + trackLen() - 1) % trackLen();
     }
     if (IN.repeat(BT_RIGHT, U.now)) {
-        if (B && U.sel != FXT) { U.tab = (U.tab + 1) % TAB_N; }
+        if (B && U.sel == FXT) U.fxMod = true;
+        else if (B) U.tab = (U.tab + 1) % TAB_N;
         else U.cur = (U.cur + 1) % trackLen();
     }
     if (!B && IN.repeat(BT_UP, U.now)) moveRow(-1);
@@ -1945,6 +2062,7 @@ static void handleSections() {
     if (!IN.pressed(BT_A)) return;
     const auto& section = activeSection();
     if (U.sel != FXT) U.tab = section.tab;
+    else U.fxMod = section.tab == TAB_N + 1;
     U.view = V_TRACK;
     buildRows();
     int top = 0;
@@ -1993,6 +2111,7 @@ static void handleValuePicker() {
     U.modal = M_NONE;
 }
 static void handleModal() {
+    if (U.modal == M_DETAIL) { handleDetail(); return; }
     if (U.modal == M_MASTER_EQ) {
         handleMasterEq();
         if (U.modal == M_MASTER_EQ && IN.pressed(BT_START)) togglePlayback();
@@ -2045,9 +2164,17 @@ static void handleInput() {
     buildRows();
     // SELECT antippen = Menue, halten = Hilfe solange gehalten
     static bool selUsed = false;
-    if (IN.pressed(BT_SELECT) && (U.modal == M_NONE || U.modal == M_MASTER_EQ))
-        selUsed = U.modal == M_MASTER_EQ;
+    if (IN.pressed(BT_SELECT) && (U.modal == M_NONE || U.modal == M_MASTER_EQ || U.modal == M_DETAIL))
+        selUsed = U.modal != M_NONE;
     if (U.modal != M_NONE) { handleModal(); return; }
+    if (U.selectionTrack >= 0 && !hasStepSelection()) U.selectionTrack = -1;
+    if (U.view == V_TRACK && IN.down[BT_FN]) {
+        U.aHeld = false;
+        if (scIsFill() && !IN.down[BT_START]) scFill(0);
+        handleStepSelection();
+        return;
+    }
+    const int previousTrack = U.sel, previousStep = U.cur;
     if (U.view == V_TRACK && IN.down[BT_B] && IN.pressed(BT_SELECT) && !U.aHeld) {
         openSections(); selUsed = true; return;
     }
@@ -2055,6 +2182,7 @@ static void handleInput() {
         const int param = curParam();
         if (eqShortcut(param)) { openMasterEq(param); selUsed = true; return; }
         if (canPickValue(param)) { openValuePicker(param); selUsed = true; return; }
+        if (DetailKind kind = detailKind(param)) { openDetail(kind, param); selUsed = true; return; }
     }
     if (IN.down[BT_SELECT] && IN.heldMs(BT_SELECT, U.now) > 500) { U.modal = M_HELP; selUsed = true; return; }
     if (IN.released(BT_SELECT) && !selUsed) { U.modal = M_MENU; return; }
@@ -2085,6 +2213,7 @@ static void handleInput() {
     else if (U.view == V_SONG) handleSong();
     else if (U.view == V_PROJECT) handleProject();
     else handleSystem();
+    if (U.view != V_TRACK || U.sel != previousTrack || U.cur != previousStep) U.selectionTrack = -1;
     // rechter Stick waagerecht: Scene-Crossfader (A <-> B), wie am Octatrack
     if (fabsf(IN.rx) > 0.2f) {
         float m = scGetMorph() + IN.rx * 0.03f;
@@ -2096,7 +2225,31 @@ static void handleInput() {
 // Zeichnen
 // ============================================================================================
 enum { HEAD_H = 26, RAIL_W = 118, LIST_X = 124, STEPS_Y = 340, HELP_Y = 458 };
-static void drawHeader() {
+static void drawBattery(const Battery& battery, int x, int y, uint32_t now) {
+    if (battery.percent < 0) return;
+    uint32_t color = battery.plugged ? C_PLAY : battery.percent <= 15 ? C_REC
+                                  : battery.percent <= 30 ? C_LOCK : C_DIM;
+    if (!battery.plugged && battery.percent <= 10 && (now / 500) % 2)
+        color = mix(C_PANEL, color, 102);
+    frame(x, y, 17, 11, color);
+    fill(x + 17, y + 3, 2, 5, color);
+    const int width = battery.percent * 13 / 100;
+    if (battery.plugged && !battery.full) {
+        const int moving = width + (13 - width) * (now % 1667) / 1667;
+        fill(x + 2, y + 2, moving, 7, mix(C_PANEL, color, 112));
+    }
+    fill(x + 2, y + 2, width, 7, color);
+    if (battery.plugged) {
+        const int bx = x - 8, by = y - 2;
+        for (int i = 0; i < 6; i++) fill(bx + 4 - i / 2, by + i, 2, 1, C_LOCK);
+        fill(bx + 1, by + 6, 6, 2, C_LOCK);
+        for (int i = 0; i < 5; i++) fill(bx + 4 - i / 2, by + 8 + i, 2, 1, C_LOCK);
+    }
+    char label[8];
+    snprintf(label, sizeof label, "%d%%", battery.percent);
+    text(x + 21, y - 2, label, color);
+}
+static void drawHeader(const Battery& battery = gBattery) {
     fill(0, 0, SW, HEAD_H, C_PANEL);
     for (int x = 0; x < SW; x++) FB[(HEAD_H - 1) * SW + x] = mix(0xff4d9d, 0x5ec8ff, x * 256 / SW);
     char b[64];
@@ -2113,15 +2266,22 @@ static void drawHeader() {
     else if (scIsFill()) text(238, 5, "FILL", C_LOCK);
     // Scene-Crossfader
     float m = scGetMorph();
-    fill(278, 11, 44, 3, C_LINE);
-    fill(278 + (int)(m * 40), 7, 4, 11, C_SCENE);
+    const bool showBattery = battery.percent >= 0;
+    const int morphWidth = showBattery ? 22 : 44;
+    fill(278, 11, morphWidth, 3, C_LINE);
+    fill(278 + (int)(m * (morphWidth - 4)), 7, 4, 11, C_SCENE);
     if (gAudio) {
-        snprintf(b, sizeof b, "%d%%", (int)(gCpu * 100 + 0.5f));
-        text(330, 5, "CPU", C_FAINT); text(356, 5, b, gCpu > 0.8f ? C_REC : C_DIM);
+        snprintf(b, sizeof b, "%d%%", (int)fminf(999, gCpu * 100 + 0.5f));
+        text(showBattery ? 304 : 330, 5, "CPU", C_FAINT);
+        text(showBattery ? 331 : 356, 5, b, gCpu > 0.8f ? C_REC : C_DIM);
     }
+    drawBattery(battery, 372, 7, U.now);
     static int lastMidi = 0; static uint32_t midiAt = 0;
     if (gMidiInSeen != lastMidi) { lastMidi = gMidiInSeen; midiAt = U.now; }
-    if (U.now - midiAt < 150) fill(396, 9, 6, 6, C_PLAY);   // MIDI kommt an
+    if (U.now - midiAt < 150) {
+        if (showBattery) fill(216, 16, 4, 4, C_PLAY);
+        else fill(396, 9, 6, 6, C_PLAY);
+    }
     // Ansichten
     int x = SW - 8;
     for (int v = V_N - 1; v >= 0; v--) {
@@ -2140,6 +2300,8 @@ static void drawRail() {
         bool s = t == U.sel;
         fill(2, y, RAIL_W - 4, rh - 3, s ? C_SEL : C_PANEL);
         fill(2, y, 4, rh - 3, HUE[t]);
+        if (U.view == V_TRACK && hasStepSelection() && t >= selectionStartTrack() && t <= selectionEndTrack())
+            frame(2, y, RAIL_W - 4, rh - 3, C_SCENE);
         char b[24];
         if (t == FXT) snprintf(b, sizeof b, "FX");
         else snprintf(b, sizeof b, "%d %s", t + 1, scMachName(machOf(t)));
@@ -2154,6 +2316,15 @@ static void drawRail() {
         }
         if (mute) text(RAIL_W - 18, y + 1, "M", C_REC);
     }
+}
+static void drawChordBar(int x, int y, int w, int h, int value, uint32_t color) {
+    const int middle = x + w / 2;
+    fill(x, y, w, h, C_LINE);
+    fill(middle, y - 1, 1, h + 2, C_FAINT);
+    if (value == CHORD_OFF) return;
+    const int offset = clampi(value - CHORD_UNISON, -CHORD_RANGE, CHORD_RANGE);
+    const int length = abs(offset) * (w / 2) / CHORD_RANGE;
+    fill(offset < 0 ? middle - length : middle, y, length > 0 ? length : 1, h, color);
 }
 static void drawList() {
     int x0 = LIST_X, w = SW - x0 - 4, y = HEAD_H + 4;
@@ -2171,9 +2342,13 @@ static void drawList() {
             tx += tw;
         }
     } else {
-        char b[64];
-        snprintf(b, sizeof b, U.aHeld ? "STEP %d - LOCKS FOR THIS STEP" : "FX TRACK - HOLD A TO LOCK STEP %d", U.cur + 1);
-        text(x0 + 4, y + 2, b, U.aHeld ? C_LOCK : C_DIM);
+        fill(x0, y, 55, 20, !U.fxMod ? C_SEL : C_PANEL);
+        fill(x0 + 58, y, 55, 20, U.fxMod ? C_SEL : C_PANEL);
+        textC(x0 + 27, y + 2, "FX", !U.fxMod ? C_TXT : C_DIM);
+        textC(x0 + 85, y + 2, "MOD", U.fxMod ? C_TXT : C_DIM);
+        char b[48];
+        snprintf(b, sizeof b, U.aHeld ? "STEP %d LOCKS" : "B+LEFT/RIGHT  FX/MOD", U.cur + 1);
+        text(x0 + 123, y + 2, b, U.aHeld ? C_LOCK : C_DIM);
     }
     y += 26;
     float reduction[INSERT_STAGES] = {};
@@ -2219,7 +2394,8 @@ static void drawList() {
         // Balken: wo der Wert im Bereich steht
         const ParamDef& d = PARAMS[p];
         int bw = 70, bx = x0 + w - bw - 8;
-        if (d.hi > d.lo && !scEnumCount(p)) {
+        if (isChordParam(d)) drawChordBar(bx, y + 9, bw, 3, base, s ? hue : C_DIM);
+        else if (d.hi > d.lo && !scEnumCount(p)) {
             fill(bx, y + 9, bw, 3, C_LINE);
             fill(bx, y + 9, (base - d.lo) * bw / (d.hi - d.lo), 3, s ? hue : C_DIM);
         }
@@ -2249,7 +2425,11 @@ static void drawSteps() {
     snprintf(b, sizeof b, "%s  STEP %d/%d  PAGE %d/%d", U.sel == FXT ? "FX" : "TRACK", U.cur + 1, len, page + 1, pages);
     text(8, y0, b, C_DIM);
     if (scNSpeeds()) { snprintf(b, sizeof b, "SPEED %s", scSpeedName(scSpeed(U.sel))); textR(SW - 8, y0, b, C_DIM); }
-    if (cp >= 0 && lockable(cp)) { snprintf(b, sizeof b, "LOCKS: %s", rowName(cp)); textC(SW / 2 + 60, y0, b, C_LOCK); }
+    const bool selection = U.view == V_TRACK && hasStepSelection();
+    if (selection) {
+        snprintf(b, sizeof b, "SELECTED %d-%d", selectionStartStep() + 1, selectionEndStep() + 1);
+        textC(SW / 2 + 60, y0, b, C_SCENE);
+    } else if (cp >= 0 && lockable(cp)) { snprintf(b, sizeof b, "LOCKS: %s", rowName(cp)); textC(SW / 2 + 60, y0, b, C_LOCK); }
     int cw = 38, gx = 16, y = y0 + 22;
     for (int i = 0; i < 16; i++) {
         int s = page * 16 + i;
@@ -2266,12 +2446,16 @@ static void drawSteps() {
         if (cp >= 0 && lockable(cp)) {
             int lv = lockValue(cp, s);
             const ParamDef& d = PARAMS[cp];
-            if (lv != -32768 && d.hi > d.lo) {
+            if (lv != -32768 && isChordParam(d)) {
+                drawChordBar(x + 3, y + 26, cw - 10, 5, lv, C_LOCK);
+            } else if (lv != -32768 && d.hi > d.lo) {
                 int bw = (lv - d.lo) * (cw - 10) / (d.hi - d.lo);
                 fill(x + 3, y + 26, cw - 10, 5, C_LINE);
                 fill(x + 3, y + 26, bw < 1 ? 1 : bw, 5, C_LOCK);
             }
         }
+        if (selection && s >= selectionStartStep() && s <= selectionEndStep())
+            frame(x, y, cw - 4, 54, C_SCENE);
         if (s == ps) frame(x, y, cw - 4, 54, C_TXT);
         if (s == U.cur) { frame(x - 2, y - 2, cw, 58, U.aHeld ? C_LOCK : hue); frame(x - 1, y - 1, cw - 2, 56, U.aHeld ? C_LOCK : hue); }
         snprintf(b, sizeof b, "%d", s + 1);
@@ -2379,9 +2563,12 @@ static void box(int x, int y, int w, int h, const char* title);
 static void drawSystem() {
     int x0 = LIST_X, y = HEAD_H + 4, w = SW - x0 - 4;
     fill(x0 - 2, HEAD_H, SW - x0 + 2, STEPS_Y - HEAD_H - 4, C_BG);
-    int rowH = 19;
+    const int rowH = 19, bottom = STEPS_Y - 4;
     bool os = haveUsbScript();
-    for (int r = 0; r < SY_N && y < STEPS_Y - rowH; r++, y += rowH) {
+    int first = 0, needed = 0;
+    for (int r = 0; r <= U.sysRow; r++) needed += rowH + (syDivider(r) ? 4 : 0);
+    while (needed > bottom - y) needed -= rowH + (syDivider(first++) ? 4 : 0);
+    for (int r = first; r < SY_N && y + rowH + (syDivider(r) ? 4 : 0) <= bottom; r++, y += rowH) {
         if (syDivider(r)) { fill(x0 + 4, y + 1, w - 8, 1, C_LINE); y += 4; }
         bool s = r == U.sysRow;
         fill(x0, y, w, rowH - 2, s ? C_SEL : C_PANEL);
@@ -2400,6 +2587,16 @@ static void drawSystem() {
         case SY_CORES: snprintf(b, sizeof b, "%d%s", gCfg.cores, gHelper.on ? "" : " (only 1 available)"); break;
         case SY_STATS: snprintf(b, sizeof b, "late blocks %u, worst block %d %%  A = reset", gLate, (int)(gWorkMax * 100 + 0.5f));
                        if (gLate) c = C_LOCK; break;
+        case SY_BAT: {
+            if (gBattery.percent < 0) { snprintf(b, sizeof b, "No battery reading"); break; }
+            char chip[8] = "--";
+            if (gBattery.chipPercent >= 0) snprintf(chip, sizeof chip, "%d%%", gBattery.chipPercent);
+            snprintf(b, sizeof b, "%d%%%s  %.2f V  %d mA  CHIP %s", gBattery.percent,
+                     gBattery.full ? " FULL" : gBattery.plugged ? " CHG" : "", gBattery.mv / 1000.0, gBattery.ma, chip);
+            if (gBattery.plugged) c = C_PLAY;
+            else if (gBattery.percent <= 15) c = C_REC;
+            break;
+        }
         case SY_TONE: snprintf(b, sizeof b, "%s", gToneLeft > 0 ? "playing ..." : "A = 2 s 440 Hz on every output"); break;
         case SY_USB:
             if (!os) snprintf(b, sizeof b, "Groovebox-OS only");
@@ -2478,6 +2675,8 @@ static const char* helpLine() {
     if (U.view == V_SONG) return "X/Y value  A dup row  B+A delete  B+UP/DN move  START play song";
     if (U.view == V_PROJECT) return "UP/DOWN item   X/Y value / browse projects   A action";
     if (U.view == V_SYSTEM) return "UP/DOWN item   X/Y change   A apply / action";
+    if (IN.down[BT_FN] || hasStepSelection()) return "FN+ARROWS select   FN+X copy   FN+Y paste   FN+B clear selection";
+    if (detailKind(curParam())) return "SELECT+X detail view   X/Y adjust   B+SELECT sections";
     if (eqShortcut(curParam())) return "SELECT+X visual EQ   X/Y adjust   B+SELECT sections";
     if (canPickValue(curParam())) return "SELECT+X choose value   X/Y adjust   Hold A for step locks";
     if (U.aHeld) return "A held: X/Y lock value on this step   B clear locks";
@@ -2517,9 +2716,8 @@ static void drawPatterns() {
 static void drawSections() {
     const int w = 360, h = 58 + 22 * sectionCount(), x = (SW - w) / 2, y = (SH - h) / 2;
     box(x, y, w, h, "PARAMETER SECTIONS");
-    const auto* sections = U.sel == FXT ? FX_SECTIONS : TRACK_SECTIONS;
     for (int i = 0; i < sectionCount(); i++) {
-        const auto& section = sections[i];
+        const auto& section = sectionAt(i);
         int ry = y + 28 + 22 * i;
         bool selected = i == U.sectionSel;
         if (selected) fill(x + 4, ry, w - 8, 20, C_SEL);
@@ -2716,11 +2914,13 @@ static void drawHelp() {
         "B + L1 / R1    jump 16 steps",             "START          play / stop  (SONG view: song)",
         "B + START      fill while held",           "SELECT tap     menu (pattern, sample, copy...)",
         "B + SELECT     jump to a parameter section",
+        "FN + arrows    select steps / tracks",
+        "FN + X / Y     copy / paste selected steps",
         "SELECT hold    this help",                 "right stick    scene crossfader A <-> B",
         "menu > Edit scene A/B   X/Y then set scene values",
     };
     int y = 66;
-    for (const char* s : L) { text(48, y, s, C_TXT); y += 20; }
+    for (const char* s : L) { text(48, y, s, C_TXT); y += 19; }
     char b[160]; snprintf(b, sizeof b, "files: %s  (projects/, samples/)", gBase);
     text(48, y + 8, b, C_DIM, 68);
 }
@@ -2728,7 +2928,7 @@ static void drawHelp() {
 static void drawMasterEq() {
     constexpr uint32_t EQ_COLOR = 0x58e0bd, SPEC_COLOR = 0xa998f7;
     constexpr uint32_t GRAPH_BG = 0x111419, SPEC_FILL = 0x26213b;
-    constexpr int LEFT = 55, RIGHT = 581, TOP = 106, BOTTOM = 336;
+    constexpr int LEFT = 55, RIGHT = 581, TOP = 106, BOTTOM = 303;
     constexpr int W = RIGHT - LEFT, H = BOTTOM - TOP;
     const double maxHz = fmin(20000.0, gRate * 0.5);
     const double logSpan = log(maxHz / 20.0);
@@ -2747,12 +2947,18 @@ static void drawMasterEq() {
     }
     const bool chain = masterValue(MasterChain::ON), dry = masterValue(MasterChain::AB);
     const bool audible = chain && !dry;
-    const int gains[] = {masterValue(MasterChain::LOW), masterValue(MasterChain::MID), masterValue(MasterChain::HIGH)};
-    const int hz[] = {MasterChain::LOW_HZ, masterValue(MasterChain::FREQ), MasterChain::HIGH_HZ};
-    MasterBiquad bands[3];
-    MasterChain::configureEq(bands, (float)gRate, gains[0], gains[1], hz[1], gains[2]);
+    const char* shape = eqShapeName(eqValue(U.eqBand, MasterEq::SHAPE));
+    int16_t values[GLOBAL_PARAM_CAP] = {};
+    for (int b = 0; b < MasterEq::BANDS; b++) for (int f = 0; f < MasterEq::FIELDS; f++) {
+        const int slot = MasterEq::slots(b)[f];
+        values[slot] = scGet(-1, slot);
+    }
+    static MasterEq bands;
+    static int graphRate = 0;
+    bands.configure(values, (float)gRate, graphRate != gRate);
+    graphRate = gRate;
 
-    text(22, 43, "MASTER EQ", C_TXT);
+    text(22, 43, "MASTER EQ / 8 BANDS", C_TXT);
     textR(616, 43, !chain ? "CHAIN OFF" : dry ? "A/B DRY" : "CHAIN ON", audible ? EQ_COLOR : C_LOCK);
     fill(22, 77, 12, 2, audible ? EQ_COLOR : C_DIM);
     text(42, 70, "EQ response (dB)", C_TXT);
@@ -2803,30 +3009,47 @@ static void drawMasterEq() {
         if (y < BOTTOM - 1) fill(LEFT + i, y + 1, 1, 1, audible ? EQ_COLOR : C_DIM);
         last = y;
     }
-    static const char* names[] = {"LOW SHELF", "MID BELL", "HIGH SHELF"};
-    for (int i = 0; i < 3; i++) {
-        const double center = fmin(hz[i], gRate * 0.45);
-        const int x = xOf(center), y = yOf(masterEqResponseDb(bands, center, gRate));
+    for (int pass = 0; pass < 2; pass++) for (int i = 0; i < MasterEq::BANDS; i++) {
         const bool selected = U.eqBand == i;
+        if (selected != (pass != 0)) continue;
+        const int type = eqValue(i, MasterEq::SHAPE);
+        if (type == EQ_OFF && !selected) continue;
+        const double center = fmin(eqValue(i, MasterEq::FREQ), gRate * 0.45);
+        const int x = xOf(center), y = yOf(masterEqResponseDb(bands, center, gRate));
         const uint32_t accent = selected ? EQ_COLOR : C_DIM;
-        const int radius = selected ? 7 : 5;
-        for (int dy = -radius; dy <= radius; dy++) {
-            const int width = (int)sqrtf((float)(radius * radius - dy * dy));
-            fill(x - width, y + dy, 2 * width + 1, 1, accent);
-        }
-        fill(x - 2, y - 2, 5, 5, GRAPH_BG);
-        const int card = 22 + i * 201;
-        fill(card, 373, 194, 47, selected ? C_SEL : C_PANEL);
-        frame(card, 373, 194, 47, selected ? accent : C_LINE);
-        text(card + 9, 378, names[i], selected ? C_TXT : C_DIM);
-        snprintf(value, sizeof value, "%+d dB", gains[i]);
-        textR(card + 184, 378, value, accent);
-        snprintf(value, sizeof value, "%d Hz", hz[i]);
-        text(card + 9, 398, value, C_TXT);
+        const int r = selected ? 7 : 5;
+        fill(x - r, y - r, 2 * r + 1, 2 * r + 1, GRAPH_BG);
+        frame(x - r, y - r, 2 * r + 1, 2 * r + 1, accent);
+    }
+    const int listX = 22, cardW = 71;
+    for (int i = 0; i < MasterEq::BANDS; i++) {
+        const int x = listX + i * 75;
+        const bool selected = U.eqBand == i;
+        const int type = eqValue(i, MasterEq::SHAPE);
+        fill(x, 333, cardW, 35, selected ? C_SEL : C_PANEL);
+        frame(x, 333, cardW, 35, selected ? EQ_COLOR : C_LINE);
+        snprintf(value, sizeof value, "%d", i + 1);
+        text(x + 6, 335, value, selected ? EQ_COLOR : C_TXT);
+        text(x + 6, 350, eqShapeName(type), type != EQ_OFF ? C_TXT : C_DIM, 8);
+    }
+    const int fields = MasterEq::FIELDS;
+    const char* labels[] = {"SHAPE", "FREQUENCY", "GAIN", "Q"};
+    for (int f = 0; f < fields; f++) {
+        const int x = listX + f * 150, v = eqValue(U.eqBand, f);
+        const bool chosen = U.eqField == f;
+        fill(x, 378, 144, 43, chosen ? C_SEL : C_PANEL);
+        frame(x, 378, 144, 43, chosen ? EQ_COLOR : C_LINE);
+        text(x + 8, 382, labels[f], chosen ? EQ_COLOR : C_DIM);
+        if (f == MasterEq::SHAPE) snprintf(value, sizeof value, "%s", shape);
+        if (f == MasterEq::FREQ) snprintf(value, sizeof value, "%d Hz", v);
+        if (f == MasterEq::GAIN && eqShapeHasGain(eqValue(U.eqBand, MasterEq::SHAPE))) snprintf(value, sizeof value, "%+d dB", v);
+        else if (f == MasterEq::GAIN) snprintf(value, sizeof value, "--");
+        if (f == MasterEq::Q) snprintf(value, sizeof value, "%.2f", v * 0.01);
+        text(x + 8, 400, value, C_TXT);
     }
     fill(0, 433, SW, SH - 433, C_PANEL);
-    text(22, 437, "LEFT/RIGHT Band   UP/DOWN Gain   L1/R1 Mid Freq   Y Reset Gain", C_TXT);
-    text(22, 457, "A Chain On/Off    X A/B Dry     START Play/Stop  B Close", C_DIM);
+    text(22, 437, "LEFT/RIGHT Band   X Field   UP/DOWN Edit   L1/R1 Freq", C_TXT);
+    text(22, 457, "A Chain   R2 A/B   Y Reset Field   START Play/Stop   B Close", C_DIM);
 }
 
 static void drawAll() {
@@ -2834,6 +3057,7 @@ static void drawAll() {
     fill(0, 0, SW, SH, C_BG);
     drawHeader();
     if (U.modal == M_MASTER_EQ) { drawMasterEq(); return; }
+    if (U.modal == M_DETAIL) { drawDetail(); return; }
     drawRail();
     if (U.view == V_TRACK) drawList();
     else if (U.view == V_SONG) drawSong();
@@ -2956,12 +3180,12 @@ static bool runLearn(const char* mapPath) {
     if (!j) { printf("Kein Gamepad gefunden - Lernmodus uebersprungen\n"); return false; }
     static const char* prompts[BT_COUNT + 4] = {
         "D-PAD UP", "D-PAD DOWN", "D-PAD LEFT", "D-PAD RIGHT", "A", "B", "X", "Y", "L1", "R1", "L2", "R2",
-        "SELECT", "START", "LEFT STICK UP", "RIGHT STICK UP", "LEFT STICK RIGHT", "RIGHT STICK RIGHT"};
+        "SELECT", "START", "FN (OPTIONAL)", "LEFT STICK UP", "RIGHT STICK UP", "LEFT STICK RIGHT", "RIGHT STICK RIGHT"};
     int nb = SDL_JoystickNumButtons(j), nh = SDL_JoystickNumHats(j), na = SDL_JoystickNumAxes(j);
     Binding res[BT_COUNT];
     int axL = -1, axR = -1, sL = -1, sR = -1, axLx = -1, axRx = -1, sLx = 1, sRx = 1;
     for (int item = 0; item < BT_COUNT + 4; item++) {
-        bool stick = item >= BT_COUNT;
+        const bool stick = item >= BT_COUNT, optional = stick || item == BT_FN;
         Uint8 bb[64] = {0}; Uint8 bh[8] = {0}; float ba[16] = {0};
         SDL_PumpEvents();
         for (int i = 0; i < nb && i < 64; i++) bb[i] = SDL_JoystickGetButton(j, i);
@@ -2992,15 +3216,15 @@ static bool runLearn(const char* mapPath) {
                     done = true;
                 }
             }
-            int left = stick ? 8 - (int)((SDL_GetTicks() - t0) / 1000) : 99;
-            if (stick && left <= 0) done = true;
+            int left = optional ? 8 - (int)((SDL_GetTicks() - t0) / 1000) : 99;
+            if (optional && left <= 0) done = true;
             fill(0, 0, SW, SH, C_BG);
             textC(SW / 2, 60, "LEARN BUTTONS", C_LOCK);
             textC(SW / 2, 160, "PRESS:", C_DIM);
             textC(SW / 2, 196, prompts[item], C_TXT);
             char b[64]; snprintf(b, sizeof b, "%d / %d", item + 1, BT_COUNT + 4);
             textC(SW / 2, 260, b, C_DIM);
-            if (stick) { snprintf(b, sizeof b, "No stick? Skipping in %ds", left); textC(SW / 2, 300, b, C_DIM); }
+            if (optional) { snprintf(b, sizeof b, "Optional - skipping in %ds", left); textC(SW / 2, 300, b, C_DIM); }
             present();
             SDL_Delay(10);
         }
@@ -3020,7 +3244,6 @@ static bool runLearn(const char* mapPath) {
     IN.axLY = axL; IN.sgnLY = sL; IN.axRY = axR; IN.sgnRY = sR;
     IN.axLX = axLx; IN.sgnLX = sLx; IN.axRX = axRx; IN.sgnRX = sRx; IN.haveLX = IN.haveRX = true;
     IN.haveMap = true;
-    IN.gc = nullptr;   // ab jetzt die Rohdaten des Joysticks
     bool ok = IN.saveMap(mapPath);
     printf("Tastenbelegung %s: %s\n", ok ? "gespeichert" : "NICHT gespeichert", mapPath);
     return true;
@@ -3046,10 +3269,80 @@ static void simFrame(unsigned mask) {
 static void tap(int b, unsigned hold = 0) { simFrame(hold | 1u << b); simFrame(hold); }
 static void idle(int n = 1) { for (int i = 0; i < n; i++) simFrame(0); }
 #define CHECK(c, msg) do { if (!(c)) { printf("FEHLER: %s (Zeile %d)\n", msg, __LINE__); gFails++; } else printf("ok: %s\n", msg); } while (0)
+static void testBattery() {
+    char root[] = "/tmp/synthcity-battery-XXXXXX";
+    const bool created = mkdtemp(root) != nullptr;
+    CHECK(created, "Battery test sysfs fixture");
+    if (!created) return;
+    char cell[128], usb[128];
+    snprintf(cell, sizeof cell, "%s/cell", root);
+    snprintf(usb, sizeof usb, "%s/usb", root);
+    mkdir(cell, 0700);
+    mkdir(usb, 0700);
+    auto write = [](const char* dir, const char* name, const char* value) {
+        char path[160];
+        snprintf(path, sizeof path, "%s/%s", dir, name);
+        FILE* file = fopen(path, "w");
+        if (!file) return false;
+        const bool ok = fputs(value, file) >= 0;
+        return fclose(file) == 0 && ok;
+    };
+    const bool seeded = write(cell, "type", "Battery\n") && write(usb, "type", "USB\n")
+        && write(cell, "voltage_now", "3825000\n") && write(cell, "current_now", "-100000\n")
+        && write(cell, "capacity", "100\n") && write(cell, "status", "Not charging\n")
+        && write(usb, "online", "0\n");
+    CHECK(seeded, "Battery test readings written");
+    Battery gauge;
+    gauge.poll(0, root);
+    CHECK(gauge.percent == 50 && gauge.chipPercent == 100 && !gauge.plugged,
+          "Original voltage estimate works with a stuck chip counter");
+    write(cell, "voltage_now", "3650000\n");
+    gauge.poll(4999, root);
+    CHECK(gauge.percent == 50, "Battery polling is limited to once every five seconds");
+    gauge.poll(5000, root);
+    CHECK(gauge.percent >= 40 && gauge.percent < 50, "Battery voltage changes are smoothed");
+    const int beforeCharging = gauge.percent;
+    write(usb, "online", "1\n");
+    gauge.poll(10000, root);
+    CHECK(gauge.plugged && gauge.percent == beforeCharging, "An online supply shows charging without dropping the estimate");
+    drawHeader(gauge);
+    CHECK(FB[7 * SW + 372] == C_PLAY && FB[5 * SW + 368] == C_LOCK,
+          "The header draws a green battery and a yellow charging bolt");
+    write(cell, "status", "Full\n");
+    gauge.poll(15000, root);
+    CHECK(gauge.full && gauge.percent == 100, "A full battery shows 100 percent");
+
+    write(cell, "voltage_now", "0\n");
+    write(cell, "capacity", "8\n");
+    write(cell, "status", "Discharging\n");
+    write(usb, "online", "0\n");
+    gauge.poll(20000, root);
+    CHECK(gauge.percent == 8 && !gauge.plugged, "The driver percentage is used if voltage is unavailable");
+    drawBattery(gauge, 372, 7, 0);
+    const uint32_t low = FB[7 * SW + 372];
+    drawBattery(gauge, 372, 7, 500);
+    CHECK(low == C_REC && FB[7 * SW + 372] != low, "A critically low battery flashes red");
+
+    char path[160];
+    const char* cellFiles[] = {"type", "voltage_now", "current_now", "capacity", "status"};
+    const char* usbFiles[] = {"type", "online"};
+    for (const char* name : cellFiles) {
+        snprintf(path, sizeof path, "%s/%s", cell, name);
+        unlink(path);
+    }
+    for (const char* name : usbFiles) {
+        snprintf(path, sizeof path, "%s/%s", usb, name);
+        unlink(path);
+    }
+    rmdir(cell);
+    rmdir(usb);
+    rmdir(root);
+}
 static int selfTest(const char* shotDir) {
     char p[800];
     auto shot = [&](const char* n) { if (!shotDir) return; snprintf(p, sizeof p, "%s/%s.bmp", shotDir, n); saveBmp(p); };
     scLoad("");
+    testBattery();
     idle(2);
     shot("01-track");
     tap(BT_DOWN, 1u << BT_B);
@@ -3066,19 +3359,31 @@ static int selfTest(const char* shotDir) {
           "SELECT + X opens the visual EQ on the highlighted band");
     tap(BT_A);
     for (int i = 0; i < 5; i++) tap(BT_UP);
-    tap(BT_RIGHT); tap(BT_R1);
+    for (int i = 0; i < 3; i++) tap(BT_RIGHT);
+    tap(BT_R1);
     for (int i = 0; i < 6; i++) tap(BT_DOWN);
-    CHECK(masterValue(MasterChain::ON) && masterValue(MasterChain::LOW) == 5 &&
-          masterValue(MasterChain::MID) == -6 && masterValue(MasterChain::FREQ) == 1122,
-          "Graph controls write the existing master EQ parameters");
-    tap(BT_RIGHT);
-    for (int i = 0; i < 3; i++) tap(BT_UP);
+    CHECK(masterValue(MasterChain::ON) && eqValue(0, MasterEq::GAIN) == 5 &&
+          eqValue(3, MasterEq::GAIN) == -6 && eqValue(3, MasterEq::FREQ) == 1122,
+          "Eight-band EQ retains the existing project parameter IDs");
+    tap(BT_RIGHT); tap(BT_X); tap(BT_X); // gain -> Q -> shape
+    for (int i = 0; i < EQ_HIGH_PASS_24; i++) tap(BT_UP);
+    CHECK(eqValue(4, MasterEq::SHAPE) == EQ_HIGH_PASS_24, "A new band can select a 24 dB/oct shape");
+    tap(BT_Y);
+    CHECK(eqValue(4, MasterEq::SHAPE) == EQ_OFF, "Y restores the highlighted field");
     tap(BT_START); CHECK(scIsRunning(), "START plays while the graph is open");
     tap(BT_START); CHECK(!scIsRunning(), "START stops while the graph is open");
-    MasterBiquad checkBands[3];
-    MasterChain::configureEq(checkBands, 48000, 0, -6, 1122, 0);
+    MasterEq checkBands;
+    int16_t eqParams[GLOBAL_PARAM_CAP];
+    memcpy(eqParams, gEng.P.g, sizeof eqParams);
+    eqParams[MasterEq::slots(0)[MasterEq::GAIN]] = 0;
+    checkBands.configure(eqParams, 48000, true);
     CHECK(fabs(masterEqResponseDb(checkBands, 1122, 48000) + 6) < 0.01,
           "The graph uses the mastering filter coefficients");
+    eqParams[MasterEq::slots(7)[MasterEq::SHAPE]] = EQ_LOW_PASS_24;
+    checkBands.configure(eqParams, 48000);
+    CHECK(checkBands.bands[7].count == 2 &&
+          masterEqResponseDb(checkBands, 18000, 48000) < -24,
+          "An eighth band adds a two-section 24 dB/oct response");
     {
         float block[173 * 2];
         const int fftSize = MasterSpectrum::N;
@@ -3101,10 +3406,9 @@ static int selfTest(const char* shotDir) {
         CHECK(gMasterSpectrum.db(130, 130) < -65, "Analyzer keeps an empty frequency bin quiet");
     }
     drawAll(); shot("01e-master-eq");
-    tap(BT_X);
-    CHECK(masterValue(MasterChain::AB), "X switches to the existing mastering A/B");
-    tap(BT_X); tap(BT_Y);
-    CHECK(masterValue(MasterChain::HIGH) == 0, "Y resets the selected gain");
+    tap(BT_R2);
+    CHECK(masterValue(MasterChain::AB), "R2 switches to the existing mastering A/B");
+    tap(BT_R2);
     tap(BT_B);
     CHECK(U.modal == M_NONE && !gMasterSpectrum.active && masterValue(MasterChain::MID) == -6,
           "B closes the graph, stops analysis and keeps the edits");
@@ -3116,6 +3420,14 @@ static int selfTest(const char* shotDir) {
     setMasterValue(MasterChain::LOW, 0);
     setMasterValue(MasterChain::MID, 0);
     setMasterValue(MasterChain::FREQ, 1000);
+    tap(BT_RIGHT, 1u << BT_B);
+    CHECK(U.fxMod && curParam() == pIndex("fx.lfo1.wave"), "B + right opens the FX MOD tab");
+    tap(BT_SELECT, 1u << BT_B);
+    CHECK(U.modal == M_SECTIONS && activeSection().heading == HDR_FX_LFO1, "FX MOD sections highlight LFO 1");
+    tap(BT_DOWN); tap(BT_A);
+    CHECK(curParam() == pIndex("fx.lfo2.wave"), "The FX sections jump to LFO 2");
+    tap(BT_LEFT, 1u << BT_B);
+    CHECK(!U.fxMod, "B + left returns to the FX effects");
     tap(BT_DOWN, 1u << BT_B);
     CHECK(U.sel == 0, "B + down wraps from FX to track 1");
     tap(BT_SELECT, 1u << BT_B);
@@ -3150,6 +3462,61 @@ static int selfTest(const char* shotDir) {
             if (gRows[row] == param) { rowSelRef() = row; break; }
         return param;
     };
+    const int nt2 = selectParam(TAB_CHRD, "trk.nt2");
+    CHECK(baseValue(pIndex("trk.amp.sus")) == 100, "A new sound starts with 0 dB sustain");
+    tap(BT_X);
+    CHECK(baseValue(nt2) == CHORD_UNISON + 1, "NT2 X starts at +1 from OFF");
+    tap(BT_Y);
+    CHECK(baseValue(nt2) == CHORD_UNISON && !strcmp(valueText(nt2, baseValue(nt2)), "0"),
+          "NT2 zero is unison");
+    tap(BT_Y);
+    CHECK(baseValue(nt2) == CHORD_UNISON - 1 && stepValue(nt2, CHORD_OFF, -1, false) == baseValue(nt2),
+          "NT2 Y starts at -1 and crosses the center");
+    tap(BT_X, 1u << BT_SELECT);
+    idle();
+    CHECK(U.modal == M_VALUE && gValuePick.nGroups == 3, "NT2 opens the bipolar value picker");
+    tap(BT_RIGHT);
+    tap(BT_A);
+    CHECK(baseValue(nt2) == CHORD_OFF, "The chord picker turns a voice off");
+    tap(BT_Y, 1u << BT_A);
+    idle();
+    CHECK(baseValue(nt2) == CHORD_OFF && lockValue(nt2, 0) == CHORD_UNISON - 1,
+          "Chord step locks start from the center too");
+    clearStepLocks();
+    selectParam(TAB_FLTR, "trk.flt.atk");
+    tap(BT_X, 1u << BT_SELECT); idle();
+    CHECK(U.modal == M_DETAIL && gDetail.kind == DETAIL_FILTER, "SELECT + X opens the filter envelope");
+    tap(BT_A); tap(BT_UP);
+    CHECK(scGet(0, slotOf(pIndex("trk.flt.envmode"))) == 1 && scGet(0, slotOf(pIndex("trk.flt.atk"))) == 1,
+          "The visual filter editor enables and edits its own ADSR");
+    shot("01f-filter-envelope");
+    tap(BT_B);
+    scSet(0, slotOf(pIndex("trk.flt.envmode")), 0);
+    scSet(0, slotOf(pIndex("trk.flt.atk")), 0);
+
+    scSet(0, insertParamSlot(0) + INS_TYPE, INS_CLIP);
+    selectParam(TAB_INSERT, "trk.ins1.clip.shape");
+    tap(BT_X, 1u << BT_SELECT); idle(); tap(BT_UP);
+    CHECK(U.modal == M_DETAIL && gDetail.kind == DETAIL_INSERT_CLIP &&
+          scGet(0, insertParamSlot(0) + INS_CLIP_SHAPE) == CLIP_CUBIC, "Track clipper opens its transfer graph and changes shape");
+    shot("01g-clipper");
+    tap(BT_B);
+    scSet(0, insertParamSlot(0) + INS_CLIP_SHAPE, CLIP_HARD);
+    scSet(0, insertParamSlot(0) + INS_TYPE, INS_COMPRESS);
+    selectParam(TAB_INSERT, "trk.ins1.threshold");
+    tap(BT_X, 1u << BT_SELECT); idle(5);
+    CHECK(U.modal == M_DETAIL && gDetail.kind == DETAIL_INSERT_COMP && gDetail.samples > 0,
+          "Track compressor opens a transfer and gain reduction view");
+    shot("01h-compressor");
+    tap(BT_B);
+    scSet(0, insertParamSlot(0) + INS_TYPE, INS_OFF);
+    scSetMachine(0, 1);
+    selectParam(TAB_SRC, "trk.fm4.env");
+    tap(BT_X, 1u << BT_SELECT); idle(); tap(BT_A);
+    CHECK(U.modal == M_DETAIL && gDetail.kind == DETAIL_OPERATOR &&
+          scGet(0, slotOf(pIndex("trk.fm4.env"))) == 1, "FM operator B2 opens its own envelope editor");
+    tap(BT_A); tap(BT_B); scSetMachine(0, 0);
+    U.rowSel[TAB_SRC] = U.rowSel[TAB_FLTR] = U.rowSel[TAB_INSERT] = 0;
     int cond = selectParam(TAB_TRIG, "trk.cond");
     U.cur = 7;
     tap(BT_X, 1u << BT_SELECT);
@@ -3190,6 +3557,24 @@ static int selfTest(const char* shotDir) {
     scSet(0, slotOf(dest), 0);
     scSetMachine(0, 0);
     U.tab = TAB_TRIG; U.rowSel[TAB_TRIG] = 0; U.rowSel[TAB_MOD] = 0;
+    scStepSet(0, 0, 1);
+    const int pitchSlot = slotOf(P_NOTE);
+    scLockSet(1, 1, pitchSlot, 68, 1);
+    scStepSet(1, 1, 2);
+    tap(BT_RIGHT, 1u << BT_FN);
+    tap(BT_DOWN, 1u << BT_FN);
+    CHECK(hasStepSelection() && U.sel == 1 && U.cur == 1 &&
+          selectionStartTrack() == 0 && selectionStartStep() == 0, "FN + arrows selects a rectangular step range");
+    shot("01i-selection");
+    tap(BT_X, 1u << BT_FN); idle();
+    U.sel = 2; U.cur = 4;
+    scStepSet(2, 5, 1);
+    tap(BT_Y, 1u << BT_FN); idle();
+    CHECK(scStepGet(2, 4) == 1 && scStepGet(2, 5) == 0 && scStepGet(3, 5) == 2 &&
+          scLockGet(3, 5, pitchSlot) == 68 && scLockSlide(3, 5, 0) == 1,
+          "FN copy/paste keeps the trigs, blank steps, locks and slides");
+    scClearTrigs(0); scClearTrigs(1); scClearTrigs(2); scClearTrigs(3);
+    U.sel = U.cur = 0;
     // Trig setzen und wieder loeschen
     tap(BT_A); CHECK(scStepGet(0, 0) == 1, "A setzt Trig auf Step 1");
     tap(BT_RIGHT); tap(BT_RIGHT); tap(BT_A); CHECK(scStepGet(0, 2) == 1, "Cursor rechts + A: Trig auf Step 3");
@@ -3625,6 +4010,7 @@ int main(int argc, char** argv) {
     if (isGrooveboxOS()) { hwVolumeSet(gCfg.hwVol); gJack = audioJackPoll(); }
 
     uint32_t lastSave = 0, usbAt = 0, smpChangedAt = 0, updAt = 0;
+    const char* powerSupply = getenv("GB_POWER_SUPPLY");
     int smpSeq = webSampleSeq(), prjSeqSeen = webProjectSeq(), evSeen = 0;
     { char b[8]; evSeen = webLastEvent(b, sizeof b); }
     while (!U.quit) {
@@ -3644,6 +4030,7 @@ int main(int argc, char** argv) {
         finishTake();
         if (gExp.on) exportStep(gRate / 5);
         pollPower();
+        gBattery.poll(U.now, powerSupply);
         // automatisch sichern: 4 s nach der letzten Aenderung, hoechstens alle 20 s
         if (U.dirty && U.now - U.editAt > 4000 && U.now - lastSave > 20000) {
             lastSave = U.now;

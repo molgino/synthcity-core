@@ -103,7 +103,10 @@ Leiter in allen zwölf Tonarten, dass Einrasten nie einen Ton außerhalb liefert
 ## Polyphone Spuren: Akkorde und Stimmen
 
 Eine polyphone Machine allein macht noch keine polyphone Spur: ein Step spielte genau eine Note.
-Jetzt hat jede Spur drei **Akkordnoten NT2–NT4** — Abstände zur NOTE in Halbtönen, ±24, oder AUS.
+Jede Spur hat drei **Akkordnoten NT2–NT4** mit Abständen von −24 bis +24 Halbtönen zur NOTE.
+**0** bedeutet Unisono, **OFF** schaltet die Zusatzstimme ab. Am R36S führt **X** von OFF
+direkt zu +1 und **Y** zu −1. **SELECT + X** öffnet die Auswahl mit OFF, 0 und den Intervallen
+in beide Richtungen.
 Sie sind gewöhnliche Werte: als Grundwert gelten sie für die ganze Spur, als **Lock** nur für
 einen Step — so spielt jeder Step einen anderen Akkord. Mit **SKALA an** rasten auch die
 Akkordnoten in die Tonart ein; aus „Dur" wird auf der II. Stufe von C-Dur von selbst ein
@@ -581,19 +584,26 @@ Gerät und umgekehrt.
 | L1 / R1 oder B + ▲▼ | Spur 1–8, FX-Spur. B + ▲▼ gilt in der TRACK-Ansicht. |
 | L2 / R2 | Ansicht TRACK / SONG / PROJECT |
 | ▲▼ | Regler · ◀▶ Step-Cursor · B + ◀▶ Reiter (TRIG CHRD SRC FLTR AMP MIX MOD INS) |
+| FN + Pfeile | Step-Bereich markieren. Links/rechts erweitert über Steps, hoch/runter über Audiospuren. Auf der FX-Spur springt hoch/runter in 16er-Schritten. |
+| FN + X / Y | Bereich kopieren / ab Cursor einfügen. Ohne Auswahl kopiert FN + X den aktuellen Step. FN + B hebt die Auswahl auf. |
 | X / Y | Wert hoch / runter (B gehalten = grob, lange halten = schneller) |
 | A antippen | Trig an/aus |
 | A halten + X/Y | Lock auf dem Step (auf leerem Step: trigless) · A halten + B: Locks des Steps löschen |
 | B + A | Spur stumm |
 | SELECT → Select pattern | Alle 16 Patterns im Raster. Steuerkreuz wählt, A bestätigt und B schließt. Bei Wiedergabe wartet der Wechsel bis zur Pattern-Grenze. |
 | B + SELECT | Direkt zu einem Parameterbereich springen, etwa LFO 2, Insert 2 oder Master EQ. Auch im SELECT-Menü unter Parameter sections. |
-| SELECT + X | Am Condition- oder DEST-Regler die Werteliste öffnen. Links/rechts wechselt die Gruppe, hoch/runter den Wert, L1/R1 die Seite. X wechselt zwischen Grundwert und Step-Lock. A übernimmt, B schließt die Auswahl. Auch unter SELECT → Choose value. |
+| SELECT + X | Bei Condition, DEST oder NT2–NT4 die Werteliste öffnen. Links/rechts wechselt die Gruppe, hoch/runter den Wert, L1/R1 die Seite. X wechselt zwischen Grundwert und Step-Lock. A übernimmt, B schließt die Auswahl. Auch unter SELECT → Choose value. |
 | START | Play/Stop (in SONG: Song) · B + START: FILL, solange gehalten |
 | SELECT | Menü: Pattern-Auswahl, Parameterbereiche, kopieren/einfügen (Pattern, Spur, Step), Sample laden, Spurlänge, Scene A/B bearbeiten |
 | Track length | X/Y ändern die Länge der gewählten Spur um 1, Rechts/Links um 16 Steps. Bereich 1–128. |
 | rechter Stick ◀▶ | Scene-Crossfader A ↔ B |
 
 **Ansichten** (L2/R2): TRACK, SONG, PROJ, SYSTEM.
+
+Die Kopfzeile zeigt den Akkustand mit Ladeblitz, sobald der Akku erkannt wird. Die Prozentanzeige
+nutzt die geglättete Akkuspannung aus dem ursprünglichen Synth City. Der Ladeblitz berücksichtigt
+auch die separate Ladebuchse des R36S. **SYSTEM → BATTERY** zeigt Spannung, Strom und den
+Prozentwert des Akku-Treibers zum Vergleich.
 
 * **PROJ:** Projekte haben **freie Namen**. OPEN PROJECT blättert mit X/Y durch alle Dateien in
   `projects/`, A öffnet. SAVE AS und NEW PROJECT fragen den Namen über eine Bildschirmtastatur
@@ -699,7 +709,7 @@ seine Attack- und Decay-Phasen unabhängig von den Noten wiederholen.
 [Digitakt-Handbuch, Abschnitt 11.7](https://www.elektron.se/wp-content/uploads/2025/07/Digitakt-User-Manual_ENG_OS1.52A_250708.pdf)
 
 Auf der **FX-Spur** unter **Master → Chain** lässt sich die Mastering-Kette einschalten.
-Sie enthält Trim, einen Drei-Band-EQ, Stereo-Bus-Kompressor, optionales Soft Clipping
+Sie enthält Trim, einen Achtband-EQ, Stereo-Bus-Kompressor, optionales Soft Clipping
 und einen latenzfreien Limiter. **A/B Dry** schaltet beim Abhören RMS-pegelangepasst auf
 das unbearbeitete Signal. Der 24-Bit-Song-Export nutzt den bearbeiteten Mix und zeigt
 Integrated LUFS und den vierfach interpolierten, geschätzten Spitzenpegel. Auf dem
@@ -708,21 +718,60 @@ Sicherheitsreserve für diese Interpolation. Ältere Projekte starten mit ausges
 Mastering-Kette.
 
 Am R36S öffnet **SELECT → Visual Master EQ** die Frequenzkurve mit Live-Spektrum
-des Master-Ausgangs. Auf einem Regler unter **FX → Master EQ** geht das direkt mit
-**SELECT + X**. Mit **Links/Rechts** wählst du Tiefen-Shelf, Mitten-Bell oder Höhen-Shelf.
-**Hoch/Runter** ändert den Gain in 1-dB-Schritten, **L1/R1** verschiebt die Mittenfrequenz,
-und **Y** setzt den Gain des gewählten Bands auf 0 dB. **A** schaltet die gesamte
-Mastering-Kette ein oder aus, **X** wechselt zwischen bearbeitetem Mix und **A/B Dry**.
-**START** steuert die Wiedergabe, **B** schließt die Ansicht. Die EQ-Einstellungen werden
-mit dem Projekt gespeichert.
+des Master-Ausgangs. Auf einem EQ-Regler der FX-Spur geht das direkt mit **SELECT + X**.
+**Links/Rechts** wechselt zwischen acht Bändern, **X** zwischen Shape, Frequenz, Gain und Q.
+**Hoch/Runter** bearbeitet das Feld, **L1/R1** verschiebt direkt die Frequenz des gewählten Bands,
+**Y** setzt das Feld zurück, **A** schaltet die Master-Chain und **R2** wechselt A/B.
+Pro Band gibt es Bell, Low/High Shelf, Tief- und Hochpass mit 12 oder 24 dB/Oktave,
+Notch, Bandpass und Off. Die drei bisherigen EQ-Werte werden als Bänder 1, 4 und 8 geladen.
+
+**SELECT + X** öffnet auch die Detailansichten von Master-Kompressor, Limiter und Clipper,
+von Track-Kompressor und Track-Clipper sowie von Filter-, Amp-, Mod- und FM-Operator-Envelopes.
+**Links/Rechts** wählt einen Regler, **Hoch/Runter** ändert den Wert, **L1/R1** ändert ihn gröber.
+**START** steuert die Wiedergabe, **B** schließt die Ansicht. Kompressor und Limiter zeigen
+eine statische Kennlinie und den Verlauf der Gain Reduction. Auf dem Gerät läuft die
+Spektrumanalyse nur im EQ-Fenster und die Verlaufsmessung nur im geöffneten Dynamikfenster.
+
+## Send-Effekte auf der FX-Spur
+
+**Delay** bietet Ping Pong, Stereo und Tape. **Linked Sync** nutzt dieselbe Teilung für beide
+Kanäle, **Dual Sync** trennt die Notenwerte, **Free L/R** stellt beide Seiten in Millisekunden ein.
+**Base** setzt den Hochpass, **Width** die Öffnung des Tiefpasses in Oktaven. Tape bietet Wow,
+Flutter und Drive sowie gleitende Zeitänderungen.
+
+**Reverb** bietet Studio, Room, Plate und Hall. Dazu kommen Predelay, die Eingangsfilter HPF/LPF,
+Low- und High-Shelf mit einstellbarer Frequenz auf dem Effekt-Return und Stereo-Width.
+
+**B + Rechts** öffnet auf der FX-Spur den **MOD**-Reiter, **B + Links** kehrt zu **FX** zurück.
+Beide FX-LFOs haben Wellenform, synchronisierten Notenwert oder freie Rate in Hz, Phase,
+bipolare Tiefe und eigene Ziele auf den beiden Sends. Die FX-Spur kann ihre Werte pro Step locken.
+
+## Filter-Envelope, POLY und FM
+
+Neue Sounds starten im **AMP**-Reiter mit **Sustain auf 0 dB**. Beim Laden bleibt das
+Sustain-Verhalten gespeicherter Sounds erhalten.
+
+Im **FLTR**-Reiter schaltet **ENV SOURCE** zwischen Amp-Link und eigenem Filter-ADSR um.
+**ENV** legt Betrag und Richtung der Cutoff-Modulation fest. Der Filter-ADSR folgt dem Notengate.
+Mit **A** lässt sich seine Quelle direkt in der Detailansicht umschalten.
+
+**POLY** hat im **SRC**-Reiter getrennte Wellenform, Lautstärke, Grob- und Feinstimmung und
+Pulsbreite für beide Oszillatoren. Die gemeinsame Saw/Pulse-Mischung lässt sich pro Oszillator
+durch Saw, Pulse oder Sine ersetzen. **FM** hat pro Operator C, A, B1 und B2 einstellbares
+Ratio, Level, Detune und einen eigenen zuschaltbaren ADSR. **B + SELECT** springt zu den
+Oszillator- und Operator-Gruppen. Die neuen Regler stehen als Locks und Modulationsziele zur Verfügung.
+
+Falls die FN-Taste nicht als Guide oder Linux-FN erkannt wird, lässt sie sich unter
+**SYSTEM → Learn buttons** zuordnen. Auf einer Tastatur entspricht **F** der FN-Taste.
 
 ## Insert-Effekte
 
 Auf jeder Audiospur stehen im Reiter **INS** zwei serielle Stereo-Inserts zur Verfügung.
 **Crush / Drive** hat getrennte Regler für Abtastrate und Bit-Tiefe, einen optionalen Filter
 vor der Abtastratenreduktion, Drive, Tone, Output und Mix. **Compressor** bietet Threshold,
-Ratio, Attack, Release, Knee, Output, Mix und einen Sidechain-Hochpass. **Sidechain** wählt
-SELF oder eine der acht Spuren. Die Anzeige GR zeigt die Gain Reduction in dB.
+Ratio, Attack, Release, Knee, Peak/RMS-Erkennung, Auto Release, Output, Mix und einen Sidechain-Hochpass. **Sidechain** wählt
+SELF oder eine der acht Spuren. **Clipper** bietet Hard, Cubic Soft, Tanh und Arctan mit Drive,
+Ceiling, Output und Mix. Die Anzeige GR zeigt die Gain Reduction in dB.
 **Chorus** hat die Charaktere **Classic** (ein modulierter Delay-Abgriff pro Seite)
 und **Ensemble** (zwei versetzte Abgriffe pro Seite). Rate, Depth, Width, Mix und Output
 sind einstellbar. Bei Width = 0 bleibt ein Mono-Signal in der Mitte.

@@ -50,7 +50,7 @@ build/synthcity.clap: plugin/clap_plugin.cpp $(HDRS)
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) $(CLAPINC) -fPIC -shared -o $@ $< $(LDLIBS)
 
-tests/plugin: tests/plugin.cpp
+tests/plugin: tests/plugin.cpp $(HDRS)
 	$(CXX) $(CXXFLAGS) $(CLAPINC) -o $@ $< -ldl $(LDLIBS)
 
 clean:
