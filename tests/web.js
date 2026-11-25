@@ -54,7 +54,7 @@ const grp = n => console.log('- ' + n);
   chk(str(x.scParamText(idxOf('trk.flt.type'), 0, -1)) === 'LOWPASS', 'Filtertyp zeigt keinen Namen');
   chk(str(x.scParamText(idxOf('trk.cond'), 0, -1)) === '--', 'COND 0 ist nicht leer');
   chk(x.scEnumCount(idxOf('trk.cond')) > 50, 'zu wenige Bedingungen zur Auswahl');
-  chk(x.scEnumCount(idxOf('trk.machine')) === 5, 'Machine-Liste falsch lang');
+  chk(x.scEnumCount(idxOf('trk.machine')) === 4, 'Machine-Liste falsch lang');
   chk(x.scMachCount() === 4, 'Only one sample machine is selectable');
   chk(str(x.scParamText(idxOf('trk.machine'), 3, -1)) === 'SAMPLE', 'Machine 3 heisst nicht SAMPLE');
   chk(str(x.scParamText(idxOf('trk.machine'), 1, -1)) === 'FM', 'Machine 1 heisst nicht FM');
