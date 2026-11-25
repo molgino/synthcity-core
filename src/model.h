@@ -192,6 +192,8 @@ inline float effectiveF(const Pattern& pt, int t, int step, int slot, float morp
 // also play newly saved tracks at their intended level.
 inline int trackDocDefault(int param) {
     static const int sustain = paramFind("trk.amp.sus");
+    static const int sourceBpm = paramFind("trk.sample.bpm");
+    if (param == sourceBpm) return SAMPLE_BPM_LEGACY;
     return param == sustain ? 0 : PARAMS[param].def;
 }
 
@@ -237,6 +239,11 @@ inline void projectToDoc(const Project& P, Doc& d) {
                 if (PARAMS[i].scope != PS_TRACK) continue;
                 int slot = paramSlot(i);
                 if (tr.p[slot] == trackDocDefault(i)) continue;
+                static const int tempo = paramFind("trk.sample.bpm"), machineSlot = paramSlot(paramFind("trk.machine"));
+                if (i == tempo && tr.p[slot] == SAMPLE_BPM_AUTO) {
+                    const int machine = tr.p[machineSlot];
+                    if (machine != MACHINE_SAMPLE && machine != MACHINE_LEGACY_CHOP) continue;
+                }
                 docKeyTrack(k, sizeof k, pi, t, PARAMS[i].id);
                 d.set(k, tr.p[slot]);
             }
@@ -344,6 +351,9 @@ inline void projectFromDoc(const Doc& d, Project& P) {
                 if (PARAMS[i].scope != PS_TRACK) continue;
                 docKeyTrack(k, sizeof k, pi, t, PARAMS[i].id);
                 int v = d.get(k, trackDocDefault(i));
+                static const int tempo = paramFind("trk.sample.bpm"), machine = paramSlot(paramFind("trk.machine"));
+                if (i == tempo && !d.has(k) && tr.p[machine] != MACHINE_SAMPLE && tr.p[machine] != MACHINE_LEGACY_CHOP)
+                    v = SAMPLE_BPM_AUTO;
                 if (isInsertParam(i) || isExtendedVoiceParam(i)) v = clampParam(i, v);
                 tr.p[paramSlot(i)] = (int16_t)v;
             }

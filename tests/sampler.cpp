@@ -56,6 +56,46 @@ static void testSlices() {
     CHECK(scLockGet(0, 5, slice) == random && !scSliceLocksUndo(0));
 }
 
+static void testSampleModeAndBpm() {
+    scSmpClear();
+    scLoad("pat.0.used=1\npat.0.trk.0.machine=4\npat.0.trk.0.src.d=80\n");
+    CHECK(scMachCount() == 4 && scTrackMachine(0) == MACHINE_LEGACY_CHOP);
+    CHECK(scGet(0, sampleModeSlot()) == 1 && scGet(0, MachSmpl::slotBpm()) == SAMPLE_BPM_LEGACY);
+    scLockSet(0, 0, MachChop::sliceSlot(true), 3, 1);
+    scLockSet(0, 0, knobSlot(MachChop::C_SLICES), 21, 0);
+    scSetSampleMode(0, 0);
+    CHECK(scTrackMachine(0) == MACHINE_SAMPLE && scGet(0, knobSlot(MachSmpl::K_TUNE)) == 80);
+    CHECK(scLockGet(0, 0, MachChop::sliceSlot(false)) == 3);
+    CHECK(scLockGet(0, 0, knobSlot(MachSmpl::K_START)) == -32768);
+    scSet(0, knobSlot(MachSmpl::K_START), 37);
+    scSetSampleMode(0, 1);
+    CHECK(scTrackMachine(0) == MACHINE_SLICE);
+    CHECK(scGet(0, machineSlot()) == MACHINE_SAMPLE && scGet(0, knobSlot(MachSmpl::K_START)) == 37);
+    scSet(0, MachSmpl::slotBpm(), 135);
+    scSet(0, MachSmpl::slotSmp(), 4);
+
+    // A non-120 BPM pulse train verifies rhythmic analysis, not duration rounding.
+    enum { PERIOD = 30000, FRAMES = 5 * PERIOD };
+    static float pulses[FRAMES] = {};
+    for (int start = 0; start < FRAMES; start += PERIOD)
+        for (int i = 0; i < 960; i++) pulses[start + i] = 0.8f * (1.0f - i / 960.0f);
+    const int estimate = scSmpEstimateBpm(pulses, FRAMES, 48000, 1);
+    CHECK(abs(estimate - 96) <= 2);
+    CHECK(scSmpSet(4, pulses, FRAMES, 48000, "pulse", 0, 1));
+    scSmpSetEstimate(4, estimate);
+    CHECK(scSmpEstimatedBpm(4) == estimate && scTrackSliceCount(0, 4, -1) == 1);
+    scSmpSliceGrid(4, 4);
+    CHECK(scTrackSliceCount(0, 4, -1) == 4);
+    scStepSet(0, 0, 1); scStepSet(0, 4, 1);
+    CHECK(scSliceLocks(0, 0) == 2 && scLockGet(0, 4, MachChop::sliceSlot(false)) == 1);
+    CHECK(scSliceLocksUndo(0) && scLockGet(0, 0, MachChop::sliceSlot(false)) == 3);
+    CHECK(scLoad(scSave()));
+    CHECK(scTrackMachine(0) == MACHINE_SLICE && scGet(0, MachSmpl::slotBpm()) == 135);
+    CHECK(scGet(0, MachSmpl::slotSmp()) == 4 && scTrackSliceCount(0, 4, -1) == 4);
+    scSetSampleMode(0, 0);
+    CHECK(scGet(0, knobSlot(MachSmpl::K_START)) == 37);
+}
+
 static void testRecorder() {
     static Engine engine;
     engine.prepare(48000);
@@ -90,7 +130,8 @@ static void testRecorder() {
 
 int main() {
     testSlices();
+    testSampleModeAndBpm();
     testRecorder();
-    if (!failures) puts("OK: slice editor, locks, project round trip and recorder");
+    if (!failures) puts("OK: sample mode, BPM, slice editor, locks, project round trip and recorder");
     return failures != 0;
 }

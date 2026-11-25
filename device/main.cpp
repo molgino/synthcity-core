@@ -380,12 +380,14 @@ static bool poolLoadFile(int slot, const char* rel) {
     if (!d) return false;
     if (n > SMP_POOL / ch) n = SMP_POOL / ch;
     char nm[SMP_NAME]; smpNameOf(rel, nm, sizeof nm);
+    const int estimated = scSmpEstimateBpm(d, n, rate, ch);
     bool ok = false;
     lockA();
     if (gEng.recOn) { unlockA(); free(d); return false; }
     gEng.pool.s[slot].n = 0;                       // der alte Inhalt zaehlt nicht mehr
     if (scSmpFree() < n * ch) poolCompact();
     ok = scSmpSet(slot, d, n, rate, nm, 0, ch) != 0;
+    if (ok) scSmpSetEstimate(slot, estimated);
     unlockA();
     free(d);
     return ok;
@@ -727,7 +729,7 @@ enum { V_TRACK, V_SONG, V_PROJECT, V_SYSTEM, V_N };
 static const char* VIEWNAME[V_N] = {"TRACK", "SONG", "PROJ", "SYSTEM"};
 enum { TAB_TRIG, TAB_CHRD, TAB_SRC, TAB_FLTR, TAB_AMP, TAB_MIX, TAB_MOD, TAB_INSERT, TAB_N };
 static const char* TABNAME[TAB_N] = {"TRIG", "CHRD", "SRC", "FLTR", "AMP", "MIX", "MOD", "INS"};
-enum { M_NONE, M_MENU, M_SAMPLES, M_HELP, M_KEYS, M_SLICE, M_RECORDER, M_LENGTH, M_PATTERNS, M_SECTIONS, M_VALUE, M_MASTER_EQ, M_DETAIL };
+enum { M_NONE, M_MENU, M_SAMPLES, M_HELP, M_KEYS, M_SLICE, M_RECORDER, M_LENGTH, M_PATTERNS, M_SECTIONS, M_VALUE, M_MASTER_EQ, M_DETAIL, M_SAMPLE_BPM };
 static constexpr int PATTERN_COLUMNS = 4;
 static const int FXT = NTRACKS;   // die FX-Spur des Patterns
 
@@ -739,6 +741,7 @@ struct UI {
     int cur = 0;                      // Step-Cursor
     bool aHeld = false, aEdited = false;
     int modal = M_NONE, menuSel = 0, smpSel = 0, smpScroll = 0;
+    int smpDialogSlot = 0, sampleBpm = 0, sampleBpmPattern = 0;
     int patternSel = 0, sectionSel = 0;
     int eqBand = 0, eqField = MasterEq::GAIN;
     uint32_t eqSpectrumAt = 0;
@@ -767,7 +770,7 @@ static void toast(const char* fmt, ...) {
 static void touched() { U.dirty = true; U.editAt = U.now; }
 
 // --- Parameter, wie die Web-Oberflaeche sie ordnet -----------------------------------------
-static int P_MACHINE, P_SMP, P_NOTE, P_QUANT;
+static int P_MACHINE, P_SMP, P_SAMPLE_MODE, P_SAMPLE_BPM, P_NOTE, P_QUANT;
 static int pIndex(const char* id) { return paramFind(id); }
 static int slotOf(int p) { return paramSlot(p); }
 static int tabOf(const ParamDef& d) {
@@ -779,14 +782,14 @@ static int tabOf(const ParamDef& d) {
         {"note", TAB_TRIG}, {"vel", TAB_TRIG}, {"len", TAB_TRIG}, {"prob", TAB_TRIG}, {"cond", TAB_TRIG},
         {"micro", TAB_TRIG}, {"ratchet", TAB_TRIG}, {"quant", TAB_TRIG},
         {"nt2", TAB_CHRD}, {"nt3", TAB_CHRD}, {"nt4", TAB_CHRD}, {"vmode", TAB_CHRD},
-        {"machine", TAB_SRC}, {"smp", TAB_SRC}, {"src", TAB_SRC}, {"poly1", TAB_SRC}, {"poly2", TAB_SRC},
+        {"machine", TAB_SRC}, {"smp", TAB_SRC}, {"sample", TAB_SRC}, {"src", TAB_SRC}, {"poly1", TAB_SRC}, {"poly2", TAB_SRC},
         {"fm1", TAB_SRC}, {"fm2", TAB_SRC}, {"fm3", TAB_SRC}, {"fm4", TAB_SRC}, {"flt", TAB_FLTR}, {"bw", TAB_FLTR},
         {"amp", TAB_AMP}, {"vol", TAB_MIX}, {"pan", TAB_MIX}, {"send", TAB_MIX},
         {"lfo1", TAB_MOD}, {"lfo2", TAB_MOD}, {"menv", TAB_MOD}, {"ins1", TAB_INSERT}, {"ins2", TAB_INSERT}};
     for (auto& m : M) if (!strcmp(m.k, key)) return m.t;
     return TAB_MIX;
 }
-static int machOf(int t) { return t >= FXT ? 0 : scGet(t, slotOf(P_MACHINE)); }
+static int machOf(int t) { return scTrackMachine(t); }
 static int srcKnob(const ParamDef& d) {   // trk.src.a..h -> 0..7, sonst -1
     if (strncmp(d.id, "trk.src.", 8) || !d.id[8] || d.id[9]) return -1;
     return d.id[8] - 'a';
@@ -825,13 +828,19 @@ static void buildRows() {
     }
     const int machine = machOf(U.sel);
     const bool smp = scMachUsesSmp(machine) != 0;
+    if (U.tab == TAB_SRC && smp) {
+        gRows[gNRows++] = P_MACHINE;
+        gRows[gNRows++] = P_SMP;
+        gRows[gNRows++] = P_SAMPLE_MODE;
+    }
     int lastHdr = 0;
     const int passes = U.tab == TAB_MOD ? 3 : 1;
     for (int pass = 0; pass < passes; pass++) for (int i = 0; i < NPARAMS && gNRows < 94; i++) {
         const ParamDef& d = PARAMS[i];
         if (d.scope != PS_TRACK || tabOf(d) != U.tab) continue;
-        if ((i == P_SMP && !smp) || !sourceParamVisible(d.id, machine)) continue;
-        if (isExtendedVoiceParam(i)) {
+        if (!sourceParamVisible(d.id, machine)) continue;
+        if (i == P_SMP || i == P_SAMPLE_MODE || (i == P_MACHINE && smp)) continue;
+        if (isExtendedVoiceParam(i) && strncmp(d.id, "trk.sample.", 11)) {
             int h = HDR_FLT_ENV;
             if (!strncmp(d.id, "trk.poly", 8)) h = HDR_OSC1 - (d.id[8] - '1');
             if (!strncmp(d.id, "trk.fm", 6)) h = HDR_OP_C - (d.id[6] - '1');
@@ -849,7 +858,9 @@ static void buildRows() {
             if (h != HDR_LFO1 - pass) continue;
             if (h != lastHdr) { gRows[gNRows++] = h; lastHdr = h; }
         }
+        if (i == P_SAMPLE_BPM && smp) continue;
         gRows[gNRows++] = i;
+        if (smp && k == MachSmpl::K_WARP) gRows[gNRows++] = P_SAMPLE_BPM;
     }
 }
 static const char* hdrName(int h) {
@@ -938,6 +949,12 @@ static const char* valueText(int p, int v) {
         else snprintf(b, sizeof b, "%d empty", v + 1);
         return b;
     }
+    if (p == P_SAMPLE_BPM && v < SAMPLE_BPM_MIN) {
+        const int bpm = scSmpEstimatedBpm(scGet(U.sel, slotOf(P_SMP)));
+        if (v == SAMPLE_BPM_AUTO && bpm > 0) snprintf(b, sizeof b, "AUTO (%d BPM)", bpm);
+        else snprintf(b, sizeof b, "%s", v == SAMPLE_BPM_LEGACY ? "LEGACY" : "AUTO");
+        return b;
+    }
     int pat = scPattern();
     bool key = U.sel < FXT && scPatScale(pat) > 0 && scGet(U.sel, slotOf(P_QUANT)) > 0;
     if (key && isChordParam(d)) {
@@ -969,6 +986,20 @@ static const char* valueText(int p, int v) {
 static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
 static int stepValue(int p, int v, int dir, bool coarse) {
     const ParamDef& d = PARAMS[p];
+    if (p == P_MACHINE && v == MACHINE_LEGACY_CHOP) v = MACHINE_SAMPLE;
+    if (p == P_SAMPLE_BPM) {
+        const int bpm = scSmpEstimatedBpm(scGet(U.sel, slotOf(P_SMP)));
+        const int start = v >= SAMPLE_BPM_MIN ? v : bpm > 0 ? bpm : scTempoNow();
+        if (v == SAMPLE_BPM_MIN && dir < 0) return SAMPLE_BPM_AUTO;
+        return clampi(start + dir * (coarse ? 10 : 1), SAMPLE_BPM_MIN, SAMPLE_BPM_MAX);
+    }
+    if (U.sel < FXT && slotOf(p) == scSliceLockSlot(U.sel, 0) && d.scope == PS_TRACK) {
+        const int step = U.aHeld ? U.cur : -1;
+        const int sampleLock = step >= 0 ? scLockGet(U.sel, step, slotOf(P_SMP)) : -32768;
+        const int sampleSlot = sampleLock == -32768 ? scGet(U.sel, slotOf(P_SMP)) : sampleLock;
+        const int count = scTrackSliceCount(U.sel, sampleSlot, step);
+        return clampi(v % count + dir * (coarse ? 8 : 1), 0, count - 1);
+    }
     int n = scEnumCount(p);
     if (n > 0) {                                   // Auswahl: in Listenreihenfolge, grob = naechste Gruppe
         int idx = 0;
@@ -1017,13 +1048,19 @@ static void editParam(int p, int dir, bool coarse) {
         toast("Mastering controls are project settings");
         return;
     }
+    const bool sampleSetting = p == P_SAMPLE_MODE || p == P_SAMPLE_BPM;
+    if (U.aHeld && sampleSetting) {
+        U.aEdited = true;
+        toast("Sample play mode and BPM are track settings");
+        return;
+    }
     if (U.aHeld && isInsertParam(p)) {
         U.aEdited = true;
         toast("Inserts are track settings");
         return;
     }
     bool asLock = U.aHeld && lockable(p);
-    bool asScene = !asLock && U.scene >= 0 && U.sel < FXT && d.scope == PS_TRACK && p != P_MACHINE && !isInsertParam(p);
+    bool asScene = !asLock && U.scene >= 0 && U.sel < FXT && d.scope == PS_TRACK && p != P_MACHINE && !isInsertParam(p) && !sampleSetting;
     int lv = asLock ? lockValue(p, U.cur) : asScene ? sceneValue(p) : -32768;
     int v = lv != -32768 ? lv : baseValue(p);
     int nv = stepValue(p, v, dir, coarse);
@@ -1286,6 +1323,7 @@ static const char* MENU[MI_N] = {"Select pattern...", "Parameter sections...", "
     "Load sample into slot...", "Track length...",
     "Edit scene A (on/off)", "Edit scene B (on/off)", "Clear the scene being edited", "Help", "Sample editor...", "Recorder..."};
 static void openSamples();
+static void openSampleEditor();
 static int smpTargetSlot();
 static void menuDo(int i) {
     int p = scPattern();
@@ -1324,11 +1362,7 @@ static void menuDo(int i) {
         if (U.scene < 0) { toast("Choose scene A or B first"); return; }
         scSceneClearAll(U.scene); toast("Scene %c cleared", 'A' + U.scene); break;
     case MI_HELP: U.modal = M_HELP; return;
-    case MI_SLICE:
-        if (U.sel >= FXT || !scSmpFrames(smpTargetSlot())) { toast("Load a sample on this track first"); return; }
-        U.cutAction = U.cutMarker = 0;
-        U.cutFrame = (scSmpA(smpTargetSlot()) + scSmpB(smpTargetSlot())) / 2;
-        U.modal = M_SLICE; return;
+    case MI_SLICE: openSampleEditor(); return;
     case MI_RECORD:
         if (U.sel >= FXT) { toast("Select an audio track first"); return; }
         U.modal = M_RECORDER; return;
@@ -1337,7 +1371,9 @@ static void menuDo(int i) {
 }
 
 // --- Sample-Auswahl -----------------------------------------------------------------------
-static int smpTargetSlot() { return U.sel < FXT ? scGet(U.sel, slotOf(P_SMP)) : 0; }
+static int smpTargetSlot() {
+    return U.sel < FXT ? clampi(scGet(U.sel, slotOf(P_SMP)), 0, SMP_SLOTS - 1) : 0;
+}
 // Ordner-Explorer: die Dateiliste ist flach (relative Pfade), die Ansicht zeigt einen Ordner:
 // "..", dann die Unterordner, dann die WAVs darin - wie die Webseite.
 static char gSmpDir[200] = "";
@@ -1390,6 +1426,8 @@ static void smpLeave() {
     for (int i = 0; i < gNSmpView; i++) if (gSmpView[i].kind == 1 && !strcmp(gSmpView[i].name, was)) U.smpSel = i;
 }
 static void openSamples() {
+    U.smpDialogSlot = smpTargetSlot();
+    U.aHeld = false;
     scanSamples();
     // Ordner gibt es nicht mehr (per Web geloescht)? Dann nach oben.
     while (gSmpDir[0]) {
@@ -1401,6 +1439,42 @@ static void openSamples() {
     buildSmpView();
     U.modal = M_SAMPLES;
     if (!gNFiles) toast("No .wav files in %ssamples/ - upload them in the browser", gBase);
+}
+
+static void openSampleEditor() {
+    if (U.sel >= FXT) return;
+    U.smpDialogSlot = smpTargetSlot();
+    if (!scSmpFrames(U.smpDialogSlot)) { openSamples(); return; }
+    U.aHeld = false;
+    U.cutAction = U.cutMarker = 0;
+    U.cutFrame = (scSmpA(U.smpDialogSlot) + scSmpB(U.smpDialogSlot)) / 2;
+    U.modal = M_SLICE;
+}
+
+static void openSampleBpm() {
+    U.aHeld = false;
+    U.smpDialogSlot = smpTargetSlot();
+    U.sampleBpm = baseValue(P_SAMPLE_BPM);
+    U.sampleBpmPattern = scPattern();
+    U.modal = M_SAMPLE_BPM;
+}
+static void handleSampleBpm() {
+    if (IN.pressed(BT_B) || IN.pressed(BT_SELECT) || U.sampleBpmPattern != scPattern()) {
+        U.modal = M_NONE;
+        return;
+    }
+    const int delta = (IN.repeat(BT_RIGHT, U.now) - IN.repeat(BT_LEFT, U.now))
+                    + (IN.repeat(BT_UP, U.now) - IN.repeat(BT_DOWN, U.now)) * 10;
+    if (delta) {
+        const int estimate = scSmpEstimatedBpm(U.smpDialogSlot);
+        const int start = U.sampleBpm >= SAMPLE_BPM_MIN ? U.sampleBpm : estimate > 0 ? estimate : scTempoNow();
+        U.sampleBpm = clampi(start + delta, SAMPLE_BPM_MIN, SAMPLE_BPM_MAX);
+    }
+    if (IN.pressed(BT_X)) U.sampleBpm = SAMPLE_BPM_AUTO;
+    if (IN.pressed(BT_A)) {
+        setViewValue(U.sel, slotOf(P_SAMPLE_BPM), U.sampleBpm);
+        U.modal = M_NONE;
+    }
 }
 
 // --- Song ----------------------------------------------------------------------------------
@@ -1880,13 +1954,13 @@ static void handleKeys() {
     if (IN.pressed(BT_START)) keysDone();
     if (IN.pressed(BT_SELECT)) U.modal = M_NONE;
 }
-enum { CUT_GRID, CUT_TRANSIENTS, CUT_ADD, CUT_MOVE, CUT_REMOVE, CUT_CHOP, CUT_LINEAR, CUT_RANDOM, CUT_UNDO, CUT_N };
+enum { CUT_GRID, CUT_TRANSIENTS, CUT_ADD, CUT_MOVE, CUT_REMOVE, CUT_SLICE_MODE, CUT_LINEAR, CUT_RANDOM, CUT_UNDO, CUT_N };
 static const char* const CUT_ACTIONS[CUT_N] = {"Create slice grid", "Detect transients", "Add marker at cursor",
-    "Move selected marker", "Remove selected marker", "Use sample in CHOP", "Create linear locks",
+    "Move selected marker", "Remove selected marker", "Use slot with Slice playback", "Create linear locks",
     "Create random locks", "Undo slice locks"};
 
 static void handleSlices() {
-    int slot = smpTargetSlot();
+    int slot = U.smpDialogSlot;
     if (IN.pressed(BT_B) || IN.pressed(BT_SELECT) || !scSmpFrames(slot)) {
         scSmpPreviewStop(); U.modal = M_NONE; return;
     }
@@ -1933,14 +2007,16 @@ static void handleSlices() {
         if (!scSmpCutRemove(slot, U.cutMarker)) return;
         if (U.cutMarker > 0) U.cutMarker--;
         break;
-    case CUT_CHOP:
-        if (machOf(U.sel) != 4) scSetMachine(U.sel, 4);
+    case CUT_SLICE_MODE:
+        scSetSampleMode(U.sel, 1);
+        scSet(U.sel, slotOf(P_SMP), slot);
         break;
     case CUT_RANDOM: seed = U.now | 1u; [[fallthrough]];
     case CUT_LINEAR:
+        if (smpTargetSlot() != slot) { toast("Assign this slot with Slice playback first"); return; }
         result = scSliceLocks(U.sel, seed);
         if (result == -2) { toast("A step has no room for more locks"); return; }
-        if (result <= 0) { toast("Needs a CHOP track with trigs and samples"); return; }
+        if (result <= 0) { toast("Needs Slice playback, trigs and loaded samples"); return; }
         toast("%d trigs locked", result);
         break;
     case CUT_UNDO:
@@ -1985,11 +2061,9 @@ static void handleRecorder() {
     if (gEng.recOn) return;
     if (IN.pressed(BT_X) && U.recLast >= 0) scSmpPreview(U.recLast);
     if (IN.pressed(BT_Y) && U.recLast >= 0 && U.sel < FXT) {
-        if (machOf(U.sel) != 4) scSetMachine(U.sel, 4);
+        if (!scMachUsesSmp(machOf(U.sel))) scSetMachine(U.sel, MACHINE_SAMPLE);
         scSet(U.sel, slotOf(P_SMP), U.recLast);
-        U.cutAction = U.cutMarker = 0;
-        U.cutFrame = scSmpFrames(U.recLast) / 2;
-        U.modal = M_SLICE;
+        openSampleEditor();
         touched();
         return;
     }
@@ -2016,6 +2090,10 @@ static void finishTake() {
     snprintf(tmp, sizeof tmp, "%s.tmp", path);
     bool ok = wavWrite(tmp, scSmpData(slot), frames, (int)scSmpRate(slot), 2) && rename(tmp, path) == 0;
     if (!ok) { remove(tmp); toast("Could not save take to disk"); return; }
+    const int estimate = scSmpEstimateBpm(scSmpData(slot), frames, scSmpRate(slot), scSmpCh(slot));
+    lockA();
+    scSmpSetEstimate(slot, estimate);
+    unlockA();
     scanSamples();
     U.recLast = slot;
     touched();
@@ -2111,6 +2189,7 @@ static void handleValuePicker() {
     U.modal = M_NONE;
 }
 static void handleModal() {
+    if (U.modal == M_SAMPLE_BPM) { handleSampleBpm(); return; }
     if (U.modal == M_DETAIL) { handleDetail(); return; }
     if (U.modal == M_MASTER_EQ) {
         handleMasterEq();
@@ -2147,14 +2226,21 @@ static void handleModal() {
         if (IN.pressed(BT_A) && e && e->kind == 0) { smpLeave(); return; }
         if (IN.pressed(BT_A) && e && e->kind == 1) { char n[96]; snprintf(n, sizeof n, "%s", e->name); smpEnter(n); return; }
         if (IN.pressed(BT_A) && e && e->kind == 2) {
-            int slot = smpTargetSlot();
+            int slot = U.smpDialogSlot;
             if (poolLoadFile(slot, gFiles[e->file].rel)) {
                 toast("Slot %d: %s", slot + 1, scSmpName(slot));
                 lockA(); scSmpPreview(slot); unlockA();
                 touched();
             } else toast("Could not load (sample memory full or bad file)");
         }
-        if (IN.pressed(BT_X) && scSmpFrames(smpTargetSlot())) { lockA(); scSmpPreview(smpTargetSlot()); unlockA(); }
+        if (IN.pressed(BT_Y) && scSmpFrames(U.smpDialogSlot)) {
+            scSmpPreviewStop();
+            U.cutAction = U.cutMarker = 0;
+            U.cutFrame = (scSmpA(U.smpDialogSlot) + scSmpB(U.smpDialogSlot)) / 2;
+            U.modal = M_SLICE;
+            return;
+        }
+        if (IN.pressed(BT_X) && scSmpFrames(U.smpDialogSlot)) { lockA(); scSmpPreview(U.smpDialogSlot); unlockA(); }
         if (IN.pressed(BT_B) || IN.pressed(BT_SELECT)) { lockA(); scSmpPreviewStop(); unlockA(); U.modal = M_NONE; }
         return;
     }
@@ -2164,7 +2250,8 @@ static void handleInput() {
     buildRows();
     // SELECT antippen = Menue, halten = Hilfe solange gehalten
     static bool selUsed = false;
-    if (IN.pressed(BT_SELECT) && (U.modal == M_NONE || U.modal == M_MASTER_EQ || U.modal == M_DETAIL))
+    if (IN.pressed(BT_SELECT) && (U.modal == M_NONE || U.modal == M_MASTER_EQ || U.modal == M_DETAIL
+        || U.modal == M_SAMPLES || U.modal == M_SLICE || U.modal == M_SAMPLE_BPM))
         selUsed = U.modal != M_NONE;
     if (U.modal != M_NONE) { handleModal(); return; }
     if (U.selectionTrack >= 0 && !hasStepSelection()) U.selectionTrack = -1;
@@ -2178,8 +2265,19 @@ static void handleInput() {
     if (U.view == V_TRACK && IN.down[BT_B] && IN.pressed(BT_SELECT) && !U.aHeld) {
         openSections(); selUsed = true; return;
     }
+    const bool sampleTrack = U.view == V_TRACK && U.sel < FXT && scMachUsesSmp(machOf(U.sel));
+    if (sampleTrack && IN.down[BT_SELECT] && IN.pressed(BT_Y)) {
+        openSampleEditor(); selUsed = true; return;
+    }
     if (IN.down[BT_SELECT] && IN.pressed(BT_X)) {
         const int param = curParam();
+        if (sampleTrack && U.tab == TAB_SRC) {
+            if (param == P_SMP) openSamples();
+            else if (param == P_SAMPLE_BPM || param == pIndex("trk.src.f")) openSampleBpm();
+            else openSampleEditor();
+            selUsed = true;
+            return;
+        }
         if (eqShortcut(param)) { openMasterEq(param); selUsed = true; return; }
         if (canPickValue(param)) { openValuePicker(param); selUsed = true; return; }
         if (DetailKind kind = detailKind(param)) { openDetail(kind, param); selUsed = true; return; }
@@ -2669,13 +2767,20 @@ static const char* helpLine() {
     if (U.modal == M_MENU) return "UP/DOWN choose   A do it   B close";
     if (U.modal == M_PATTERNS || U.modal == M_SECTIONS) return "";
     if (U.modal == M_VALUE) return "";
-    if (U.modal == M_SAMPLES) return "A open/load  LEFT up  RIGHT into  L1/R1 page  X hear  B close";
+    if (U.modal == M_SAMPLES) return "A open/load  LEFT up  L1/R1 page  X preview  Y editor  B close";
     if (U.modal == M_HELP) return "any of A / B / SELECT closes";
-    if (U.modal == M_SLICE || U.modal == M_RECORDER) return "";
+    if (U.modal == M_SLICE || U.modal == M_RECORDER || U.modal == M_SAMPLE_BPM) return "";
     if (U.view == V_SONG) return "X/Y value  A dup row  B+A delete  B+UP/DN move  START play song";
     if (U.view == V_PROJECT) return "UP/DOWN item   X/Y value / browse projects   A action";
     if (U.view == V_SYSTEM) return "UP/DOWN item   X/Y change   A apply / action";
     if (IN.down[BT_FN] || hasStepSelection()) return "FN+ARROWS select   FN+X copy   FN+Y paste   FN+B clear selection";
+    if (U.sel < FXT && U.tab == TAB_SRC && scMachUsesSmp(machOf(U.sel))) {
+        const int param = curParam();
+        if (param == P_SMP) return "X/Y slot   SELECT+X sample manager   SELECT+Y sample editor";
+        if (param == P_SAMPLE_BPM || param == pIndex("trk.src.f"))
+            return "SELECT+X sample BPM   SELECT+Y sample editor   X/Y adjust";
+        return "SELECT+X or SELECT+Y sample editor   X/Y adjust";
+    }
     if (detailKind(curParam())) return "SELECT+X detail view   X/Y adjust   B+SELECT sections";
     if (eqShortcut(curParam())) return "SELECT+X visual EQ   X/Y adjust   B+SELECT sections";
     if (canPickValue(curParam())) return "SELECT+X choose value   X/Y adjust   Hold A for step locks";
@@ -2793,7 +2898,7 @@ static void waveIcon(int x, int y, uint32_t c) {
 }
 static void drawSamples() {
     int w = 580, h = 392, x = (SW - w) / 2, y = 34;
-    char t[96]; snprintf(t, sizeof t, "LOAD SAMPLE INTO SLOT %d", smpTargetSlot() + 1);
+    char t[96]; snprintf(t, sizeof t, "SAMPLE MANAGER / SLOT %02d", U.smpDialogSlot + 1);
     box(x, y, w, h, t);
     // Pfad als Brotkrumen
     char path[240]; snprintf(path, sizeof path, "samples/%s", gSmpDir);
@@ -2803,7 +2908,7 @@ static void drawSamples() {
     int rowH = 20, top = y + 50, vis = (h - 82) / rowH;
     if (U.smpSel < U.smpScroll) U.smpScroll = U.smpSel;
     if (U.smpSel >= U.smpScroll + vis) U.smpScroll = U.smpSel - vis + 1;
-    const char* cur = scSmpName(smpTargetSlot());
+    const char* cur = scSmpName(U.smpDialogSlot);
     for (int i = U.smpScroll; i < gNSmpView && i < U.smpScroll + vis; i++) {
         const SmpEnt& e = gSmpView[i];
         int ry = top + (i - U.smpScroll) * rowH;
@@ -2830,7 +2935,7 @@ static void drawSamples() {
     text(x + 12, y + h - 22, b, C_FAINT);
 }
 static void drawSlices() {
-    int slot = smpTargetSlot(), a = scSmpA(slot), n = scSmpB(slot) - a;
+    int slot = U.smpDialogSlot, a = scSmpA(slot), n = scSmpB(slot) - a;
     box(30, 34, 580, 404, "SAMPLE EDITOR");
     if (n <= 0) return;
     int ch = scSmpCh(slot), count = scSmpCutCount(slot);
@@ -2871,6 +2976,22 @@ static void drawSlices() {
     text(x, 411, "Left/right cursor  L2 fine  R2 single frame", C_DIM);
 }
 
+static void drawSampleBpm() {
+    box(108, 152, 424, 168, "WARP / SAMPLE BPM");
+    char value[48], subtitle[48];
+    const int bpm = scSmpEstimatedBpm(U.smpDialogSlot);
+    if (U.sampleBpm == SAMPLE_BPM_AUTO) {
+        if (bpm > 0) snprintf(value, sizeof value, "AUTO  %d BPM", bpm);
+        else snprintf(value, sizeof value, "AUTO  (no estimate)");
+    } else if (U.sampleBpm == SAMPLE_BPM_LEGACY) snprintf(value, sizeof value, "LEGACY TIMING");
+    else snprintf(value, sizeof value, "%d BPM", U.sampleBpm);
+    snprintf(subtitle, sizeof subtitle, "SLOT %02d / %s", U.smpDialogSlot + 1, scSmpName(U.smpDialogSlot));
+    textC(320, 189, subtitle, C_DIM);
+    textC(320, 222, value, C_TXT);
+    textC(320, 256, "LEFT/RIGHT 1 BPM   UP/DOWN 10 BPM", C_TXT);
+    textC(320, 282, "X Auto       A Apply       B Cancel", C_DIM);
+}
+
 static void drawRecorder() {
     box(60, 100, 520, 280, "RECORDER");
     char length[32];
@@ -2901,7 +3022,7 @@ static void drawRecorder() {
     else snprintf(info, sizeof info, "Choose source, length and start");
     text(84, 252, info, C_TXT);
     text(84, 302, "START record / stop  B close", C_TXT);
-    text(84, 328, "X preview take  Y use in CHOP and edit", C_DIM);
+    text(84, 328, "X preview take  Y assign to SAMPLE and edit", C_DIM);
 }
 static void drawHelp() {
     box(30, 34, SW - 60, SH - 68, "CONTROLS");
@@ -3067,6 +3188,7 @@ static void drawAll() {
     drawHelpLine();
     if (U.modal == M_MENU) drawMenu();
     else if (U.modal == M_SAMPLES) drawSamples();
+    else if (U.modal == M_SAMPLE_BPM) drawSampleBpm();
     else if (U.modal == M_HELP) drawHelp();
     else if (U.modal == M_KEYS) drawKeys();
     else if (U.modal == M_SLICE) drawSlices();
@@ -3540,7 +3662,7 @@ static int selfTest(const char* shotDir) {
     int dest = selectParam(TAB_MOD, "trk.lfo1.dest");
     tap(BT_SELECT); U.menuSel = MI_VALUE; tap(BT_A);
     CHECK(U.modal == M_VALUE, "SELECT menu opens the destination value picker");
-    tap(BT_RIGHT); tap(BT_DOWN); tap(BT_DOWN);
+    tap(BT_RIGHT); tap(BT_DOWN);
     int slice = modDestOfSlot(slotOf(pIndex("trk.src.b")));
     CHECK(gValuePick.values[gValuePick.selected] == slice && !strcmp(valueText(dest, slice), "SLICE"),
           "LFO picker shows the selected Machine's control name");
@@ -3766,7 +3888,12 @@ static int selfTest(const char* shotDir) {
         wavWrite(sp2, tone, 100, 48000, 1);
         U.sel = 0; U.view = V_TRACK;
         gSmpDir[0] = 0;
-        openSamples();
+        scSetMachine(0, MACHINE_SAMPLE);
+        scSet(0, slotOf(P_SMP), 5);
+        selectParam(TAB_SRC, "trk.smp");
+        tap(BT_X, 1u << BT_SELECT);
+        idle();
+        CHECK(U.modal == M_SAMPLES && U.smpDialogSlot == 5, "SELECT + X opens the manager for the chosen sample slot");
         int k = -1; for (int i = 0; i < gNSmpView; i++) if (gSmpView[i].kind == 1 && !strcmp(gSmpView[i].name, "kit")) k = i;
         CHECK(k >= 0 && gSmpView[k].count == 2, "Explorer zeigt Ordner kit mit 2 Samples");
         U.smpSel = k < 0 ? 0 : k;
@@ -3782,12 +3909,31 @@ static int selfTest(const char* shotDir) {
         U.smpSel = 2; idle(1);
         shot("11-samples");
         tap(BT_B);
-        menuDo(MI_SLICE);
-        CHECK(U.modal == M_SLICE, "Sample editor opens for the selected slot");
+        tap(BT_Y, 1u << BT_SELECT);
+        idle();
+        CHECK(U.modal == M_SLICE && U.smpDialogSlot == slot, "SELECT + Y opens the selected slot directly in the Sample Editor");
         tap(BT_A);
         CHECK(scSmpCutCount(slot) == 7, "Sample editor creates eight slices");
         shot("11a-slice-editor");
         tap(BT_B);
+        selectParam(TAB_SRC, "trk.sample.mode");
+        tap(BT_X);
+        CHECK(machOf(0) == MACHINE_SLICE && baseValue(P_MACHINE) == MACHINE_SAMPLE, "Slice playback stays in the SAMPLE engine");
+        buildRows();
+        bool hasCount = false, hasBeats = false;
+        for (int r = 0; r < gNRows; r++) {
+            hasCount |= gRows[r] == pIndex("trk.src.a");
+            hasBeats |= gRows[r] == pIndex("trk.src.g");
+        }
+        CHECK(!hasCount && !hasBeats, "Slice playback hides the old grid count and Beats controls");
+        scSmpSetEstimate(slot, 123);
+        selectParam(TAB_SRC, "trk.sample.bpm");
+        tap(BT_X, 1u << BT_SELECT); idle();
+        CHECK(U.modal == M_SAMPLE_BPM, "SELECT + X opens source BPM editing");
+        tap(BT_RIGHT); tap(BT_A);
+        CHECK(baseValue(P_SAMPLE_BPM) == 124, "Manual BPM starts from the automatic estimate");
+        tap(BT_X, 1u << BT_SELECT); idle(); tap(BT_X); tap(BT_A);
+        CHECK(baseValue(P_SAMPLE_BPM) == SAMPLE_BPM_AUTO, "Warp BPM can be reset to Auto");
         // Projekt mit Sample: nach dem Laden sucht der Slot seine Datei selbst
         CHECK(prjSave(), "Projekt mit Sample gespeichert");
         lockA(); scSmpClear(); scLoad(""); unlockA();
@@ -3927,7 +4073,8 @@ int main(int argc, char** argv) {
         if (n > 0) { exe[n] = 0; char* s = strrchr(exe, '/'); if (s) { s[1] = 0; snprintf(gBase, sizeof gBase, "%s", exe); } }
     }
     if (const char* b = getenv("SC_AUDIO_BUF")) bufFrames = atoi(b);
-    P_MACHINE = pIndex("trk.machine"); P_SMP = pIndex("trk.smp"); P_NOTE = pIndex("trk.note"); P_QUANT = pIndex("trk.quant");
+    P_MACHINE = pIndex("trk.machine"); P_SMP = pIndex("trk.smp"); P_SAMPLE_MODE = pIndex("trk.sample.mode");
+    P_SAMPLE_BPM = pIndex("trk.sample.bpm"); P_NOTE = pIndex("trk.note"); P_QUANT = pIndex("trk.quant");
     mkdirs();
     settingsLoad();
     printf("SYNTH CITY CORE - Dateien: %s\n", gBase);

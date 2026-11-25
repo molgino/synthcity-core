@@ -75,7 +75,7 @@ async function R(p, id) {
   const smpSichtbar = async () => p.evaluate(() => !document.querySelector('.row[data-id="trk.smp"]').hidden);
   await p.locator('.ptab', {hasText: 'SRC'}).click(); await p.waitForTimeout(100);
   const mach = (await p.locator('.row[data-id="trk.machine"] .v').textContent()).trim();
-  chk((await smpSichtbar()) === (mach === 'SMPL'), 'SAMPLE ist bei ' + mach + ' falsch ein- oder ausgeblendet');
+  chk((await smpSichtbar()) === (mach === 'SAMPLE'), 'SAMPLE ist bei ' + mach + ' falsch ein- oder ausgeblendet');
   // Reiter: es ist immer nur eine Gruppe zu sehen
   chk(await p.locator('.ptab').count() === 7, 'nicht sieben Reiter: ' + await p.locator('.ptab').count());
   // MOD: zwei LFOs und eine Mod-Huellkurve, Ziel aus einer Liste
@@ -183,12 +183,12 @@ async function R(p, id) {
   grp('Auswahllisten statt Zahlen');
   const eng = (await R(p, 'trk.machine'));
   await eng.scrollIntoViewIfNeeded();
-  chk(['POLY', 'FM', 'DRUM', 'SMPL', 'CHOP'].includes((await eng.locator('.v').textContent()).trim()),
+  chk(['POLY', 'FM', 'DRUM', 'SAMPLE'].includes((await eng.locator('.v').textContent()).trim()),
       'ENGINE zeigt keinen Namen');
   await eng.tap();
   await p.waitForTimeout(300);
   const engListe = (await p.locator('#pickList button').allTextContents()).map(t => t.trim());
-  chk(engListe.join(',') === 'POLY,FM,DRUM,SMPL,CHOP', 'die Engine-Liste stimmt nicht');
+  chk(engListe.join(',') === 'POLY,FM,DRUM,SAMPLE', 'die Engine-Liste stimmt nicht');
   await p.locator('#pickList button', {hasText: 'FM'}).tap();
   await p.waitForTimeout(300);
   const a = (await R(p, 'trk.src.a'));
@@ -199,18 +199,24 @@ async function R(p, id) {
   chk(await p.evaluate(() => [...document.querySelectorAll('.row')].filter(r => !r.hidden && /^trk\.src\./.test(r.dataset.id)).length) === 8, 'FM zeigt nicht acht Regler');
   chk((await p.locator('.row[data-id="trk.src.c"] .nm').textContent()).startsWith('ALGO'), 'der dritte FM-Regler heisst nicht ALGO');
   await (await R(p, 'trk.machine')).tap(); await p.waitForTimeout(300);
-  await p.locator('#pickList button', {hasText: 'SMPL'}).tap(); await p.waitForTimeout(300);
+  await p.locator('#pickList button', {hasText: 'SAMPLE'}).tap(); await p.waitForTimeout(300);
   chk(await p.evaluate(() => !document.querySelector('.row[data-id="trk.smp"]').hidden), 'bei SMPL fehlt SAMPLE');
-  chk(await p.evaluate(() => [...document.querySelectorAll('.row')].filter(r => !r.hidden && /^trk\.src\./.test(r.dataset.id)).length) === 8, 'SMPL zeigt nicht seine acht Regler');
+  chk(await p.evaluate(() => [...document.querySelectorAll('.row')].filter(r => !r.hidden && /^trk\.src\./.test(r.dataset.id)).length) === 7, 'SAMPLE should hide the legacy Beats control');
   chk((await p.locator('.row[data-id="trk.src.f"] .nm').textContent()).startsWith('WARP'), 'der sechste SMPL-Regler heisst nicht WARP');
   await p.locator('.row[data-id="trk.src.f"]').tap(); await p.waitForTimeout(250);
   chk((await p.locator('#pickList button').allTextContents()).map(t => t.trim()).join(',') === 'OFF,REPITCH,TIME', 'WARP hat nicht die Liste OFF/REPITCH/TIME');
   await p.locator('#pickList button', {hasText: 'TIME'}).tap(); await p.waitForTimeout(200);
   chk((await p.locator('.row[data-id="trk.src.f"] .v').textContent()).trim() === 'TIME', 'WARP TIME laesst sich nicht waehlen');
-  await p.locator('.row[data-id="trk.src.g"]').tap(); await p.waitForTimeout(250);
-  chk(await p.locator('#pickList button').count() === 10, 'BEATS hat keine Liste mit 10 Stufen');
-  await p.locator('#pickList button', {hasText: /^4 beats$/}).tap(); await p.waitForTimeout(200);
-  chk((await p.locator('.row[data-id="trk.src.g"] .v').textContent()).trim() === '4 beats', 'BEATS 4 laesst sich nicht waehlen');
+  const bpmRow = await R(p, 'trk.sample.bpm');
+  await bpmRow.tap(); await p.waitForTimeout(250);
+  await p.locator('#fineBtns button').nth(2).tap();
+  chk(/^[0-9]+ BPM$/.test((await p.locator('#fineVal').textContent()).trim()), 'Sample BPM can be entered manually');
+  await p.locator('#fineReset').tap();
+  chk((await p.locator('#fineVal').textContent()).startsWith('AUTO'), 'Sample BPM can be reset to Auto');
+  await p.locator('#fineClose').tap();
+  await (await R(p, 'trk.sample.mode')).tap(); await p.waitForTimeout(200);
+  await p.locator('#pickList button', {hasText: 'SLICES'}).tap();
+  chk(!await p.locator('.row[data-id="trk.sample.slice"]').isHidden(), 'Slice playback exposes the slice selector');
   await (await R(p, 'trk.machine')).tap(); await p.waitForTimeout(300);
   await p.locator('#pickList button', {hasText: 'FM'}).tap(); await p.waitForTimeout(300);
 
@@ -240,7 +246,7 @@ async function R(p, id) {
     await p.waitForTimeout(400);
     const eng2 = (await R(p, 'trk.machine'));
     await eng2.scrollIntoViewIfNeeded();
-    chk((await eng2.locator('.v').textContent()).trim() === 'SMPL', 'die Spur spielt nicht SMPL');
+    chk((await eng2.locator('.v').textContent()).trim() === 'SAMPLE', 'die Spur spielt nicht SMPL');
     const sr = (await R(p, 'trk.smp'));
     await sr.scrollIntoViewIfNeeded();
     chk((await sr.locator('.v').textContent()).includes('sc-test-stereo'),

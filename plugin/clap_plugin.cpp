@@ -76,7 +76,10 @@ struct Plug {
     double get(const PParam& p) const {
         switch (p.kind) {
         case PX_GLOBAL: return eng.P.g[p.slot];
-        case PX_TRACK:  return eng.P.pat[eng.pat].t[focus].p[p.slot];
+        case PX_TRACK: {
+            const Track& track = eng.P.pat[eng.pat].t[focus];
+            return p.slot == sampleModeSlot() ? slicePlayback(trackMachine(track.p)) : track.p[p.slot];
+        }
         case PX_MORPH:  return eng.morph;
         case PX_FILL:   return eng.seq.fill ? 1 : 0;
         case PX_MUTE:   return eng.mute[p.slot] ? 1 : 0;
@@ -94,6 +97,10 @@ struct Plug {
             if (!strcmp(PARAMS[p.pidx].id, "trk.machine")) {
                 machineSelect(eng.P.pat[eng.pat].t[focus].p, (int)(v + 0.5));
                 needRescan = true;              // die beiden Quellregler stehen jetzt anders
+            } else if (p.slot == sampleModeSlot()) {
+                Pattern& pat = eng.P.pat[eng.pat];
+                setSampleMode(pat.t[focus], v >= 0.5, &pat.sc[0][focus], &pat.sc[1][focus]);
+                needRescan = true;
             } else {
                 double clamped = v < p.lo ? p.lo : v > p.hi ? p.hi : v;
                 eng.P.pat[eng.pat].t[focus].p[p.slot] = (int16_t)(clamped + (clamped < 0 ? -0.5 : 0.5));
@@ -147,7 +154,7 @@ static bool paText(const clap_plugin_t* pl, clap_id id, double v, char* out, uin
     if (p->kind == PX_FOCUS) { snprintf(out, n, "SPUR %d", (int)(v + 0.5)); return true; }
     // Die beiden Quellregler heissen so, wie die Machine der gewaehlten Spur sie nennt.
     Plug* P = self(pl);
-    int mach = P->eng.P.pat[P->eng.pat].t[P->focus].p[paramSlot(paramFind("trk.machine"))];
+    int mach = trackMachine(P->eng.P.pat[P->eng.pat].t[P->focus].p);
     paramText(PARAMS[p->pidx], (float)v, out, (int)n, mach);
     return true;
 }

@@ -88,7 +88,8 @@ inline const char* modDestinationName(int v, int mach) {
 }
 inline int enumCount(const ParamDef& d) {
     if (!strncmp(d.id, "trk.ins", 7) && d.kind == PK_ENUM) return d.hi + 1;
-    if (!strcmp(d.id, "trk.machine"))  return machineCount();
+    if (!strcmp(d.id, "trk.machine"))  return MACHINE_CHOICES;
+    if (!strncmp(d.id, "trk.sample.", 11) && d.kind == PK_ENUM) return d.hi + 1;
     if (d.kind == PK_ENUM && !strncmp(d.id, "fx.", 3)) return d.hi + 1;
     if (!strcmp(d.id, "trk.vmode"))    return 3;
     if (!strncmp(d.id, "trk.lfo", 7) || !strncmp(d.id, "trk.menv.", 9)) {
@@ -200,6 +201,17 @@ inline void paramText(const ParamDef& d, float v, char* out, int n, int mach = -
             return;
         }
         if (!strcmp(f, "level") && v < 0) { snprintf(out, n, "LINKED"); return; }
+    }
+    if (!strcmp(d.id, "trk.sample.mode")) { snprintf(out, n, "%s", v > 0.5f ? "SLICES" : "NORMAL"); return; }
+    if (!strcmp(d.id, "trk.sample.bpm")) {
+        if (v <= SAMPLE_BPM_LEGACY) snprintf(out, n, "LEGACY");
+        else if (v < SAMPLE_BPM_MIN) snprintf(out, n, "AUTO");
+        else snprintf(out, n, "%.0f BPM", (double)v);
+        return;
+    }
+    if (!strcmp(d.id, "trk.sample.slice")) { snprintf(out, n, "%d", (int)v + 1); return; }
+    if (!strcmp(d.id, "trk.sample.follow")) {
+        snprintf(out, n, "%s", v < 0.5f ? "OFF" : v < 1.5f ? "STEP" : "RANDOM"); return;
     }
     if (mach >= 0) {
         if (!strncmp(d.id, "trk.src.", 8) && d.id[8] >= 'a' && d.id[8] <= 'h' && !d.id[9]) {

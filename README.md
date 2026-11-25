@@ -782,16 +782,29 @@ Send-Locks pro Stimme erhalten bleiben. Der Einzelspur-Recorder nimmt hinter den
 und ohne Send-Effekte auf. Einstellungen sind pro Pattern und Spur gespeichert. Beide
 Inserts sind beim Laden alter Projekte aus.
 
-## Sample-Editor und Recorder
+## SAMPLE, Sample-Editor und Recorder
 
-**R36S:** Im SELECT-Menü öffnet **Sample editor** den Sample-Slot der gewählten Spur.
+Mit **SRC → ENGINE → SAMPLE** spielt die Spur den gewählten **SAMPLE SLOT**. **PLAY MODE**
+schaltet zwischen **NORMAL** und **SLICES**. Slice-Playback verwendet die Marker aus dem
+Sample-Editor. Ohne Marker ist der ganze Ausschnitt ein Slice.
+
+Auf dem R36S öffnet **SELECT + X** am **SAMPLE SLOT** den Sample Manager für genau diesen Slot.
+**SELECT + Y** öffnet auf einer SAMPLE-Spur direkt den Editor. Bei einem leeren Slot öffnet
+sich der Manager. Im Manager öffnet **Y** den Editor für das geladene Sample.
+
+Bei **WARP** oder **SAMPLE BPM** öffnet **SELECT + X** die BPM-Eingabe. Links/rechts ändert
+den Wert um 1 BPM, hoch/runter um 10 BPM. **X** wählt **AUTO**, **A** übernimmt.
+Auto schätzt das Tempo beim Import und verwendet für kurze Loops zusätzlich deren Länge.
+**REPITCH** ändert Tempo und Tonhöhe gemeinsam, **TIME** hält die Tonhöhe. Bestehende
+Projekte laden ihre früheren Beat-Einstellungen als **LEGACY**.
+
 Links/rechts bewegt den Cursor, L2 verkleinert die Schritte und R2 schaltet auf einzelne
 Frames. L1/R1 wählt einen Marker, X hört den Slice am Cursor vor. Mit A lassen sich
 ein gleichmäßiges Raster oder Marker aus Transienten erzeugen und Marker manuell setzen,
 verschieben oder löschen. Im Browser stehen die gleichen Befehle im Wellenform-Editor.
 
 **Create linear locks** verteilt Slices der Reihe nach auf die vorhandenen Trigs der
-CHOP-Spur. **Create random locks** schreibt einmal gewürfelte Slice-Werte in dieselben
+Spur im Slice-Modus. **Create random locks** schreibt einmal gewürfelte Slice-Werte in dieselben
 Trigs. Beides lässt sich mit **Undo slice locks** rückgängig machen. Trigless Steps bleiben
 unverändert. Die Marker werden in der Projektdatei gespeichert und folgen dem Sample-Slot.
 
@@ -800,7 +813,7 @@ den **USB-Rückkanal** (SYSTEM → PC + Audio) auf. Die Länge ist frei oder 1, 
 soweit der Sample-Pool Platz bietet. START startet sofort, am nächsten Takt oder beim
 nächsten erklingenden Trig am zuvor gewählten Step. Erneutes START stoppt oder bricht die
 Armierung ab. Die Aufnahme wird als Stereo-WAV in `samples/` geschrieben. X hört den Take
-vor, Y weist ihn der gewählten Spur in CHOP zu und öffnet den Editor.
+vor, Y weist ihn der gewählten SAMPLE-Spur zu und öffnet den Editor.
 
 ## Als Nächstes
 

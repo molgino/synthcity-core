@@ -5,12 +5,60 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdio.h>
+#include <math.h>
 #include "doc.h"
 
 enum { SMP_SLOTS = 64, SMP_POOL = 1 << 21, SMP_NAME = 24, SMP_SLICES = 64 };   // 2 Mio. Samples = rund 44 s
 
+// Run once while importing audio, outside render(). The envelope correlation searches
+// for repeated onsets. Short or unpitched one-shots can have no useful estimate.
+inline int estimateSampleBpm(const float* data, int frames, float rate, int channels) {
+    if (!data || frames < 1 || !(rate >= 1000.f && rate <= 384000.f) || (channels != 1 && channels != 2)) return 0;
+    const int hop = (int)(rate / 200.0f + 0.5f);
+    const float hz = rate / hop;
+    enum { MAX_HOPS = 4000 };
+    float flux[MAX_HOPS];
+    const int n = frames / hop < MAX_HOPS ? frames / hop : MAX_HOPS;
+    float env = 0.0f, sum = 0.0f;
+    for (int i = 0; i < n; i++) {
+        float energy = 0.0f;
+        for (int j = 0; j < hop * channels; j++) {
+            const float v = data[i * hop * channels + j];
+            energy += v * v;
+        }
+        energy = sqrtf(energy / (hop * channels));
+        const float rise = energy - env;
+        flux[i] = rise > 0.0f ? rise : 0.0f;
+        sum += flux[i] * flux[i];
+        env += (rise > 0.0f ? 0.8f : 0.16f) * rise;
+    }
+    float best = 0.24f;
+    int period = 0;
+    if (sum > 1e-6f && n >= (int)(hz * 1.1f)) {
+        for (int lag = (int)(hz * 0.30f); lag <= (int)hz && lag * 2 < n; lag++) {
+            float same = 0.0f, left = 0.0f, right = 0.0f;
+            for (int i = lag; i < n; i++) {
+                const float a = flux[i - lag], b = flux[i];
+                same += a * b; left += a * a; right += b * b;
+            }
+            if (left <= sum * 0.12f || right <= sum * 0.12f) continue;
+            const float score = same / sqrtf(left * right);
+            // At a tie prefer the shorter period over an exact multiple.
+            if (score > best + 0.018f) { best = score; period = lag; }
+        }
+    }
+    if (period) return (int)(60.0f * hz / period + 0.5f);
+    // Approximate a short loop from its duration at a fixed reference tempo.
+    const float seconds = frames / rate;
+    if (seconds < 0.25f) return 0;
+    float beats = 0.5f;
+    while (beats * 1.41421356f < seconds * 2.0f && beats < 1024.f) beats *= 2.0f;
+    return (int)(60.f * beats / seconds + 0.5f);
+}
+
 struct SamplePool {
     struct Slot {
+        int estimatedBpm = 0;      // computed at import, never in the audio callback
         int32_t at = 0, n = 0;      // Lage im Block, n = Bilder (nicht Werte)
         float   rate = 48000.0f;    // Aufnahmerate: bestimmt die Grundstimmung
         uint8_t loop = 0;
@@ -52,7 +100,7 @@ struct SamplePool {
     // Legt ein Sample ab. Der Block waechst nur nach vorn; wer einen Platz neu belegt,
     // laesst den alten Bereich liegen - erst clear() gibt ihn zurueck.
     bool set(int slot, const float* src, int n, float rate, const char* name,
-             bool loop = false, int ch = 1) {
+             bool loop = false, int ch = 1, int estimatedBpm = 0) {
         if (slot < 0 || slot >= SMP_SLOTS || n <= 0) return false;
         if (ch < 1) ch = 1;
         if (ch > 2) ch = 2;
@@ -66,6 +114,7 @@ struct SamplePool {
         s[slot].n = n;
         s[slot].ch = (uint8_t)ch;
         s[slot].rate = rate > 1.0f ? rate : 48000.0f;
+        s[slot].estimatedBpm = estimatedBpm;
         s[slot].loop = loop ? 1 : 0;
         s[slot].a = 0; s[slot].b = 0; s[slot].la = 0;
         snprintf(s[slot].name, SMP_NAME, "%s", name ? name : "");
@@ -247,6 +296,7 @@ inline void poolFromDoc(const Doc& d, SamplePool& p) {
             continue;
         }
         p.s[i].n = 0;
+        p.s[i].estimatedBpm = 0;
         snprintf(p.s[i].name, SMP_NAME, "%s", nm);
         snprintf(k, sizeof k, "smp.%d.rate", i); p.s[i].rate = (float)d.get(k, 48000);
         snprintf(k, sizeof k, "smp.%d.ch", i);   p.s[i].ch = (uint8_t)d.get(k, 1);
