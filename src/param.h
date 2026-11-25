@@ -26,6 +26,8 @@ struct ParamDef {
 };
 
 enum { VOICE_PARAM_CAP = 112, TRACK_PARAM_CAP = 160, GLOBAL_PARAM_CAP = 128, INSERT_STAGES = 2 };
+enum { MACHINE_SAMPLE = 3, MACHINE_LEGACY_CHOP = 4, MACHINE_SLICE = 5, MACHINE_CHOICES = 4 };
+enum { SAMPLE_BPM_LEGACY = 0, SAMPLE_BPM_AUTO = 1, SAMPLE_BPM_MIN = 30, SAMPLE_BPM_MAX = 300 };
 enum { CHORD_OFF = 0, CHORD_UNISON = 25, CHORD_RANGE = 24 };
 enum InsertType { INS_OFF, INS_CRUSH, INS_COMPRESS, INS_CHORUS, INS_CLIP, INS_TYPE_COUNT };
 enum ClipShape { CLIP_HARD, CLIP_CUBIC, CLIP_TANH, CLIP_ATAN, CLIP_SHAPES };
@@ -131,7 +133,7 @@ static constexpr ParamDef PARAMS[] = {
     {"trk.vmode",    "VOICES",PS_TRACK,  PK_ENUM,    0,   2,   0, "",    0},
     // --- Spur: Quelle ---
     {"trk.machine",  "ENGINE", PS_TRACK,  PK_ENUM,    0,  15,   0, "",    0},
-    {"trk.smp",      "SAMPLE", PS_TRACK,  PK_ENUM,    0,  63,   0, "",    PF_LOCK},
+    {"trk.smp",      "SAMPLE SLOT", PS_TRACK,  PK_ENUM,    0,  63,   0, "",    PF_LOCK},
     {"trk.src.a",    "SRC A", PS_TRACK, PK_BIP,    0, 127,  64, "",    PF_LOCK | PF_MOD},
     {"trk.src.b",    "SRC B", PS_TRACK, PK_NUM,    0, 127,  64, "",    PF_LOCK | PF_MOD},
     {"trk.src.c",    "SRC C",  PS_TRACK,  PK_NUM,     0, 127,    0, "",    PF_LOCK | PF_MOD},
@@ -161,17 +163,17 @@ static constexpr ParamDef PARAMS[] = {
     {"trk.lfo1.wave",  "LFO1 WAVE",  PS_TRACK, PK_ENUM,    0,   6,   0, "",    PF_LOCK},
     {"trk.lfo1.rate",  "LFO1 RATE",  PS_TRACK, PK_ENUM,    0,  14,   7, "",    PF_LOCK | PF_MOD},
     {"trk.lfo1.depth", "LFO1 DEPTH", PS_TRACK, PK_BIP,     0, 127,  64, "",    PF_LOCK | PF_MOD},
-    {"trk.lfo1.dest",  "LFO1 DEST",  PS_TRACK, PK_ENUM,    0,  80,   0, "",    PF_LOCK},
+    {"trk.lfo1.dest",  "LFO1 DEST",  PS_TRACK, PK_ENUM,    0,  82,   0, "",    PF_LOCK},
     {"trk.lfo1.mode",  "LFO1 MODE",  PS_TRACK, PK_ENUM,    0,   4,   0, "",    0},
     {"trk.lfo2.wave",  "LFO2 WAVE",  PS_TRACK, PK_ENUM,    0,   6,   1, "",    PF_LOCK},
     {"trk.lfo2.rate",  "LFO2 RATE",  PS_TRACK, PK_ENUM,    0,  14,   4, "",    PF_LOCK | PF_MOD},
     {"trk.lfo2.depth", "LFO2 DEPTH", PS_TRACK, PK_BIP,     0, 127,  64, "",    PF_LOCK | PF_MOD},
-    {"trk.lfo2.dest",  "LFO2 DEST",  PS_TRACK, PK_ENUM,    0,  80,   0, "",    PF_LOCK},
+    {"trk.lfo2.dest",  "LFO2 DEST",  PS_TRACK, PK_ENUM,    0,  82,   0, "",    PF_LOCK},
     {"trk.lfo2.mode",  "LFO2 MODE",  PS_TRACK, PK_ENUM,    0,   4,   0, "",    0},
     {"trk.menv.atk",   "MENV ATK",   PS_TRACK, PK_TIME,    0, 127,   0, "s",   PF_LOCK},
     {"trk.menv.dec",   "MENV DEC",   PS_TRACK, PK_TIME,    0, 127,  60, "s",   PF_LOCK},
     {"trk.menv.depth", "MENV DEPTH", PS_TRACK, PK_BIP,     0, 127,  64, "",    PF_LOCK | PF_MOD},
-    {"trk.menv.dest",  "MENV DEST",  PS_TRACK, PK_ENUM,    0,  80,   0, "",    PF_LOCK},
+    {"trk.menv.dest",  "MENV DEST",  PS_TRACK, PK_ENUM,    0,  82,   0, "",    PF_LOCK},
     {"trk.lfo1.spd", "LFO1 SPEED", PS_TRACK, PK_NUM, -65, 63, -65, "", PF_LOCK},
     {"trk.lfo1.mult", "LFO1 MULT", PS_TRACK, PK_ENUM, 0, 23, 4, "", PF_LOCK},
     {"trk.lfo1.fade", "LFO1 FADE", PS_TRACK, PK_NUM, -64, 63, 0, "", PF_LOCK},
@@ -245,6 +247,10 @@ static constexpr ParamDef PARAMS[] = {
     FM_PARAMS("trk.fm2", "A"),
     FM_PARAMS("trk.fm3", "B1"),
     FM_PARAMS("trk.fm4", "B2"),
+    {"trk.sample.mode", "PLAY MODE", PS_TRACK, PK_ENUM, 0, 1, 0, "", 0},
+    {"trk.sample.bpm", "SAMPLE BPM", PS_TRACK, PK_NUM, 0, SAMPLE_BPM_MAX, SAMPLE_BPM_AUTO, "BPM", 0},
+    {"trk.sample.slice", "SLICE", PS_TRACK, PK_NUM, 0, 63, 0, "", PF_LOCK},
+    {"trk.sample.follow", "FOLLOW", PS_TRACK, PK_ENUM, 0, 2, 0, "", PF_LOCK},
     INSERT_PARAMS("trk.ins1"),
     INSERT_PARAMS("trk.ins2"),
 };
@@ -313,6 +319,11 @@ inline bool isExtendedVoiceParam(int p) {
 }
 
 inline bool sourceParamVisible(const char* id, int machine) {
+    if (!strncmp(id, "trk.sample.", 11)) {
+        const char* field = id + 11;
+        if (!strcmp(field, "slice") || !strcmp(field, "follow")) return machine == MACHINE_SLICE;
+        return machine == MACHINE_SAMPLE || machine == MACHINE_LEGACY_CHOP || machine == MACHINE_SLICE;
+    }
     if (!strncmp(id, "trk.poly", 8)) return machine == 0;
     if (!strncmp(id, "trk.fm", 6)) return machine == 1;
     return true;

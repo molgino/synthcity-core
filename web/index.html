@@ -528,7 +528,7 @@ textarea {
       <button id="seRemove">REMOVE MARKER</button>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <button id="seChop">USE IN CHOP</button>
+      <button id="seChop">USE SLICE PLAYBACK</button>
       <button id="seLinear">CREATE LINEAR LOCKS</button>
       <button id="seRandom">CREATE RANDOM LOCKS</button>
       <button id="seUndo">UNDO LOCKS</button>
@@ -543,7 +543,7 @@ textarea {
   <div class="dlg">
     <div class="lbl">Sample pool</div>
     <p class="hint">Files are decoded in the browser and put into the pool - a track plays
-      them with the <b>SMPL</b> machine. Note 60 plays at the original speed.</p>
+      them with the <b>SAMPLE</b> machine. Note 60 plays at the original speed.</p>
     <label class="filebtn" for="smpFile">CHOOSE FILES</label>
     <input type="file" id="smpFile" multiple
            accept=".wav,.wave,.aif,.aiff,.mp3,.m4a,.aac,.ogg,.oga,.opus,.flac,.caf,audio/wav,audio/x-wav,audio/wave,audio/aiff,audio/mpeg,audio/mp4,audio/ogg,audio/flac,audio/*">
@@ -598,7 +598,7 @@ const spurName = t => t === FXT ? 'FX' : 'Track ' + (t + 1);
 const GROUP = {note: 'Anschlag', vel: 'Anschlag', len: 'Anschlag', prob: 'Anschlag',
                cond: 'Anschlag', micro: 'Anschlag', ratchet: 'Anschlag', quant: 'Anschlag',
                nt2: 'Akkord', nt3: 'Akkord', nt4: 'Akkord', vmode: 'Akkord',
-               machine: 'Quelle', smp: 'Quelle', src: 'Quelle', poly1: 'Quelle', poly2: 'Quelle',
+               machine: 'Quelle', smp: 'Quelle', src: 'Quelle', sample: 'Quelle', poly1: 'Quelle', poly2: 'Quelle',
                fm1: 'Quelle', fm2: 'Quelle', fm3: 'Quelle', fm4: 'Quelle', flt: 'Filter', bw: 'Filter',
                amp: 'Huellkurve', vol: 'Ausgang', pan: 'Ausgang', send: 'Ausgang',
                lfo1: 'Mod', lfo2: 'Mod', menv: 'Mod', ins1: 'Inserts', ins2: 'Inserts'};
@@ -622,13 +622,21 @@ let insertReduction = [];
 let songView = {on: false, pos: -1};    // was der Klang-Kern ueber den Song sagt
 const P = [];                 // Parametertabelle, aus dem Kern gelesen
 const el = id => document.getElementById(id);
-const machOf = t => t >= FXT ? 0 : X.scGet(t, P.find(p => p.id === 'trk.machine').slot);
+const machOf = t => t >= FXT ? 0 : X.scTrackMachine?.(t) ?? X.scGet(t, P.find(p => p.id === 'trk.machine').slot);
+const slicePlayback = t => machOf(t) === 4 || machOf(t) === 5;
 // Folgt die gewaehlte Spur einer Tonart? Dann zaehlen Akkordnoten in Stufen der Leiter.
 const tonartAn = () => sel < FXT && X.scPatScale(X.scPattern()) > 0 && X.scGet(sel, P.find(q => q.id === 'trk.quant').slot) > 0;
 const STUFE = ['root', '2nd', '3rd', '4th', '5th', '6th', '7th'];
 const CHORD_UNISON = 25; // Encoded center in the project and Core.
 const isChordParam = p => /^trk\.nt[234]$/.test(p.id);
+const SAMPLE_BPM_ID = 'trk.sample.bpm';
+const isSampleSetting = p => /^trk\.sample\.(mode|bpm)$/.test(p.id);
+const sampleBpmAnchor = v => v >= 30 ? v : X.scSmpEstimatedBpm?.(X.scGet(sel, smpSlot())) || X.scTempoNow();
 const ptext = (p, v) => {
+  if (p.id === SAMPLE_BPM_ID && v === 1) {
+    const estimate = X.scSmpEstimatedBpm?.(X.scGet(sel, smpSlot()));
+    return estimate ? 'AUTO (' + estimate + ' BPM)' : 'AUTO';
+  }
   if (isChordParam(p) && tonartAn()) {
     if (v <= 0) return 'OFF';
     const d = v - CHORD_UNISON, np = P.find(q => q.id === 'trk.note');
@@ -1014,7 +1022,14 @@ function buildParams() {
   tabs.hidden = fxSpur;
   const order = ['lfo1', 'lfo2', 'menv'];
   const modOrder = p => order.indexOf(p.id.split('.')[1]);
-  const params = P.filter(p => modOrder(p) < 0).concat(P.filter(p => modOrder(p) >= 0).sort((a,b) => modOrder(a) - modOrder(b)));
+  const source = P.filter(p => /^trk\.(machine$|smp$|sample\.|src\.)/.test(p.id));
+  const primary = ['trk.machine', 'trk.smp', 'trk.sample.mode', 'trk.src.a', 'trk.src.b', 'trk.src.c',
+                   'trk.sample.slice', 'trk.sample.follow', 'trk.src.d', 'trk.src.e', 'trk.src.f', SAMPLE_BPM_ID];
+  const sourceOrder = p => primary.includes(p.id) ? primary.indexOf(p.id) : primary.length;
+  source.sort((a, b) => sourceOrder(a) - sourceOrder(b));
+  const params = P.filter(p => modOrder(p) < 0)
+    .flatMap(p => p.id === 'trk.machine' ? source : source.includes(p) ? [] : [p])
+    .concat(P.filter(p => modOrder(p) >= 0).sort((a,b) => modOrder(a) - modOrder(b)));
   for (const p of params) {
     if (p.scope !== 1 || fxSpur) continue;
     const key = p.id.split('.')[1];
@@ -1140,7 +1155,7 @@ const valueOf = p => {
     }
     return {v: X.scGet(-1, p.slot), locked: false};
   }
-  if (p.insert >= 0) return {v: X.scGet(sel, p.slot), locked: false};
+  if (p.insert >= 0 || isSampleSetting(p)) return {v: X.scGet(sel, p.slot), locked: false};
   if (sceneEdit >= 0) {
     const sv = X.scSceneGet(sceneEdit, sel, p.slot);
     if (sv !== -32768) return {v: sv, locked: false, scene: true};
@@ -1159,9 +1174,9 @@ function writeValue(p, v) {
     else cmd('scSet', -1, p.slot, v);
     return;
   }
-  if (p.insert >= 0) {
+  if (p.insert >= 0 || isSampleSetting(p)) {
     cmd('scSet', sel, p.slot, v);
-    if (p.id.endsWith('.type')) zeigeGruppe();
+    if (p.id.endsWith('.type') || p.id === 'trk.sample.mode') zeigeGruppe();
     return;
   }
   if (sceneEdit >= 0) { cmd('scSceneSet', sceneEdit, sel, p.slot, v); return; }
@@ -1183,7 +1198,7 @@ function openPick(p) {
   const n = X.scEnumCount(p.i) || ks;
   if (!n) return;
   const stufeV = i => ks ? Math.floor(i * 128 / ks + 64 / ks) : X.scEnumValue(p.i, i);
-  const curRaw = valueOf(p).v;
+  const curRaw = p.id === 'trk.machine' && slicePlayback(sel) ? 3 : valueOf(p).v;
   const cur = ks ? stufeV(Math.min(ks - 1, Math.floor(curRaw * ks / 128))) : curRaw;
   el('pickTitle').textContent = rowName(p) + '  ' + p.id;
   const list = el('pickList');
@@ -1268,6 +1283,16 @@ function openSmpPick(p) {
   el('pickTitle').textContent = 'SAMPLE  trk.smp';
   const list = el('pickList');
   list.innerHTML = '';
+  for (const [label, action] of [
+    ['SAMPLE MANAGER', () => { smpSel = cur; el('smpBtn').click(); }],
+    ['EDIT THIS SLOT', () => openSmpEditor(cur)]
+  ]) {
+    if (label === 'EDIT THIS SLOT' && !X.scSmpFrames(cur)) continue;
+    const button = document.createElement('button');
+    button.textContent = label;
+    button.onclick = () => { el('pick').close(); action(); };
+    list.appendChild(button);
+  }
   let letzter = 0;
   for (let i = 0; i < X.scSmpSlots(); i++) if (X.scSmpFrames(i)) letzter = i;
   for (let i = 0; i <= Math.min(letzter + 1, X.scSmpSlots() - 1); i++) {
@@ -1296,7 +1321,8 @@ function openFine(o) {
     let t1 = null, t2 = null;
     const stopp = () => { clearTimeout(t1); clearInterval(t2); t1 = t2 = null; };
     const schritt = () => {
-      const jetzt = fine.get();
+      const stored = fine.get();
+      const jetzt = fine.anchor ? fine.anchor(stored) : stored;
       // Eine Akkordnote, die aus ist, beginnt beim Antippen am Grundton (+-0) und geht von dort.
       const neu = (fine.chord && jetzt === 0) ? CHORD_UNISON + d
                 : (fine.stufe && Math.abs(d) === 1) ? X.scScaleStep(jetzt, d) : jetzt + d;
@@ -1323,15 +1349,17 @@ el('fineReset').onclick = () => { if (fine && fine.reset) { fine.reset(); fineSh
 function openFineParam(p) {
   const istNote = p.id === 'trk.note';
   const istNt = isChordParam(p);
+  const istBpm = p.id === SAMPLE_BPM_ID;
   const qSlot = P.find(q => q.id === 'trk.quant').slot;
   const stufen = istNote && X.scPatScale(X.scPattern()) > 0 && X.scGet(sel, qSlot) > 0;
   const projekt = p.scope !== 1;
-  const insert = p.insert >= 0;
+  const insert = p.insert >= 0 || isSampleSetting(p);
   const lockMode = !insert && !masterSetting(p) && lockStep >= 0 && (!projekt || sel === FXT), sceneMode = !insert && sceneEdit >= 0 && !projekt;
   openFine({
     title: rowName(p) + (sceneMode ? '  \u00b7  SCENE ' + 'AB'[sceneEdit]
                                    : lockMode ? '  \u00b7  LOCK STEP ' + (lockStep + 1) : '') + '   ' + p.id,
-    lo: istNt ? p.lo + 1 : p.lo, hi: p.hi,
+    lo: istBpm ? 30 : istNt ? p.lo + 1 : p.lo, hi: p.hi,
+    anchor: istBpm ? sampleBpmAnchor : null,
     get: () => valueOf(p).v,
     set: v => writeValue(p, v),
     text: v => ptext(p, v),
@@ -1346,8 +1374,8 @@ function openFineParam(p) {
     hint: istNote ? (stufen ? 'One step is one scale degree in ' + str(X.scNoteName(X.scPatRoot(X.scPattern()))) + ' '
                               + str(X.scScaleName(X.scPatScale(X.scPattern()))).toLowerCase() + '.'
                             : 'One step is one semitone.')
-        : istNt ? ((tonartAn() ? 'Interval in scale degrees.' : 'Interval in semitones.') + ' 0 doubles NOTE.') : '',
-    resetLabel: sceneMode ? 'CLEAR SCENE VALUE' : lockMode ? 'CLEAR LOCK' : istNt ? 'OFF' : 'DEFAULT',
+        : istBpm ? 'Auto estimates tempo from the selected sample.' : istNt ? ((tonartAn() ? 'Interval in scale degrees.' : 'Interval in semitones.') + ' 0 doubles NOTE.') : '',
+    resetLabel: istBpm ? 'AUTO' : sceneMode ? 'CLEAR SCENE VALUE' : lockMode ? 'CLEAR LOCK' : istNt ? 'OFF' : 'DEFAULT',
     reset: () => {
       if (sceneMode) cmd('scSceneClear', sceneEdit, sel, p.slot);
       else if (lockMode) cmd('scLockClear', sel, lockStep, p.slot);
@@ -1365,6 +1393,7 @@ function dragRow(row, p) {
     id = e.pointerId; x0 = e.clientX; y0 = e.clientY; mode = 0;
     start = valueOf(p).v;
     if (isChordParam(p) && start === 0) start = CHORD_UNISON;
+    if (p.id === SAMPLE_BPM_ID) start = sampleBpmAnchor(start);
   }, {passive: true});
   row.addEventListener('pointermove', e => {
     if (id === null || e.pointerId !== id) return;
@@ -1376,7 +1405,7 @@ function dragRow(row, p) {
     }
     if (mode !== 1) return;
     e.preventDefault();
-    const lo = isChordParam(p) ? p.lo + 1 : p.lo;
+    const lo = p.id === SAMPLE_BPM_ID ? 30 : isChordParam(p) ? p.lo + 1 : p.lo;
     writeValue(p, Math.max(lo, start + (dx / 180) * (p.hi - lo)));
     paint();
   });
@@ -1760,7 +1789,7 @@ function smpSendToAudio(i) {
   const data = new Float32Array(X.memory.buffer, X.scSmpData(i), n * ch).slice();
   node.port.postMessage({fn: 'smp', slot: i, data, rate: X.scSmpRate(i), ch,
                          name: new TextEncoder().encode(str(X.scSmpName(i))),
-                         loop: X.scSmpLoop(i)});
+                         loop: X.scSmpLoop(i), bpm: X.scSmpEstimatedBpm?.(i)});
   // Der Ausschnitt gehoert dazu - sonst spielt der Klang-Kern das ganze Sample.
   node.port.postMessage({fn: 'scSmpSetTrim', args: [i, X.scSmpA(i), X.scSmpB(i), X.scSmpLA(i), X.scSmpLoop(i)]});
 }
@@ -1929,13 +1958,14 @@ function seDraw() {
   for (const b of document.querySelectorAll('.semark button')) b.classList.toggle('on', b.dataset.m === se.mark);
   document.querySelector('.semark button[data-m=la]').disabled = !se.loop;
 }
-el('smpEditBtn').onclick = () => {
-  if (!X.scSmpFrames(smpSel)) { el('recInfo').textContent = 'Load a sample into this slot first.'; return; }
-  seLoad(smpSel);
-  el('seTitle').textContent = 'SAMPLE ' + (smpSel + 1) + '  ' + str(X.scSmpName(smpSel));
+function openSmpEditor(slot) {
+  if (!X.scSmpFrames(slot)) { el('recInfo').textContent = 'Load a sample into this slot first.'; return; }
+  seLoad(slot);
+  el('seTitle').textContent = 'SAMPLE ' + (slot + 1) + '  ' + str(X.scSmpName(slot));
   el('smpEdit').showModal();
   requestAnimationFrame(seDraw);
-};
+}
+el('smpEditBtn').onclick = () => openSmpEditor(smpSel);
 for (const b of document.querySelectorAll('.semark button')) b.onclick = () => { se.mark = b.dataset.m; seDraw(); };
 for (const b of document.querySelectorAll('#smpEdit .finebtns button')) {
   const d = +b.dataset.d;
@@ -2003,14 +2033,15 @@ el('seMove').onclick = () => { cmd('scSmpCutMove', se.slot, se.marker, se.cursor
 el('seRemove').onclick = () => { cmd('scSmpCutRemove', se.slot, se.marker); seDraw(); };
 el('seChop').onclick = () => {
   if (sel >= FXT) return;
-  if (machOf(sel) !== 4) cmd('scSetMachine', sel, 4);
+  if (X.scSetSampleMode) cmd('scSetSampleMode', sel, 1);
+  else cmd('scSetMachine', sel, 4);
   cmd('scSet', sel, smpSlot(), se.slot);
   buildParams();
-  el('seInfo').textContent = 'Assigned to track ' + (sel + 1) + ' as CHOP.';
+  el('seInfo').textContent = 'Assigned to track ' + (sel + 1) + ' for Slice playback.';
 };
 function seLocks(seed) {
-  if (sel >= FXT || machOf(sel) !== 4 || X.scGet(sel, smpSlot()) !== se.slot) {
-    el('seInfo').textContent = 'Use this sample in CHOP on the selected track first.';
+  if (sel >= FXT || !slicePlayback(sel) || X.scGet(sel, smpSlot()) !== se.slot) {
+    el('seInfo').textContent = 'Assign this slot with Slice playback first.';
     return;
   }
   const count = X.scSliceLocks(sel, seed);
@@ -2028,8 +2059,9 @@ el('seUndo').onclick = () => {
   if (node) {
     // Audio may have been started after locks were created, so sync the actual restored values.
     for (let i = 0; i < X.scTrackLen(sel); i++) {
-      for (const id of ['trk.src.b', 'trk.src.c']) {
-        const slot = P.find(p => p.id === id).slot;
+      for (const follow of [0, 1]) {
+        const slot = X.scSliceLockSlot ? X.scSliceLockSlot(sel, follow) : P.find(p => p.id === (follow ? 'trk.src.c' : 'trk.src.b')).slot;
+        if (slot < 0) continue;
         const value = X.scLockGet(sel, i, slot);
         let slide = 0;
         for (let j = 0; j < X.scNLocks(sel, i); j++)
@@ -2068,7 +2100,7 @@ el('smpClear').onclick = () => {
 };
 // Ein Sample auf die gewaehlte Spur legen heisst: Machine auf SMPL und den Platz einstellen.
 el('smpUse').onclick = () => {
-  cmd('scSetMachine', sel, 3);
+  if (!X.scMachUsesSmp(machOf(sel))) cmd('scSetMachine', sel, 3);
   cmd('scSet', sel, smpSlot(), smpSel);
   el('smp').close();
   buildParams();
@@ -2097,6 +2129,7 @@ function smpPut(slot, data, rate, ch, name) {
   const nm = new Uint8Array(X.memory.buffer, np, nb.length + 1);
   nm.set(nb); nm[nb.length] = 0;
   if (!X.scSmpSet(slot, dp, data.length / ch, rate, np, 0, ch)) return false;
+  X.scSmpSetEstimate?.(slot, X.scSmpEstimateBpm(dp, data.length / ch, rate, ch));
   smpSendToAudio(slot);
   return true;
 }

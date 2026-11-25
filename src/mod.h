@@ -91,7 +91,8 @@ static const ModDest MOD_DESTS[] = {
     {"OP B2 ATK", "trk.fm4.atk", 127, true},
     {"OP B2 DEC", "trk.fm4.dec", 127, true},
     {"OP B2 SUS", "trk.fm4.sus", 100, true},
-    {"OP B2 REL", "trk.fm4.rel", 127, true}};
+    {"OP B2 REL", "trk.fm4.rel", 127, true},
+    {"SLICE", "trk.sample.slice", 63, true}, {"FOLLOW", "trk.sample.follow", 2, true}};
 enum { MOD_NDEST = (int)(sizeof MOD_DESTS / sizeof *MOD_DESTS) };
 inline int modDestSlot(int d) {
     static int s[MOD_NDEST] = {-2};

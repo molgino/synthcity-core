@@ -11,6 +11,39 @@
 #include "insert.h"
 #include "master.h"
 
+// Convert an older CHOP track only when its play mode is explicitly changed.
+inline void setSampleMode(Track& track, int mode, SceneTrack* a = nullptr, SceneTrack* b = nullptr) {
+    int16_t* params = track.p;
+    if (params[machineSlot()] == MACHINE_LEGACY_CHOP) {
+        if (mode) return;
+        const int fromSlice = MachChop::sliceSlot(true), fromFollow = MachChop::followSlot(true);
+        const int toSlice = MachChop::sliceSlot(false), toFollow = MachChop::followSlot(false);
+        params[toSlice] = params[fromSlice] & 63;
+        params[toFollow] = MachSmpl::stufe(params[fromFollow], 3);
+        const int oldGrid = knobSlot(MachChop::C_SLICES);
+        auto migrate = [&](Lock* locks, uint8_t& count) {
+            for (int i = 0; i < count;) {
+                Lock& lock = locks[i];
+                if (lock.slot == oldGrid) {
+                    for (int j = i + 1; j < count; j++) locks[j - 1] = locks[j];
+                    count--;
+                    continue;
+                }
+                if (lock.slot == fromSlice) { lock.slot = toSlice; lock.val &= 63; }
+                else if (lock.slot == fromFollow) { lock.slot = toFollow; lock.val = MachSmpl::stufe(lock.val, 3); }
+                i++;
+            }
+        };
+        for (auto& step : track.s) migrate(step.lock, step.nLock);
+        if (a) migrate(a->v, a->n);
+        if (b) migrate(b->v, b->n);
+        const Machine* normal = machineAt(MACHINE_SAMPLE);
+        for (int k = 0; k < 3; k++) params[knobSlot(k)] = (int16_t)normal->def(k);
+        params[machineSlot()] = MACHINE_SAMPLE;
+    } else if (params[machineSlot()] != MACHINE_SAMPLE) machineSelect(params, MACHINE_SAMPLE);
+    params[sampleModeSlot()] = mode ? 1 : 0;
+}
+
 enum { NVOICES = 32, CTL = 16, NRAMP = 8 };   // CTL: Steuerrate in Samples (Zweierpotenz)
 
 // Ein gleitender Wert: Slides machen aus der Stufe zwischen zwei Locks eine Rampe.
@@ -677,10 +710,10 @@ struct Engine : Sink {
         snap[paramSlot(paramFind("trk.send.a"))] = 0;
         snap[paramSlot(paramFind("trk.send.b"))] = 0;
         int i = pick();
-        int machine = slice < 0 ? 3 : 4;
+        int machine = slice < 0 ? MACHINE_SAMPLE : MACHINE_SLICE;
         if (slice >= 0) {
             for (int k = 0; k < MACH_KNOBS; k++) snap[knobSlot(k)] = (float)machineAt(machine)->def(k);
-            snap[knobSlot(MachChop::C_SLICE)] = (float)slice;
+            snap[MachChop::sliceSlot(false)] = (float)slice;
 
         }
         v[i].modTime = sampleClock;
@@ -814,7 +847,7 @@ struct Engine : Sink {
         const Pattern& ptq = P.pat[pat];
         const bool rastet = ptq.scale > 0 && snap[sQuant] > 0.5f;
         if (rastet) snap[sNote] = (float)scaleQuant((int)(snap[sNote] + 0.5f), ptq.root, ptq.scale);
-        int mi = tr.p[paramSlot(paramFind("trk.machine"))];
+        int mi = trackMachine(tr.p);
         static const int sMode = paramSlot(paramFind("trk.vmode"));
         static const int sNt[3] = {paramSlot(paramFind("trk.nt2")), paramSlot(paramFind("trk.nt3")),
                                    paramSlot(paramFind("trk.nt4"))};

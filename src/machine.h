@@ -387,7 +387,7 @@ inline float& machTempo() { static float t = 120.0f; return t; }
 // Abspielen mit Loop (wie im Editor, aus, vorwaerts, Ping-Pong), rueckwaerts, mit Laenge und
 // grober Stimmung - und WARP: REPITCH laesst das Sample im Tempo laufen wie ein Band (die
 // Tonhoehe geht mit), TIME dehnt es granular, so dass Tempo und Tonhoehe getrennt sind - die
-// Note stimmt dann nur noch, die Dauer kommt aus BEATS und dem Tempo.
+// Note stimmt dann nur noch, die Dauer kommt aus Sample-BPM und Projekt-Tempo.
 struct MachSmpl : Machine {
     struct St {
         double pos;                 // Lesekopf (Quelle, in Bildern)
@@ -421,10 +421,10 @@ struct MachSmpl : Machine {
 
     // Alle Grundwerte so, dass ein altes Projekt klingt wie vorher.
     int def(int k) const override { static const int d[MACH_KNOBS] = {0, 64, 0, 64, 0, 0, 0, 0}; return d[k & 7]; }
-    const char* name() const override { return "SMPL"; }
+    const char* name() const override { return "SAMPLE"; }
     bool usesSample() const override { return true; }
     const char* label(int k) const override {
-        static const char* l[MACH_KNOBS] = {"START", "FINE", "LOOP", "TUNE", "REVERSE", "WARP", "BEATS", "LENGTH"};
+        static const char* l[MACH_KNOBS] = {"START", "FINE", "LOOP", "TUNE", "REVERSE", "WARP", "", "LENGTH"};
         return l[k & 7];
     }
     // Regler mit festen Stufen: die Oberflaeche zeigt sie als Liste.
@@ -447,6 +447,7 @@ struct MachSmpl : Machine {
         default:      if (v < 0.5f) snprintf(out, n, "FULL"); else snprintf(out, n, "%.0f %%", (double)(v * 100.0f / 127.0f)); return;
         }
     }
+    static int slotBpm() { static const int s = paramSlot(paramFind("trk.sample.bpm")); return s; }
     static int slotSmp(){ static const int s = paramSlot(paramFind("trk.smp")); return s; }
 
     void start(MState& m, float hz, float vel, const float* p, float sr,
@@ -547,15 +548,22 @@ struct MachSmpl : Machine {
         int warp = stufe(kv(p, K_WARP, 0), 3);
         double zeit = 1.0;                      // Faktor, damit der Bereich BEATS im Tempo dauert
         if (warp) {
-            float sek = (float)st.wspan / rate;
-            float bpm = machTempo() < 20.0f ? 20.0f : machTempo();
-            float beats = beatsOf(stufe(kv(p, K_BEATS, 0), 10));
-            if (beats <= 0.0f) {                // AUTO: die naechste Zweierpotenz an Beats
-                float b = sek * bpm / 60.0f;
-                beats = 0.25f;
-                while (beats * 1.4142f < b && beats < 256.0f) beats *= 2.0f;
+            const float bpm = machTempo() < 20.0f ? 20.0f : machTempo();
+            const float source = p[slotBpm()];
+            if (source >= SAMPLE_BPM_MIN) zeit = bpm / source;
+            else if (source > SAMPLE_BPM_LEGACY) {
+                const int estimated = pool.empty(k) ? 0 : pool.s[k].estimatedBpm;
+                if (estimated > 0) zeit = bpm / estimated;
+            } else {
+                // Old project files retain their explicit or inferred beat duration.
+                const float seconds = (float)st.wspan / rate;
+                float beats = beatsOf(stufe(kv(p, K_BEATS, 0), 10));
+                if (beats <= 0.0f) {
+                    beats = 0.25f;
+                    while (beats * 1.4142f < seconds * bpm / 60.0f && beats < 256.0f) beats *= 2.0f;
+                }
+                zeit = seconds / (beats * 60.0f / bpm);
             }
-            zeit = sek / (beats * 60.0f / bpm);
         }
         if (warp != 2) {                        // OFF oder REPITCH: ein Lesekopf, wie ein Band
             double step = (double)base * noteR * zeit;
@@ -596,6 +604,16 @@ struct MachSmpl : Machine {
 // bzw. ein zufaelliges. Abgespielt wird wie bei SMPL; WARP und BEATS beziehen sich auf das
 // ganze Sample, damit jedes Stueck im Tempo genau seinen Anteil dauert.
 struct MachChop : MachSmpl {
+    const bool legacy;
+    explicit MachChop(bool legacyGrid = true) : legacy(legacyGrid) {}
+    static int sliceSlot(bool legacy) {
+        static const int slot = paramSlot(paramFind("trk.sample.slice"));
+        return legacy ? knobSlot(K_FINE) : slot;
+    }
+    static int followSlot(bool legacy) {
+        static const int slot = paramSlot(paramFind("trk.sample.follow"));
+        return legacy ? knobSlot(K_LOOP) : slot;
+    }
     enum { C_SLICES, C_SLICE, C_FOLLOW, C_TUNE, C_REV, C_WARP, C_BEATS, C_LEN };
     int kn(int role) const override {
         switch (role) {
@@ -604,9 +622,10 @@ struct MachChop : MachSmpl {
         }
     }
     static int nSlices(float v) { static const int n[6] = {2, 4, 8, 16, 32, 64}; return n[stufe(v, 6)]; }
-    const char* name() const override { return "CHOP"; }
+    const char* name() const override { return "SAMPLE"; }
     const char* label(int k) const override {
-        static const char* l[MACH_KNOBS] = {"SLICES", "SLICE", "FOLLOW", "TUNE", "REVERSE", "WARP", "BEATS", "LENGTH"};
+        static const char* l[MACH_KNOBS] = {"", "SLICE", "FOLLOW", "TUNE", "REVERSE", "WARP", "", "LENGTH"};
+        if (!legacy && (k == C_SLICE || k == C_FOLLOW)) return "";
         return l[k & 7];
     }
     int def(int k) const override { static const int d[MACH_KNOBS] = {3 * 128 / 6 + 10, 0, 0, 64, 0, 0, 0, 0}; return d[k & 7]; }
@@ -633,10 +652,10 @@ struct MachChop : MachSmpl {
         if (pool.empty(k)) return;
         const SamplePool::Slot& sl = pool.s[k];
         int a = sl.a, e = sl.end(), len = e - a;
-        int grid = nSlices(knob(p, C_SLICES));
-        int ns = sl.sliceCount(grid);
-        int follow = stufe(knob(p, C_FOLLOW), 3);
-        int i = (int)(knob(p, C_SLICE) + 0.5f);
+        const int grid = legacy ? nSlices(knob(p, C_SLICES)) : 1;
+        const int ns = sl.sliceCount(grid);
+        const int follow = legacy ? stufe(p[followSlot(true)], 3) : (int)(p[followSlot(false)] + 0.5f);
+        int i = (int)(p[sliceSlot(legacy)] + 0.5f);
         if (follow == 1) i = m.step;
         else if (follow == 2) { uint32_t r = m.seed | 1u; i = (int)(machRng(r) % (uint32_t)ns); }
         i = ((i % ns) + ns) % ns;
@@ -652,19 +671,35 @@ inline const Machine* machineAt(int i) {
     static const MachFm   fm;
     static const MachDrum drum;
     static const MachSmpl smpl;
-    static const MachChop chop;
-    static const Machine* const all[] = { &poly, &fm, &drum, &smpl, &chop };
+    static const MachChop legacyChop, slice(false);
+    static const Machine* const all[] = { &poly, &fm, &drum, &smpl, &legacyChop, &slice };
     enum { N = (int)(sizeof all / sizeof *all) };
     if (i < 0 || i >= N) i = 0;
     return all[i];
 }
-inline int machineCount() { return 5; }
+inline int machineCount() { return 6; }
+
+inline int sampleModeSlot() { static const int s = paramSlot(paramFind("trk.sample.mode")); return s; }
+inline int machineSlot() { static const int s = paramSlot(paramFind("trk.machine")); return s; }
+
+inline int trackMachine(const int16_t* params) {
+    const int machine = params[machineSlot()];
+    if (machine < 0 || machine > MACHINE_LEGACY_CHOP) return 0;
+    return machine == MACHINE_SAMPLE && params[sampleModeSlot()] ? MACHINE_SLICE : machine;
+}
+inline bool slicePlayback(int machine) { return machine == MACHINE_SLICE || machine == MACHINE_LEGACY_CHOP; }
 
 // Eine andere Machine waehlen heisst: ihre beiden Regler fangen bei IHREN Grundwerten an.
 // Sonst steht der Sampler beim Umschalten mitten im Sample.
 inline void machineSelect(int16_t* trackParams, int mach) {
-    static const int sM = paramSlot(paramFind("trk.machine"));
+    const int sM = machineSlot();
+    const int previous = trackParams[sM];
+    if (mach == MACHINE_SAMPLE && (previous == MACHINE_SAMPLE || previous == MACHINE_LEGACY_CHOP)) return;
     const Machine* m = machineAt(mach);
     trackParams[sM] = (int16_t)mach;
+    if (mach == MACHINE_SAMPLE) {
+        trackParams[sampleModeSlot()] = 0;
+        trackParams[MachSmpl::slotBpm()] = SAMPLE_BPM_AUTO;
+    }
     for (int k = 0; k < MACH_KNOBS; k++) trackParams[knobSlot(k)] = (int16_t)m->def(k);
 }

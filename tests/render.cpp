@@ -1306,13 +1306,14 @@ int main() {
         static float smp[48000];
         for (int i = 0; i < 48000; i++) smp[i] = sinf(6.2831853f * (i < 24000 ? 440.0f : 880.0f) * i / 48000.0f) * 0.8f;
         static float b[72000 * 2];
-        auto spiel = [&](std::initializer_list<std::pair<int, int>> knoepfe, int frames) {
+        auto spiel = [&](std::initializer_list<std::pair<int, int>> knoepfe, int frames, int sourceBpm = SAMPLE_BPM_LEGACY) {
             e.prepare(48000.0f);
-            e.pool.set(0, smp, 48000, 48000.0f, "zwei", false);
+            e.pool.set(0, smp, 48000, 48000.0f, "zwei", false, 1, 240);
             setupBeat(e, 60);
             Track& t = e.P.pat[0].t[0];
             for (int st = 1; st < 16; st++) t.s[st].on = 0;
-            machineSelect(t.p, 3); t.p[SL("trk.smp")] = 0;
+            machineSelect(t.p, MACHINE_SAMPLE); t.p[SL("trk.smp")] = 0;
+            t.p[MachSmpl::slotBpm()] = sourceBpm;
             t.p[SL("trk.flt.freq")] = 127; t.p[SL("trk.amp.sus")] = 100; t.p[SL("trk.amp.dec")] = 127;
             t.p[SL("trk.len")] = 107;                         // 22 Steps: laenger als alles hier
             for (auto& kv : knoepfe) t.p[knobSlot(kv.first)] = (int16_t)kv.second;
@@ -1349,7 +1350,11 @@ int main() {
         chk(rms(b + 30000 * 2, 8000) < 0.01f, "WARP TIME schnell: das Sample dauert nicht nur einen Beat");
         // AUTO bei 120 bpm: 1 s = 2 Beats - REPITCH laesst es unveraendert
         spiel({{5, stufe(1, 3)}}, 12000);
-        chk(f(2000, 440) > f(2000, 220) * 8.0f, "BEATS AUTO trifft die Laenge nicht");
+        chk(f(2000, 440) > f(2000, 220) * 8.0f, "Legacy auto beats keep their timing");
+        spiel({{5, stufe(1, 3)}}, 12000, SAMPLE_BPM_AUTO);
+        chk(f(2000, 220) > f(2000, 440) * 8.0f, "Automatic warp uses the file's estimated BPM");
+        spiel({{5, stufe(1, 3)}}, 12000, 120);
+        chk(f(2000, 440) > f(2000, 220) * 8.0f, "Manual BPM overrides the automatic warp estimate");
     }
 
     grp("CHOP: Stuecke, FOLLOW STEP, Warp");
@@ -1366,14 +1371,15 @@ int main() {
             setupBeat(e, 60);
             Track& t = e.P.pat[0].t[0];
             for (int st = 0; st < 16; st++) t.s[st].on = alleSteps || st == 0;
-            machineSelect(t.p, 4); t.p[SL("trk.smp")] = 0;
+            machineSelect(t.p, MACHINE_LEGACY_CHOP); t.p[SL("trk.smp")] = 0;
+            t.p[MachSmpl::slotBpm()] = SAMPLE_BPM_LEGACY;
             t.p[SL("trk.flt.freq")] = 127; t.p[SL("trk.amp.sus")] = 100; t.p[SL("trk.amp.dec")] = 127;
             t.p[SL("trk.len")] = (int16_t)noteLen; t.p[SL("trk.amp.rel")] = 0;
             for (auto& kv : knoepfe) t.p[knobSlot(kv.first)] = (int16_t)kv.second;
             e.start(); e.render(b, frames);
         };
         auto f = [&](int von, int n, float hz) { return bin(b + von * 2, n, hz, 48000.0f); };
-        chk(!strcmp(machineAt(4)->name(), "CHOP"), "Machine 4 heisst nicht CHOP");
+        chk(!strcmp(machineAt(MACHINE_LEGACY_CHOP)->name(), "SAMPLE"), "Legacy slice playback displays SAMPLE");
         // 4 Stuecke, Stueck 3 (Index 2) = 440 Hz
         spiel({{0, stufe(1, 6)}, {1, 2}}, 6000, false);
         chk(f(500, 4000, 440) > f(500, 4000, 220) * 8.0f && f(500, 4000, 440) > f(500, 4000, 660) * 8.0f, "SLICE 3 von 4 spielt nicht das dritte Stueck");
@@ -1653,8 +1659,10 @@ int main() {
         const int dest = modDestOfSlot(SL("trk.src.a"));
         const int p = paramFind("trk.lfo1.dest");
         char text[64];
-        paramText(PARAMS[p], (float)dest, text, sizeof text, 4);
-        chk(!strcmp(text, machineAt(4)->label(0)), "CHOP destination does not show its real control name");
+        paramText(PARAMS[p], (float)dest, text, sizeof text, MACHINE_LEGACY_CHOP);
+        chk(!strcmp(text, "UNAVAILABLE"), "The legacy grid count is hidden from modulation destinations");
+        paramText(PARAMS[p], (float)modDestOfSlot(SL("trk.sample.slice")), text, sizeof text, MACHINE_SLICE);
+        chk(!strcmp(text, "SLICE"), "Slice playback exposes its own modulation destination");
         paramText(PARAMS[paramFind("trk.menv.dest")], (float)dest, text, sizeof text, 0);
         chk(!strcmp(text, machineAt(0)->label(0)), "Envelope destination does not show POLY's real control name");
 

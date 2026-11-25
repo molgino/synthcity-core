@@ -15,7 +15,7 @@ Kein Framework, keine Abhängigkeiten, keine STL-Container im Kern — C++17 und
 | Scheduler in Samples, Conditions, Micro-Timing, Ratchets | `src/seq.h` | steht |
 | Lock-freie Befehls-Queue (Oberfläche → Audio) | `src/queue.h` | steht |
 | DSP-Bausteine: PolyBLEP, TPT-Filter, Hüllkurve, Skalen | `src/dsp.h` | steht |
-| Machines: `POLY`, `FM`, `DRUM`, `SMPL` — hinter denselben Reglern | `src/machine.h` | steht |
+| Machines: `POLY`, `FM`, `DRUM`, `SAMPLE` | `src/machine.h` | steht |
 | Sample-Vorrat (64 Plätze, mono **und stereo**), Aufnahme | `src/sample.h` | steht |
 | 16 Patterns, Wechsel im Takt, kopieren und leeren | `src/engine.h`, `src/model.h` | steht |
 | Song: Kette aus Patterns mit Wiederholungen | `src/engine.h`, `src/model.h` | steht |
@@ -182,19 +182,13 @@ Machine, unbenutzte blendet die Oberfläche aus. Belegt so, dass **alte Projekte
   RATIO A/B, LEVEL A/B, DETUNE, **MOD DECAY** (die Modulatoren klingen ab: hell im Anschlag,
   weich im Ausklang; OFF = wie die alte 2-Operator-FM).
 - **DRUM:** dazu SWEEP T (35–200 ms) und DRIVE.
-- **SMPL — der Sampler:** START, FINE, **LOOP** (SLOT = wie im Editor / OFF / FORWARD /
-  PING-PONG), **TUNE** (±24 Halbtöne), **REVERSE**, **LENGTH** (FULL oder % ab START) und
-  **WARP**: *REPITCH* lässt das Sample im Tempo laufen wie ein Band (Tonhöhe geht mit), *TIME*
-  dehnt es granular (WSOLA: zwei 70-ms-Körner mit Hann-Fenster, jedes neue Korn sucht ±8 ms die
-  am besten passende Stelle) — Dauer = **BEATS** im aktuellen Tempo, Tonhöhe nur von Note/TUNE.
-  BEATS AUTO nimmt die nächste Zweierpotenz. Klang-Tests: rückwärts, Oktave, Loop-Ende,
-  Ping-Pong, halbes Tempo ohne Tonhöhenänderung (gemessen 440,0 Hz, Reinheit 99 %).
-- **CHOP — Sample in Stücke:** SLICES (2–64 gleiche Stücke), SLICE (welches, lockbar je Step),
-  **FOLLOW** (OFF / STEP: Step n spielt Stück n / RANDOM), TUNE, REVERSE, WARP, BEATS, LENGTH.
-  Teilt sich die Wiedergabe mit SMPL; WARP und BEATS beziehen sich aufs ganze Sample, so dauert
-  jedes Stück im Tempo genau seinen Anteil. Klang-Tests: drittes von vier Stücken, Stückende,
-  FOLLOW STEP (Mutation wird rot), gedehnte Stücke ohne Tonhöhenänderung.
-- Regler mit festen Stufen (LOOP, REVERSE, WARP, BEATS, SLICES, FOLLOW, FM ALGO, RATIO) öffnen eine Liste.
+- **SAMPLE:** Im Play Mode **NORMAL** stehen START, FINE und **LOOP** (SLOT / OFF / FORWARD /
+  PING-PONG) zur Verfügung. Im Play Mode **SLICES** wählen **SLICE** und **FOLLOW** (OFF / STEP /
+  RANDOM), welcher Abschnitt zwischen den Markern erklingt. SLICE lässt sich pro Step locken.
+- Beide Play Modes teilen TUNE (±24 Halbtöne), REVERSE, LENGTH und WARP. **REPITCH** passt das
+  Tempo mitsamt der Tonhöhe an, **TIME** nutzt WSOLA und hält die Tonhöhe. **SAMPLE BPM**
+  bestimmt das Ausgangstempo. Jeder Slice dauert im Projekttempo den entsprechenden Anteil.
+- Regler mit festen Stufen (LOOP, REVERSE, WARP, PLAY MODE, FOLLOW, FM ALGO, RATIO) öffnen eine Liste.
 - **Filtertyp LADDER 24:** vier TPT-Einpoler mit Rückkopplung und Sättigung im Eingang — der
   analoge 24-dB-Tiefpass, stabil bis zur Selbstoszillation.
 - **Base-Width** auf jeder Spur (Reiter FLTR): BASE = Hochpass, WIDTH = Tiefpass so viele Oktaven
@@ -401,7 +395,7 @@ bei stehender Uhr, unabhängig von dem, was eine Spur eingestellt hat.
 
 ## Machines und Effekte
 
-**Drei Machines hinter denselben zwei Reglern** — das Elektron-Prinzip. Dieselbe Zahl heißt je
+**Vier Machines hinter denselben Reglern** — das Elektron-Prinzip. Dieselbe Zahl heißt je
 Machine etwas anderes, und *die Machine sagt, was sie heißt*:
 
 | Machine | Regler A | Regler B | Wert 64 zeigt |
@@ -409,7 +403,7 @@ Machine etwas anderes, und *die Machine sagt, was sie heißt*:
 | `POLY` | DTUN | SHAPE | `+0.00 Halbt.` |
 | `FM` | RATIO | INDEX | `5.00 : 1` |
 | `DRUM` | SWEEP | RAUSCH | `24 Halbt.` |
-| `SMPL` | START | FEIN | `50 %` |
+| `SAMPLE` (NORMAL) | START | FEIN | `50 %` |
 
 Eine andere Machine zu wählen setzt **ihre** beiden Grundwerte — sonst stünde der Sampler beim
 Umschalten mitten im Sample statt an seinem Anfang. (Derselbe Fehler wie in SYNTH CITY, dort
@@ -700,7 +694,7 @@ Audio-Last laufend (CPU %).
 
 ## Modulation und Mastering
 
-**MOD** zeigt die Namen der gewählten Machine als SRC-Ziele, etwa **SLICE** bei CHOP.
+**MOD** zeigt die Namen der gewählten Machine als SRC-Ziele, etwa **SLICE** bei SAMPLE im Slice-Modus.
 Die beiden LFOs bieten **Free**, **Trig**, **Hold**, **One** und **Half**, Startphase,
 bipolaren Fade und rückwärts laufende Wellenformen. **Speed** mit **Mult** kann ans Tempo
 gekoppelt sein oder bei 120 BPM laufen. **Note Rate** im Speed-Regler lässt die bisherigen
@@ -782,16 +776,29 @@ Send-Locks pro Stimme erhalten bleiben. Der Einzelspur-Recorder nimmt hinter den
 und ohne Send-Effekte auf. Einstellungen sind pro Pattern und Spur gespeichert. Beide
 Inserts sind beim Laden alter Projekte aus.
 
-## Sample-Editor und Recorder
+## SAMPLE, Sample-Editor und Recorder
 
-**R36S:** Im SELECT-Menü öffnet **Sample editor** den Sample-Slot der gewählten Spur.
+Mit **SRC → ENGINE → SAMPLE** spielt die Spur den gewählten **SAMPLE SLOT**. **PLAY MODE**
+schaltet zwischen **NORMAL** und **SLICES**. Slice-Playback verwendet die Marker aus dem
+Sample-Editor. Ohne Marker ist der ganze Ausschnitt ein Slice.
+
+Auf dem R36S öffnet **SELECT + X** am **SAMPLE SLOT** den Sample Manager für genau diesen Slot.
+**SELECT + Y** öffnet auf einer SAMPLE-Spur direkt den Editor. Bei einem leeren Slot öffnet
+sich der Manager. Im Manager öffnet **Y** den Editor für das geladene Sample.
+
+Bei **WARP** oder **SAMPLE BPM** öffnet **SELECT + X** die BPM-Eingabe. Links/rechts ändert
+den Wert um 1 BPM, hoch/runter um 10 BPM. **X** wählt **AUTO**, **A** übernimmt.
+Auto schätzt das Tempo beim Import und verwendet für kurze Loops zusätzlich deren Länge.
+**REPITCH** ändert Tempo und Tonhöhe gemeinsam, **TIME** hält die Tonhöhe. Bestehende
+Projekte laden ihre früheren Beat-Einstellungen als **LEGACY**.
+
 Links/rechts bewegt den Cursor, L2 verkleinert die Schritte und R2 schaltet auf einzelne
 Frames. L1/R1 wählt einen Marker, X hört den Slice am Cursor vor. Mit A lassen sich
 ein gleichmäßiges Raster oder Marker aus Transienten erzeugen und Marker manuell setzen,
 verschieben oder löschen. Im Browser stehen die gleichen Befehle im Wellenform-Editor.
 
 **Create linear locks** verteilt Slices der Reihe nach auf die vorhandenen Trigs der
-CHOP-Spur. **Create random locks** schreibt einmal gewürfelte Slice-Werte in dieselben
+Spur im Slice-Modus. **Create random locks** schreibt einmal gewürfelte Slice-Werte in dieselben
 Trigs. Beides lässt sich mit **Undo slice locks** rückgängig machen. Trigless Steps bleiben
 unverändert. Die Marker werden in der Projektdatei gespeichert und folgen dem Sample-Slot.
 
@@ -800,7 +807,7 @@ den **USB-Rückkanal** (SYSTEM → PC + Audio) auf. Die Länge ist frei oder 1, 
 soweit der Sample-Pool Platz bietet. START startet sofort, am nächsten Takt oder beim
 nächsten erklingenden Trig am zuvor gewählten Step. Erneutes START stoppt oder bricht die
 Armierung ab. Die Aufnahme wird als Stereo-WAV in `samples/` geschrieben. X hört den Take
-vor, Y weist ihn der gewählten Spur in CHOP zu und öffnet den Editor.
+vor, Y weist ihn der gewählten SAMPLE-Spur zu und öffnet den Editor.
 
 ## Als Nächstes
 

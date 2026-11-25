@@ -46,7 +46,7 @@ const char* scMachLabel(int m, int which) {
     return machineAt(m)->label(which);
 }
 int scSourceVisible(int i, int mach) { return i >= 0 && i < NPARAMS && sourceParamVisible(PARAMS[i].id, mach); }
-int scMachCount() { return machineCount(); }
+int scMachCount() { return MACHINE_CHOICES; }
 int scMachSteps(int m, int k) { return machineAt(m)->steps(k); }
 int scMachUsesSmp(int m) { return machineAt(m)->usesSample() ? 1 : 0; }
 
@@ -55,11 +55,22 @@ int scMachUsesSmp(int m) { return machineAt(m)->usesSample() ? 1 : 0; }
 static Pattern& W() { gEng.P.pat[gEng.pat].used = 1; return gEng.P.pat[gEng.pat]; }
 static Pattern& WP(int p) { gEng.P.pat[p].used = 1; return gEng.P.pat[p]; }
 
+int scTrackMachine(int track) {
+    return track >= 0 && track < NTRACKS ? trackMachine(gEng.P.pat[gEng.pat].t[track].p) : 0;
+}
+void scSetSampleMode(int track, int mode) {
+    if (track < 0 || track >= NTRACKS) return;
+    Pattern& pat = W();
+    setSampleMode(pat.t[track], mode, &pat.sc[0][track], &pat.sc[1][track]);
+}
+
 // --- Werte ------------------------------------------------------------------------------------
 int  scGet(int track, int slot) {
     if (track < 0) return slot >= 0 && slot < GLOBAL_PARAM_CAP ? gEng.P.g[slot] : 0;
     if (track >= NTRACKS || slot < 0 || slot >= TRACK_PARAM_CAP) return 0;                 // die FX-Spur hat keine eigenen Grundwerte
-    return gEng.P.pat[gEng.pat].t[track].p[slot];
+    const Track& tr = gEng.P.pat[gEng.pat].t[track];
+    if (slot == sampleModeSlot()) return slicePlayback(trackMachine(tr.p));
+    return tr.p[slot];
 }
 void scSet(int track, int slot, int v) {
     if (track < 0) {
@@ -73,6 +84,7 @@ void scSet(int track, int slot, int v) {
         const int first = insertParamSlot(0);
         int p = paramOfSlot(PS_TRACK, slot);
         if (p < 0) return;
+        if (slot == sampleModeSlot()) { scSetSampleMode(track, v); return; }
         if (slot >= first || isExtendedVoiceParam(p)) v = clampParam(p, v);
         W().t[track].p[slot] = (int16_t)v;
     }
@@ -489,6 +501,13 @@ float scInsertReduction(int track, int stage) {
 // Geladen wird hier, im Hauptfaden; der Audio-Faden liest nur. Die Oberflaeche schiebt die
 // entpackten Samples als Fliesskomma herein - das Entpacken macht der Browser.
 int   scSmpSlots()        { return SMP_SLOTS; }
+int   scSmpEstimatedBpm(int slot) { return !gEng.pool.empty(slot) ? gEng.pool.s[slot].estimatedBpm : 0; }
+int   scSmpEstimateBpm(const float* data, int frames, float rate, int channels) {
+    return estimateSampleBpm(data, frames, rate, channels);
+}
+void  scSmpSetEstimate(int slot, int bpm) {
+    if (!gEng.pool.empty(slot)) gEng.pool.s[slot].estimatedBpm = bpm >= SAMPLE_BPM_MIN && bpm <= SAMPLE_BPM_MAX ? bpm : 0;
+}
 int   scSmpFrames(int i)  { return (i >= 0 && i < SMP_SLOTS) ? gEng.pool.s[i].n : 0; }
 float scSmpRate(int i)    { return (i >= 0 && i < SMP_SLOTS) ? gEng.pool.s[i].rate : 0.0f; }
 int   scSmpLoop(int i)    { return (i >= 0 && i < SMP_SLOTS) ? gEng.pool.s[i].loop : 0; }
@@ -544,24 +563,40 @@ static Track sliceUndoTrack;
 static int16_t sliceUndoApplied[NSTEPS];
 static int sliceUndoPat = -1, sliceUndoIndex = -1;
 
+int scSliceLockSlot(int track, int follow) {
+    const int machine = scTrackMachine(track);
+    if (!slicePlayback(machine)) return -1;
+    const bool legacy = machine == MACHINE_LEGACY_CHOP;
+    return follow ? MachChop::followSlot(legacy) : MachChop::sliceSlot(legacy);
+}
+int scTrackSliceCount(int track, int slot, int step) {
+    if (gEng.pool.empty(slot) || track < 0 || track >= NTRACKS) return 1;
+    const Track& tr = gEng.P.pat[gEng.pat].t[track];
+    const bool legacy = trackMachine(tr.p) == MACHINE_LEGACY_CHOP;
+    int gridCount = 1;
+    if (legacy) {
+        const int grid = knobSlot(MachChop::C_SLICES);
+        const Lock* size = step >= 0 && step < NSTEPS ? tr.s[step].findLock(grid) : nullptr;
+        gridCount = MachChop::nSlices(size ? size->val : tr.p[grid]);
+    }
+    return gEng.pool.s[slot].sliceCount(gridCount);
+}
+
 int scSliceLocks(int track, uint32_t seed) {
     if (track < 0 || track >= NTRACKS) return -1;
-    const int machine = paramSlot(paramFind("trk.machine"));
-    const int sample = MachSmpl::slotSmp(), slice = knobSlot(MachChop::C_SLICE);
-    const int follow = knobSlot(MachChop::C_FOLLOW), grid = knobSlot(MachChop::C_SLICES);
+    const int sample = MachSmpl::slotSmp(), slice = scSliceLockSlot(track, 0), follow = scSliceLockSlot(track, 1);
+    if (slice < 0) return -1;
     Track& tr = gEng.P.pat[gEng.pat].t[track];
-    if (tr.p[machine] != 4) return -1;
     int counts[NSTEPS] = {};
     int written = 0;
     for (int i = 0; i < tr.len; i++) {
         const Step& st = tr.s[i];
         if (st.on != 1) continue;
         const Lock* smp = st.findLock(sample);
-        const Lock* size = st.findLock(grid);
         int slot = smp ? smp->val : tr.p[sample];
         if (gEng.pool.empty(slot)) continue;
         if (st.nLock + !st.findLock(slice) + !st.findLock(follow) > NLOCKS) return -2;
-        counts[i] = gEng.pool.s[slot].sliceCount(MachChop::nSlices(size ? size->val : tr.p[grid]));
+        counts[i] = scTrackSliceCount(track, slot, i);
         written++;
     }
     if (!written) return 0;
@@ -585,14 +620,16 @@ int scSliceLocks(int track, uint32_t seed) {
 int scSliceLocksUndo(int track) {
     if (sliceUndoPat != gEng.pat || sliceUndoIndex != track || sliceUndoPat < 0) return 0;
     Track& tr = W().t[track];
-    const int slice = knobSlot(MachChop::C_SLICE), follow = knobSlot(MachChop::C_FOLLOW);
+    const int slice = scSliceLockSlot(track, 0), follow = scSliceLockSlot(track, 1);
+    if (slice < 0 || trackMachine(tr.p) != trackMachine(sliceUndoTrack.p)) return 0;
+    const int slots[] = {slice, follow};
     for (int i = 0; i < NSTEPS; i++) {
         if (sliceUndoApplied[i] < 0) continue;
         const Lock* currentSlice = tr.s[i].findLock(slice);
         const Lock* currentFollow = tr.s[i].findLock(follow);
         if (!currentSlice || currentSlice->val != sliceUndoApplied[i] || currentSlice->slide
             || !currentFollow || currentFollow->val != 0 || currentFollow->slide) continue;
-        for (int slot = slice; slot <= follow; slot++) {
+        for (int slot : slots) {
             const Lock* before = sliceUndoTrack.s[i].findLock(slot);
             if (before) tr.s[i].setLock(slot, before->val, before->slide);
             else scLockClear(track, i, slot);
