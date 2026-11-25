@@ -731,6 +731,7 @@ enum { TAB_TRIG, TAB_CHRD, TAB_SRC, TAB_FLTR, TAB_AMP, TAB_MIX, TAB_MOD, TAB_INS
 static const char* TABNAME[TAB_N] = {"TRIG", "CHRD", "SRC", "FLTR", "AMP", "MIX", "MOD", "INS"};
 enum { M_NONE, M_MENU, M_SAMPLES, M_HELP, M_KEYS, M_SLICE, M_RECORDER, M_LENGTH, M_PATTERNS, M_SECTIONS, M_VALUE, M_MASTER_EQ, M_DETAIL, M_SAMPLE_BPM };
 static constexpr int PATTERN_COLUMNS = 4;
+static constexpr uint32_t STEP_LOCK_HOLD_MS = 350;
 static const int FXT = NTRACKS;   // die FX-Spur des Patterns
 
 struct UI {
@@ -740,6 +741,7 @@ struct UI {
     int selectionTrack = -1, selectionStep = 0, selectionPattern = -1;
     int cur = 0;                      // Step-Cursor
     bool aHeld = false, aEdited = false;
+    int stepLockPattern = -1;
     int modal = M_NONE, menuSel = 0, smpSel = 0, smpScroll = 0;
     int smpDialogSlot = 0, sampleBpm = 0, sampleBpmPattern = 0;
     int patternSel = 0, sectionSel = 0;
@@ -759,6 +761,12 @@ struct UI {
     int scene = -1;                   // -1 = aus, 0/1 = Werte gehen in Scene A/B (Crossfader)
 } U;
 static Input IN;
+
+static bool editingStepLock() { return U.aHeld || U.stepLockPattern >= 0; }
+static void exitStepLock() {
+    U.aHeld = false;
+    U.stepLockPattern = -1;
+}
 
 static void toast(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
 static void toast(const char* fmt, ...) {
@@ -994,7 +1002,7 @@ static int stepValue(int p, int v, int dir, bool coarse) {
         return clampi(start + dir * (coarse ? 10 : 1), SAMPLE_BPM_MIN, SAMPLE_BPM_MAX);
     }
     if (U.sel < FXT && slotOf(p) == scSliceLockSlot(U.sel, 0) && d.scope == PS_TRACK) {
-        const int step = U.aHeld ? U.cur : -1;
+        const int step = editingStepLock() ? U.cur : -1;
         const int sampleLock = step >= 0 ? scLockGet(U.sel, step, slotOf(P_SMP)) : -32768;
         const int sampleSlot = sampleLock == -32768 ? scGet(U.sel, slotOf(P_SMP)) : sampleLock;
         const int count = scTrackSliceCount(U.sel, sampleSlot, step);
@@ -1043,23 +1051,16 @@ static int stepValue(int p, int v, int dir, bool coarse) {
 static void editParam(int p, int dir, bool coarse) {
     if (p < 0) return;
     const ParamDef& d = PARAMS[p];
-    if (U.aHeld && masterSetting(p)) {
-        U.aEdited = true;
-        toast("Mastering controls are project settings");
-        return;
-    }
     const bool sampleSetting = p == P_SAMPLE_MODE || p == P_SAMPLE_BPM;
-    if (U.aHeld && sampleSetting) {
+    const bool asLock = editingStepLock();
+    if (asLock && !lockable(p)) {
         U.aEdited = true;
-        toast("Sample play mode and BPM are track settings");
+        if (masterSetting(p)) toast("Mastering controls are project settings");
+        else if (sampleSetting) toast("Sample play mode and BPM are track settings");
+        else if (isInsertParam(p)) toast("Inserts are track settings");
+        else toast("%s is not available as a step lock", rowName(p));
         return;
     }
-    if (U.aHeld && isInsertParam(p)) {
-        U.aEdited = true;
-        toast("Inserts are track settings");
-        return;
-    }
-    bool asLock = U.aHeld && lockable(p);
     bool asScene = !asLock && U.scene >= 0 && U.sel < FXT && d.scope == PS_TRACK && p != P_MACHINE && !isInsertParam(p) && !sampleSetting;
     int lv = asLock ? lockValue(p, U.cur) : asScene ? sceneValue(p) : -32768;
     int v = lv != -32768 ? lv : baseValue(p);
@@ -1081,7 +1082,7 @@ static void editParam(int p, int dir, bool coarse) {
 static int trackLen() { return scTrackLen(U.sel); }
 static void toggleTrig() {
     int s = U.cur;
-    if (U.sel == FXT) { toast("FX track: hold A and change a value to lock it"); return; }
+    if (U.sel == FXT) { toast("FX track: hold A to enter Step Lock"); return; }
     int was = scStepGet(U.sel, s);
     scStepSet(U.sel, s, was == 1 ? 0 : 1);
     touched();
@@ -1238,7 +1239,7 @@ static void openValuePicker(int param) {
     p.param = param;
     p.pattern = scPattern();
     p.nGroups = p.nValues = 0;
-    p.step = U.aHeld;
+    p.step = editingStepLock() && lockable(param);
     U.aHeld = false;
     if (PARAMS[param].kind == PK_COND) buildConditionValues();
     else if (isChordParam(PARAMS[param])) buildChordValues();
@@ -1271,7 +1272,7 @@ static void openMasterEq(int param = -1) {
             U.eqField = f;
         }
     }
-    U.aHeld = false;
+    exitStepLock();
     U.eqSpectrumAt = U.now;
     gMasterSpectrum.reset(true);
     U.modal = M_MASTER_EQ;
@@ -1427,7 +1428,7 @@ static void smpLeave() {
 }
 static void openSamples() {
     U.smpDialogSlot = smpTargetSlot();
-    U.aHeld = false;
+    exitStepLock();
     scanSamples();
     // Ordner gibt es nicht mehr (per Web geloescht)? Dann nach oben.
     while (gSmpDir[0]) {
@@ -1445,14 +1446,14 @@ static void openSampleEditor() {
     if (U.sel >= FXT) return;
     U.smpDialogSlot = smpTargetSlot();
     if (!scSmpFrames(U.smpDialogSlot)) { openSamples(); return; }
-    U.aHeld = false;
+    exitStepLock();
     U.cutAction = U.cutMarker = 0;
     U.cutFrame = (scSmpA(U.smpDialogSlot) + scSmpB(U.smpDialogSlot)) / 2;
     U.modal = M_SLICE;
 }
 
 static void openSampleBpm() {
-    U.aHeld = false;
+    exitStepLock();
     U.smpDialogSlot = smpTargetSlot();
     U.sampleBpm = baseValue(P_SAMPLE_BPM);
     U.sampleBpmPattern = scPattern();
@@ -1846,7 +1847,6 @@ static void handleStepSelection() {
             U.sel = clampi(U.sel + dy, 0, NTRACKS - 1);
             U.cur = clampi(U.cur + dx, 0, trackLen() - 1);
         }
-        U.aHeld = false;
     }
     if (IN.pressed(BT_X)) {
         int copied = scClipStepRange(hasStepSelection() ? selectionStartTrack() : U.sel,
@@ -1876,12 +1876,18 @@ static void handleTrack() {
     }
     if (!B && IN.repeat(BT_UP, U.now)) moveRow(-1);
     if (!B && IN.repeat(BT_DOWN, U.now)) moveRow(1);
-    // A: antippen = Trig an/aus, halten + Wert = Lock auf diesem Step
+    if (U.stepLockPattern >= 0 && IN.pressed(BT_B)) { exitStepLock(); return; }
+    // A: kurz schaltet den Trig, lang rastet Step Lock ein. A + X/Y bleibt der Schnellweg.
     if (IN.pressed(BT_A)) {
         if (B) { scMute(U.sel, !scIsMute(U.sel)); toast(scIsMute(U.sel) ? "Track muted" : "Track unmuted"); IN.mask |= 1u << BT_A; }
-        else { U.aHeld = true; U.aEdited = false; }
+        else if (U.stepLockPattern < 0) { U.aHeld = true; U.aEdited = false; }
     }
     if (U.aHeld && IN.pressed(BT_B)) { clearStepLocks(); U.aEdited = true; }
+    if (U.aHeld && !U.aEdited && !IN.pressed(BT_A) && U.now - IN.downSince[BT_A] >= STEP_LOCK_HOLD_MS) {
+        U.stepLockPattern = scPattern();
+        U.aHeld = false;
+        U.selectionTrack = -1;
+    }
     if (U.aHeld && IN.released(BT_A)) {
         if (!U.aEdited) toggleTrig();
         U.aHeld = false;
@@ -2125,6 +2131,7 @@ static void handlePatterns() {
     if (IN.repeat(BT_RIGHT, U.now) && p % PATTERN_COLUMNS < PATTERN_COLUMNS - 1 && p + 1 < NPATTERNS) p++;
     U.patternSel = p;
     if (!IN.pressed(BT_A)) return;
+    if (p != scPattern()) exitStepLock();
     if (scIsRunning()) {
         if (p != scPattern() || scPatNext() >= 0) scPatQueue(p);
     } else if (p != scPattern() || scPatNext() >= 0) {
@@ -2246,6 +2253,7 @@ static void handleModal() {
     }
 }
 static void handleInput() {
+    if (U.stepLockPattern >= 0 && U.stepLockPattern != scPattern()) exitStepLock();
     if (gExp.on) { if (IN.pressed(BT_B)) exportFinish(true); return; }
     buildRows();
     // SELECT antippen = Menue, halten = Hilfe solange gehalten
@@ -2253,16 +2261,17 @@ static void handleInput() {
     if (IN.pressed(BT_SELECT) && (U.modal == M_NONE || U.modal == M_MASTER_EQ || U.modal == M_DETAIL
         || U.modal == M_SAMPLES || U.modal == M_SLICE || U.modal == M_SAMPLE_BPM))
         selUsed = U.modal != M_NONE;
-    if (U.modal != M_NONE) { handleModal(); return; }
+    if (U.modal != M_NONE) { U.aHeld = false; handleModal(); return; }
     if (U.selectionTrack >= 0 && !hasStepSelection()) U.selectionTrack = -1;
     if (U.view == V_TRACK && IN.down[BT_FN]) {
-        U.aHeld = false;
+        exitStepLock();
         if (scIsFill() && !IN.down[BT_START]) scFill(0);
         handleStepSelection();
         return;
     }
     const int previousTrack = U.sel, previousStep = U.cur;
     if (U.view == V_TRACK && IN.down[BT_B] && IN.pressed(BT_SELECT) && !U.aHeld) {
+        exitStepLock();
         openSections(); selUsed = true; return;
     }
     const bool sampleTrack = U.view == V_TRACK && U.sel < FXT && scMachUsesSmp(machOf(U.sel));
@@ -2280,7 +2289,7 @@ static void handleInput() {
         }
         if (eqShortcut(param)) { openMasterEq(param); selUsed = true; return; }
         if (canPickValue(param)) { openValuePicker(param); selUsed = true; return; }
-        if (DetailKind kind = detailKind(param)) { openDetail(kind, param); selUsed = true; return; }
+        if (DetailKind kind = detailKind(param)) { exitStepLock(); openDetail(kind, param); selUsed = true; return; }
     }
     if (IN.down[BT_SELECT] && IN.heldMs(BT_SELECT, U.now) > 500) { U.modal = M_HELP; selUsed = true; return; }
     if (IN.released(BT_SELECT) && !selUsed) { U.modal = M_MENU; return; }
@@ -2291,6 +2300,7 @@ static void handleInput() {
     }
     if (scIsFill() && !IN.down[BT_START]) scFill(0);
     // L2/R2: Ansicht, L1/R1: Spur
+    const int previousView = U.view;
     if (IN.pressed(BT_L2)) U.view = (U.view + V_N - 1) % V_N;
     if (IN.pressed(BT_R2)) U.view = (U.view + 1) % V_N;
     int trackDelta = 0;
@@ -2303,8 +2313,8 @@ static void handleInput() {
     }
     if (trackDelta) {
         U.sel = (U.sel + trackDelta + NTRACKS + 1) % (NTRACKS + 1);
-        U.aHeld = false;
     }
+    if (U.sel != previousTrack || U.view != previousView) exitStepLock();
     if (U.cur >= trackLen()) U.cur = trackLen() - 1;
     buildRows();
     if (U.view == V_TRACK) handleTrack();
@@ -2425,6 +2435,7 @@ static void drawChordBar(int x, int y, int w, int h, int value, uint32_t color) 
     fill(offset < 0 ? middle - length : middle, y, length > 0 ? length : 1, h, color);
 }
 static void drawList() {
+    const bool stepEdit = editingStepLock();
     int x0 = LIST_X, w = SW - x0 - 4, y = HEAD_H + 4;
     fill(x0 - 2, HEAD_H, SW - x0 + 2, STEPS_Y - HEAD_H - 4, C_BG);
     uint32_t hue = HUE[U.sel];
@@ -2444,9 +2455,7 @@ static void drawList() {
         fill(x0 + 58, y, 55, 20, U.fxMod ? C_SEL : C_PANEL);
         textC(x0 + 27, y + 2, "FX", !U.fxMod ? C_TXT : C_DIM);
         textC(x0 + 85, y + 2, "MOD", U.fxMod ? C_TXT : C_DIM);
-        char b[48];
-        snprintf(b, sizeof b, U.aHeld ? "STEP %d LOCKS" : "B+LEFT/RIGHT  FX/MOD", U.cur + 1);
-        text(x0 + 123, y + 2, b, U.aHeld ? C_LOCK : C_DIM);
+        if (!stepEdit) text(x0 + 123, y + 2, "B+LEFT/RIGHT  FX/MOD", C_DIM);
     }
     y += 26;
     float reduction[INSERT_STAGES] = {};
@@ -2485,10 +2494,10 @@ static void drawList() {
         int lv = lockValue(p, U.cur);
         bool showLock = lv != -32768;
         int sv = sceneValue(p);
-        bool isScene = !(showLock && U.aHeld) && sv != -32768;
+        bool isScene = !stepEdit && sv != -32768;
         if (isScene) { lv = sv; showLock = true; }
         const char* vt = valueText(p, base);
-        text(x0 + 112, y + 2, vt, showLock && U.aHeld ? C_DIM : C_TXT, 26);
+        text(x0 + 112, y + 2, vt, showLock && stepEdit ? C_DIM : C_TXT, 26);
         // Balken: wo der Wert im Bereich steht
         const ParamDef& d = PARAMS[p];
         int bw = 70, bx = x0 + w - bw - 8;
@@ -2524,7 +2533,10 @@ static void drawSteps() {
     text(8, y0, b, C_DIM);
     if (scNSpeeds()) { snprintf(b, sizeof b, "SPEED %s", scSpeedName(scSpeed(U.sel))); textR(SW - 8, y0, b, C_DIM); }
     const bool selection = U.view == V_TRACK && hasStepSelection();
-    if (selection) {
+    if (U.view == V_TRACK && U.stepLockPattern >= 0) {
+        snprintf(b, sizeof b, "STEP %02d LOCK", U.cur + 1);
+        textC(SW / 2 + 60, y0, b, C_LOCK);
+    } else if (selection) {
         snprintf(b, sizeof b, "SELECTED %d-%d", selectionStartStep() + 1, selectionEndStep() + 1);
         textC(SW / 2 + 60, y0, b, C_SCENE);
     } else if (cp >= 0 && lockable(cp)) { snprintf(b, sizeof b, "LOCKS: %s", rowName(cp)); textC(SW / 2 + 60, y0, b, C_LOCK); }
@@ -2555,7 +2567,10 @@ static void drawSteps() {
         if (selection && s >= selectionStartStep() && s <= selectionEndStep())
             frame(x, y, cw - 4, 54, C_SCENE);
         if (s == ps) frame(x, y, cw - 4, 54, C_TXT);
-        if (s == U.cur) { frame(x - 2, y - 2, cw, 58, U.aHeld ? C_LOCK : hue); frame(x - 1, y - 1, cw - 2, 56, U.aHeld ? C_LOCK : hue); }
+        if (s == U.cur) {
+            uint32_t cursor = editingStepLock() ? C_LOCK : hue;
+            frame(x - 2, y - 2, cw, 58, cursor); frame(x - 1, y - 1, cw - 2, 56, cursor);
+        }
         snprintf(b, sizeof b, "%d", s + 1);
         textC(x + (cw - 4) / 2, y + 34, b, on == 1 ? C_TXT : C_FAINT);
     }
@@ -2564,7 +2579,7 @@ static void drawSteps() {
     int mw = (int)(fminf(pk, 1.0f) * 120);
     fill(SW - 136, y0 + 86, 120, 5, C_LINE);
     fill(SW - 136, y0 + 86, mw, 5, pk > 0.98f ? C_REC : C_PLAY);
-    if (U.scene >= 0) { snprintf(b, sizeof b, "EDITING SCENE %c - values go to the scene", 'A' + U.scene); text(8, y0 + 80, b, C_SCENE); }
+    if (U.scene >= 0 && !editingStepLock()) { snprintf(b, sizeof b, "EDITING SCENE %c - values go to the scene", 'A' + U.scene); text(8, y0 + 80, b, C_SCENE); }
 }
 static void drawSong() {
     int x0 = LIST_X, y = HEAD_H + 4;
@@ -2773,6 +2788,8 @@ static const char* helpLine() {
     if (U.view == V_SONG) return "X/Y value  A dup row  B+A delete  B+UP/DN move  START play song";
     if (U.view == V_PROJECT) return "UP/DOWN item   X/Y value / browse projects   A action";
     if (U.view == V_SYSTEM) return "UP/DOWN item   X/Y change   A apply / action";
+    if (U.stepLockPattern >= 0) return "LEFT/RIGHT step   UP/DOWN parameter   X/Y lock value   B exit";
+    if (U.aHeld) return "Hold A for Step Lock   X/Y quick lock   B clear step locks";
     if (IN.down[BT_FN] || hasStepSelection()) return "FN+ARROWS select   FN+X copy   FN+Y paste   FN+B clear selection";
     if (U.sel < FXT && U.tab == TAB_SRC && scMachUsesSmp(machOf(U.sel))) {
         const int param = curParam();
@@ -2784,7 +2801,6 @@ static const char* helpLine() {
     if (detailKind(curParam())) return "SELECT+X detail view   X/Y adjust   B+SELECT sections";
     if (eqShortcut(curParam())) return "SELECT+X visual EQ   X/Y adjust   B+SELECT sections";
     if (canPickValue(curParam())) return "SELECT+X choose value   X/Y adjust   Hold A for step locks";
-    if (U.aHeld) return "A held: X/Y lock value on this step   B clear locks";
     return "X/Y value  A trig / hold to lock  B+UP/DN track  B+SELECT sections";
 }
 static void drawHelpLine() {
@@ -3715,6 +3731,53 @@ static int selfTest(const char* shotDir) {
     shot("02-locks");
     simFrame(1u << BT_A); simFrame(1u << BT_A | 1u << BT_B); simFrame(1u << BT_A); simFrame(0);
     CHECK(scNLocks(0, 3) == 0, "A halten + B: Locks des Steps geloescht");
+
+    const int previousStep = U.cur, previousRow = rowSelRef();
+    scSetPattern(8);
+    U.cur = 0;
+    const int note = selectParam(TAB_TRIG, "trk.note");
+    const int noteBase = baseValue(note);
+    tap(BT_A);
+    auto latchStepLock = []() {
+        for (unsigned ms = 0; ms <= STEP_LOCK_HOLD_MS; ms += 16) simFrame(1u << BT_A);
+        simFrame(0);
+    };
+    latchStepLock();
+    CHECK(U.stepLockPattern == 8 && scStepGet(0, 0) == 1 && scNLocks(0, 0) == 0,
+          "Holding and releasing A latches Step Lock without toggling the trig");
+    tap(BT_X);
+    CHECK(lockValue(note, 0) == noteBase + 1 && baseValue(note) == noteBase,
+          "X alone locks the selected parameter without changing the track value");
+    tap(BT_RIGHT); tap(BT_DOWN);
+    const int vel = pIndex("trk.vel"), velBase = baseValue(vel);
+    tap(BT_Y);
+    CHECK(U.cur == 1 && curParam() == vel && U.stepLockPattern == 8 &&
+          scStepGet(0, 1) == 2 && lockValue(vel, 1) == velBase - 1 && baseValue(vel) == velBase,
+          "The D-pad moves to a different step and parameter while the mode stays active");
+    shot("02a-step-lock");
+    selectParam(TAB_TRIG, "trk.cond");
+    tap(BT_X, 1u << BT_SELECT); idle();
+    CHECK(U.modal == M_VALUE && gValuePick.step, "Value picker opens in Step Lock scope");
+    tap(BT_B);
+    selectParam(TAB_SRC, "trk.machine");
+    const int machine = machOf(0);
+    tap(BT_X);
+    CHECK(machOf(0) == machine && U.stepLockPattern == 8, "Step Lock protects track-wide settings");
+    selectParam(TAB_TRIG, "trk.vel");
+    tap(BT_B);
+    CHECK(!editingStepLock() && lockValue(vel, 1) == velBase - 1, "B exits Step Lock without clearing locks");
+    tap(BT_X);
+    CHECK(baseValue(vel) == velBase + 1 && lockValue(vel, 1) == velBase - 1, "X edits the track value again after exit");
+    latchStepLock();
+    tap(BT_R1);
+    CHECK(U.sel == 1 && !editingStepLock(), "Switching tracks exits Step Lock");
+    tap(BT_L1);
+    latchStepLock();
+    scSetPattern(0); idle();
+    CHECK(!editingStepLock(), "A pattern change exits Step Lock");
+    U.cur = previousStep;
+    rowSelRef() = previousRow;
+
     // Reiter und Machine
     tap(BT_RIGHT, 1u << BT_B); tap(BT_RIGHT, 1u << BT_B);
     CHECK(U.tab == TAB_SRC, "B + RECHTS zweimal: Reiter SRC");
