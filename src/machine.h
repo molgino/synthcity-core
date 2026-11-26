@@ -116,13 +116,22 @@ struct MachPoly : Machine {
         }
         return {slots[0], slots[1], slots[2], slots[3], slots[4]};
     }
-    static float waveform(const Osc& osc, int wave, float shape, float width) {
-        if (wave == 1 || (wave == 0 && shape == 0)) return osc.saw();
-        if (wave == 2 || (wave == 0 && shape == 1)) return osc.pulse(width);
-        if (wave == 3) return osc.sine();
-        float saw, pulse;
-        osc.sawPulse(width, saw, pulse);
-        return (1.0f - shape) * saw + shape * pulse;
+    // Welche Rechnung eine Wellenform braucht, steht je Block fest - im Sample-Takt bleibt
+    // nur noch eine Weiche (gleiche Rechnung wie zuvor je Sample, bitgleiches Ergebnis).
+    enum { W_MIX, W_SAW, W_PULSE, W_SINE };
+    static int waveMode(int wave, float shape) {
+        if (wave == 1 || (wave == 0 && shape == 0)) return W_SAW;
+        if (wave == 2 || (wave == 0 && shape == 1)) return W_PULSE;
+        if (wave == 3) return W_SINE;
+        return W_MIX;
+    }
+    static float waveOf(const Osc& osc, int mode, float shape, float width) {
+        switch (mode) {
+        case W_SAW:   return osc.saw();
+        case W_PULSE: return osc.pulse(width);
+        case W_SINE:  return osc.sine();
+        default: { float saw, pulse; osc.sawPulse(width, saw, pulse); return (1.0f - shape) * saw + shape * pulse; }
+        }
     }
     static int osc2Semi(float v) { int s = (int)((v - 64.0f) * 24.0f / 63.0f + (v >= 64 ? 0.5f : -0.5f)); return s < -24 ? -24 : (s > 24 ? 24 : s); }
     void text(int k, float v, char* out, int n) const override {
@@ -170,6 +179,7 @@ struct MachPoly : Machine {
         const float w1 = p[a.width] ? p[a.width] * 0.01f : w, w2 = p[b.width] ? p[b.width] * 0.01f : w;
         const float lo1 = p[a.level] * 0.01f, lo2 = p[b.level] * 0.01f;
         const int wave1 = (int)p[a.wave], wave2 = (int)p[b.wave];
+        const int mode1 = waveMode(wave1, shape), mode2 = waveMode(wave2, shape);
         const float incA = s.a.inc, incB = s.b.inc, incS = s.sub.inc;
         float g = 1.0f + drive * 5.0f, norm = 1.0f / (1.0f + 0.6f * drive);
         float mixN = 0.5f / (1.0f + 0.5f * subL + 0.4f * noise);
@@ -181,8 +191,8 @@ struct MachPoly : Machine {
                 s.a.inc = incA * fa; s.b.inc = incB * fb; s.sub.inc = incS * fa;
             }
             // Was mit 0 gewichtet wird, muss nicht gerechnet werden (das Ergebnis ist bitgleich).
-            const float x = lo1 ? lo1 * waveform(s.a, wave1, shape, w1) : 0;
-            const float y = lo2 ? lo2 * waveform(s.b, wave2, shape, w2) : 0;
+            const float x = lo1 ? lo1 * waveOf(s.a, mode1, shape, w1) : 0;
+            const float y = lo2 ? lo2 * waveOf(s.b, mode2, shape, w2) : 0;
             float sb = subL != 0.0f ? s.sub.pulse(0.5f) : 0.0f;
             float nz = machNoise(s.rng);                 // Zufall laeuft immer weiter (DRIFT teilt ihn)
             float v = (x + y + subL * sb + noise * 0.8f * nz) * mixN;

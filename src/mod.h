@@ -123,7 +123,9 @@ inline void modDestRange(int d, float& lo, float& hi) {
 }
 
 struct ModSlots { int wave[2], rate[2], depth[2], dest[2], mode[2], speed[2], mult[2], fade[2], phase[2], eAtk, eDec, eDepth, eDest, eMode; };
-inline const ModSlots& modSlots() {
+// Die Tabelle wird einmal gebaut; modSlots() selbst bleibt klein genug zum Einbetten
+// (sie wird pro Stimme und Block mehrfach gefragt).
+inline const ModSlots& modSlotsBuild() {
     static ModSlots m;
     static bool ok = false;
     if (!ok) {
@@ -147,6 +149,7 @@ inline const ModSlots& modSlots() {
     }
     return m;
 }
+inline const ModSlots& modSlots() { static const ModSlots& m = modSlotsBuild(); return m; }
 
 struct ModState {
     float ph[2] = {0, 0}, sh[2] = {0, 0};

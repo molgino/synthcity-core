@@ -647,6 +647,7 @@ aufs USB-Laufwerk.
 
 ```
 make device && make devtest          # Desktop-Build + Selbsttest mit Bildschirmfotos (build/shots)
+make devtest-asan devtest-tsan       # derselbe Selbsttest mit ASan/UBSan bzw. ThreadSanitizer (auch in der CI)
 ./tools/r36s-build.sh                # aarch64, gegen Ubuntu-18.04-Sysroot (glibc 2.27, SDL 2.0.8)
 ./tools/r36s-package.sh              # dist/synthcity-os-update.tgz + dist/synthcity-arkos.zip
 ```
@@ -686,6 +687,12 @@ Notbremse.
   rechnet Säge/Puls nur, wenn sie gemischt werden, und den gemeinsamen BLEP einmal; Sende-Wege nur,
   wenn sie offen sind; WSOLA liest sein Vergleichsstück einmal statt für jeden Kandidaten.
   callgrind über das Szenario: 779 → 645 Mio. Instruktionen (−17 %).
+  Nach den neuen Klangfunktionen (zwei POLY-Oszillatoren, erweiterte Modulation, Live-Regler)
+  stieg dasselbe Szenario auf 810 Mio.; wieder bitgleich gesenkt auf 704 Mio. (−13 %): jede
+  Stimme baut die Liste der Regler, denen sie folgt, einmal beim Anschlag (und nach trigless
+  Locks) statt in jedem Steuertakt alle Regler samt Machine- und Lock-Prüfung durchzugehen;
+  POLY entscheidet die Wellenform je Block statt je Sample; `modSlots()` ist klein genug zum
+  Einbetten. Prüfung: `tools/bench_device` gegen einen Bau des alten Stands, Prüfsummen gleich.
 * *Zwei Rechenkerne.* Die Engine teilt die Stimmen fest in gerade/ungerade (`VoiceHelper`,
   `runHalf`); auf dem Gerät rechnet ein zweiter Faden die ungeraden. Beide Hälften haben eigene
   Puffer und werden danach addiert – das Ergebnis hängt nicht vom Helfer ab (Selbsttest:

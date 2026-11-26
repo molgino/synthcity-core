@@ -136,6 +136,7 @@ struct Voice {
         machineIndex = (int)pp[sMachine]; preview = false; track = (uint8_t)tr; step = (uint8_t)st; born = when;
         for (int i = 0; i < VOICE_PARAM_CAP; i++) pf[i] = pp[i];
         locked = lockMask;
+        buildFollow();
         nRamp = 0; vel = v; left = lenSamples; used = true; age = 0;
         inf = lenSamples >= 2147483647;
         liveFollow(live);
@@ -178,13 +179,26 @@ struct Voice {
 
     // Ein Regler, der nicht auf diesem Step gelockt ist und gerade nicht gleitet, folgt der
     // Spur weiter - sonst waere jeder Griff waehrend eines Tons wirkungslos.
-    void liveFollow(const float* live) {
-        if (!live) return;
+    // Welche Regler diese Stimme weiter verfolgt, steht fest, sobald Machine und Locks
+    // feststehen - die Liste wird dann einmal gebaut, statt in jedem Steuertakt alle Regler
+    // samt Machine- und Lock-Pruefung durchzugehen. Gleiche Regler, gleiche Reihenfolge.
+    uint8_t follow[VOICE_PARAM_CAP];
+    int     nFollow = 0;
+    void buildFollow() {
         const Live& L = liveSlots();
+        nFollow = 0;
         for (int i = 0; i < L.n; i++) {
             int sl = L.slot[i];
             if (L.machine[i] >= 0 && L.machine[i] != machineIndex) continue;
             if (locked.has(sl)) continue;
+            follow[nFollow++] = (uint8_t)sl;
+        }
+    }
+    void liveFollow(const float* live) {
+        if (!live) return;
+        if (!nRamp) { for (int i = 0; i < nFollow; i++) pf[follow[i]] = live[follow[i]]; return; }
+        for (int i = 0; i < nFollow; i++) {
+            int sl = follow[i];
             bool ramping = false;
             for (int r = 0; r < nRamp; r++) if (rmp[r].slot == sl) { ramping = true; break; }
             if (!ramping) pf[sl] = live[sl];
@@ -831,6 +845,7 @@ struct Engine : Sink {
                     if (l.slide) v[i].slide(l.slot, trkVal[e.track][l.slot], (float)l.val, glide);
                     else         v[i].pf[l.slot] = (float)l.val;
                 }
+                v[i].buildFollow();
             }
             for (int i = 0; i < VOICE_PARAM_CAP; i++) trkVal[e.track][i] = snap[i];
             return;
