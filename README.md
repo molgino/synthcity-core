@@ -589,11 +589,20 @@ Gerät und umgekehrt.
 | B + SELECT | Direkt zu einem Parameterbereich springen, etwa LFO 2, Insert 2 oder Master EQ. Auch im SELECT-Menü unter Parameter sections. |
 | SELECT + X | Bei Condition, DEST oder NT2–NT4 die Werteliste öffnen. Links/rechts wechselt die Gruppe, hoch/runter den Wert, L1/R1 die Seite. X wechselt zwischen Grundwert und Step-Lock. A übernimmt, B schließt die Auswahl. Auch unter SELECT → Choose value. |
 | START | Play/Stop (in SONG: Song) · B + START: FILL, solange gehalten |
+| SELECT + L1 / R1 | Rückgängig / Wiederholen (auch im SELECT-Menü unter Undo / Redo). Erfasst Steps, Locks, Patterns, Song und Projektwerte, egal ob am Gerät, per MIDI oder über die Webseite geändert. Bis zu 64 Schritte; Laden, Neu und Demo beginnen einen neuen Verlauf. |
 | SELECT | Menü: Pattern-Auswahl, Parameterbereiche, kopieren/einfügen (Pattern, Spur, Step), Sample laden, Spurlänge, Scene A/B bearbeiten |
 | Track length | X/Y ändern die Länge der gewählten Spur um 1, Rechts/Links um 16 Steps. Bereich 1–128. |
 | rechter Stick ◀▶ | Scene-Crossfader A ↔ B |
 
 **Ansichten** (L2/R2): TRACK, SONG, PROJ, SYSTEM.
+
+**Rückgängig/Wiederholen:** Das Gerät vergleicht das Projekt alle 250 ms über eine Prüfsumme
+(Pattern für Pattern unter kurzer Sperre, der Audio-Faden wartet nie lange). Nach 700 ms Ruhe
+wird aus allen Änderungen seither **ein** Schritt; wer eine halbe Sekunde am Regler dreht,
+macht also einen Schritt, nicht hundert (nach spätestens 4 s Dauerdrehen beginnt ein neuer).
+Ein Schritt hält nur die geänderten Patterns (je ~90 KB) plus Projektwerte und Song; der
+Verlauf ist auf 64 Schritte und 256 Pattern-Kopien (~23 MB) gedeckelt. Mutes, Fill und die
+Scene-Stellung sind Performance und kommen nicht in den Verlauf, Samples ebenso nicht.
 
 Die Kopfzeile zeigt den Akkustand mit Ladeblitz, sobald der Akku erkannt wird. Die Prozentanzeige
 nutzt die geglättete Akkuspannung aus dem ursprünglichen Synth City. Der Ladeblitz berücksichtigt
