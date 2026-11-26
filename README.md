@@ -667,6 +667,16 @@ Webserver über echtes HTTP.
 `--bench` misst, wie schnell der Kern auf dem Gerät rechnet; die Kopfzeile zeigt die
 Audio-Last laufend (CPU %).
 
+**Projektgröße ohne feste Grenze:** Das Dokument (`src/doc.h`) wächst mit dem Projekt, statt
+48 000 feste Einträge zu je 100 Byte vorzuhalten. Vorher ließ sich ein dichtes Projekt
+(z. B. 16 Patterns × 8 Spuren × 64 Steps × 8 Locks) nicht mehr speichern. Jetzt passt der
+schlimmste Fall, den das Modell halten kann – alle Patterns, Spuren und 128 Steps mit je 12
+Locks samt Slides, rund 410 000 Einträge bzw. 12 MB Text –, und kommt beim Laden unverändert
+zurück (Tests in `tests/unit.cpp` und `tests/web.js`, auch im Browser-Bau). Nebenbei belegt ein
+leeres Dokument keinen Speicher mehr; vorher waren es je Instanz rund 5 MB. Textpuffer beim
+Laden (Gerät, Browser, Plugin-Zustand) wachsen ebenso mit. `DOC_MAX` (4 Mio.) ist nur noch eine
+Notbremse.
+
 **Last und Knackser (Nov. 2026, gemeldet: 2× SMPL, CHOP, POLY mit Locks bis 80 %, viele Klicks):**
 
 * *Rechnen ohne Klangverlust.* Alles, was sich am Klang nicht ändern darf, ist mit einer

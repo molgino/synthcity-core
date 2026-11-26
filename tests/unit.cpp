@@ -90,11 +90,13 @@ static void testDenseProject() {
     const Lock* lock = last.findLock(slot);
     CHECK(last.on == 1 && lock && lock->val == 80, "letzter Trig oder Lock verloren");
 
-    for (int i = 0; i <= DOC_MAX; i++) {
+    doc.limit = doc.n + 100;                     // Notbremse: kuenstlich tief, sonst 4 Mio.
+    for (int i = 0; i <= 200; i++) {
         char key[DOC_KEY];
         snprintf(key, sizeof key, "test.%d", i);
         doc.set(key, i);
     }
+    doc.limit = DOC_MAX;
     CHECK(doc.overflow, "Dokument meldet den Ueberlauf nicht");
     char text[128];
     CHECK(!doc.writeText(text, sizeof text), "unvollstaendiger Text wurde exportiert");
@@ -102,6 +104,67 @@ static void testDenseProject() {
     CHECK(roundTrip.load(path) && roundTrip.get("pat.15.trk.7.st.127", 0) == 1,
           "vorherige Datei wurde ersetzt");
     remove(path);
+}
+
+// Der schlimmste Fall, den das Modell halten kann: jedes Pattern, jede Spur (auch FX), jeder
+// Step mit allen 12 Locks, jeder Lock mit Slide. Frueher war bei 48 000 Eintraegen Schluss -
+// schon 16 x 8 x 64 Steps mit 8 Locks liessen sich nicht mehr speichern.
+static void testWorstCaseProject() {
+    curCase = "Groesstes Projekt";
+    static Project source, loaded;
+    static Doc doc, back;
+    projectInit(source);
+    int slots[NLOCKS], ns = 0;
+    for (int i = 0; i < NPARAMS && ns < NLOCKS; i++)
+        if (PARAMS[i].scope == PS_TRACK && (PARAMS[i].flags & PF_LOCK)) slots[ns++] = paramSlot(i);
+    CHECK(ns == NLOCKS, "nicht genug lockbare Parameter fuer den Test");
+    for (int pi = 0; pi < NPATTERNS; pi++) {
+        Pattern& pt = source.pat[pi];
+        pt.used = 1;
+        for (int t = 0; t < NTRACKS; t++) {
+            Track& tr = pt.t[t];
+            tr.len = NSTEPS;
+            for (int s = 0; s < NSTEPS; s++) {
+                tr.s[s].on = 1;
+                for (int l = 0; l < NLOCKS; l++) tr.s[s].setLock(slots[l], (int16_t)(1 + (s + l + pi) % 100), 1);
+            }
+        }
+    }
+    doc.clear();
+    projectToDoc(source, doc);
+    printf("  groesstes Projekt: %d Eintraege\n", doc.n);
+    CHECK(!doc.overflow && doc.n > 400000, "groesstes Projekt passt nicht ins Dokument");
+    const char* text = doc.text();
+    CHECK(text != nullptr, "groesstes Projekt laesst sich nicht als Text schreiben");
+    if (!text) return;
+    printf("  als Text: %.1f MB\n", strlen(text) / 1048576.0);
+    // Text zurueck in ein Dokument (wie beim Laden) und ins Projekt
+    static TextBuf copy;
+    char* t = copy.reserve(strlen(text));
+    memcpy(t, text, strlen(text) + 1);
+    back.clear();
+    for (char* line = t; line && *line;) {
+        char* nl = strchr(line, '\n'); if (nl) *nl = 0;
+        char* eq = strchr(line, '=');
+        if (eq) { *eq = 0; char* e = eq - 1; while (e > line && *e == ' ') *e-- = 0; back.set(line, (int32_t)strtol(eq + 1, nullptr, 10)); }
+        line = nl ? nl + 1 : nullptr;
+    }
+    CHECK(!back.overflow && back.n == doc.n, "beim Zuruecklesen gehen Eintraege verloren");
+    projectInit(loaded);
+    projectFromDoc(back, loaded);
+    bool same = true;
+    for (int pi = 0; pi < NPATTERNS && same; pi++)
+        for (int t = 0; t < NTRACKS && same; t++)
+            for (int s = 0; s < NSTEPS && same; s++) {
+                const Step& a = source.pat[pi].t[t].s[s];
+                const Step& b = loaded.pat[pi].t[t].s[s];
+                if (a.on != b.on || a.nLock != b.nLock) same = false;
+                for (int l = 0; l < a.nLock && same; l++) {
+                    const Lock* x = b.findLock(a.lock[l].slot);
+                    if (!x || x->val != a.lock[l].val || x->slide != a.lock[l].slide) same = false;
+                }
+            }
+    CHECK(same, "groesstes Projekt kommt nicht unveraendert zurueck");
 }
 
 // 2 - Ein Projekt laedt, NACHDEM ein Parameter dazugekommen ist: das Versprechen des Dokuments
@@ -345,6 +408,7 @@ static void testQueue() {
 int main() {
     testDoc();
     testDenseProject();
+    testWorstCaseProject();
     testNeuerParameter();
     testBlockgroessen();
     testMicro();
