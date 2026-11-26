@@ -183,6 +183,7 @@ static bool gLearnReq = false;
 struct NoLock { int d; NoLock(); ~NoLock(); };
 static int gJack = -1;                    // -1 unbekannt, 0 Lautsprecher, 1 Kopfhoerer
 static void unlockA();
+static void undoReset();
 static void pathOf(char* out, size_t n, const char* rel) { snprintf(out, n, "%s%s", gBase, rel); }
 static void mkdirs() {
     const char* d[] = {"projects", "samples", "samples/export"};
@@ -469,6 +470,7 @@ static bool prjLoad(const char* name) {
     applyProjectDoc(d);
     unlockA();
     poolResolveWanted();
+    undoReset();
     return true;
 }
 static bool prjExists(const char* name) { char p[800]; prjPath(name, p, sizeof p); struct stat st; return stat(p, &st) == 0; }
@@ -780,6 +782,151 @@ static void toast(const char* fmt, ...) {
     U.toastUntil = U.now + 1800;
 }
 static void touched() { U.dirty = true; U.editAt = U.now; }
+
+// --- Rueckgaengig / Wiederholen ------------------------------------------------------------
+// Ein Waechter vergleicht das Projekt alle 250 ms ueber eine Pruefsumme (Pattern fuer Pattern
+// unter kurzer Sperre). Was sich aendert, wird nach 700 ms Ruhe EIN Schritt: ein Drehen am
+// Regler ist ein Schritt, nicht hundert. Ein Schritt haelt nur die Patterns, die sich geaendert
+// haben, dazu Projektwerte und Song. So landet jede Aenderung im Verlauf - Tasten, Menue, Web
+// und MIDI -, ohne dass jede Bearbeitung daran denken muss.
+enum { UNDO_DEPTH = 64, UNDO_POLL_MS = 250, UNDO_QUIET_MS = 700, UNDO_MAX_MS = 4000, UNDO_MAX_PATS = 256 };
+static_assert(NPATTERNS <= 32, "Maske hat 32 Bit");
+struct UndoEntry {
+    uint32_t mask;                         // Bit p: Pattern p steckt (in Reihenfolge) in pats
+    Pattern* pats;
+    int16_t g[GLOBAL_PARAM_CAP];
+    Song song;
+};
+struct UndoStack { UndoEntry e[UNDO_DEPTH]; int n; };
+static UndoStack gUndo, gRedo;
+static Project gUndoBase;                  // Stand nach dem letzten Schritt
+static uint64_t gUndoHash = 0, gUndoBaseHash = 0;
+static uint32_t gUndoPollAt = 0, gUndoChangedAt = 0, gUndoBurstAt = 0;
+static bool gUndoPending = false, gUndoReady = false;
+
+static uint64_t undoMix(const void* p, size_t n, uint64_t h) {
+    const unsigned char* c = (const unsigned char*)p;
+    size_t i = 0;
+    for (; i + 8 <= n; i += 8) { uint64_t w; memcpy(&w, c + i, 8); h = (h ^ w) * 0x100000001b3ull; h ^= h >> 29; }
+    for (; i < n; i++) h = (h ^ c[i]) * 0x100000001b3ull;
+    return h;
+}
+static uint64_t undoHashOf(const Project& P, bool live) {
+    uint64_t h = 1469598103934665603ull;
+    for (int p = 0; p < NPATTERNS; p++) {
+        if (live) lockA();
+        h = undoMix(&P.pat[p], sizeof(Pattern), h);
+        if (live) unlockA();
+    }
+    if (live) lockA();
+    h = undoMix(P.g, sizeof P.g, h);
+    h = undoMix(&P.song, sizeof P.song, h);
+    if (live) unlockA();
+    return h;
+}
+static int undoCount(uint32_t m) { int n = 0; for (; m; m &= m - 1) n++; return n; }
+static void undoFree(UndoEntry& e) { free(e.pats); e.pats = nullptr; e.mask = 0; }
+static void undoClear(UndoStack& s) { for (int i = 0; i < s.n; i++) undoFree(s.e[i]); s.n = 0; }
+static void undoDropOldest(UndoStack& s) {
+    undoFree(s.e[0]);
+    for (int i = 1; i < s.n; i++) s.e[i - 1] = s.e[i];
+    s.n--;
+}
+static void undoPush(UndoStack& s, const UndoEntry& e) {
+    if (s.n == UNDO_DEPTH) undoDropOldest(s);
+    s.e[s.n++] = e;
+    for (;;) {                             // Speicher deckeln: bei vielen grossen Schritten fallen alte weg
+        int pats = 0;
+        for (int i = 0; i < s.n; i++) pats += undoCount(s.e[i].mask);
+        if (pats <= UNDO_MAX_PATS || s.n <= 1) break;
+        undoDropOldest(s);
+    }
+}
+// Aus dem Stand nach dem letzten Schritt (er gehoert nur dieser Seite, keine Sperre noetig)
+static bool undoFill(UndoEntry& e, uint32_t mask) {
+    e.mask = mask;
+    e.pats = mask ? (Pattern*)malloc(sizeof(Pattern) * undoCount(mask)) : nullptr;
+    if (mask && !e.pats) { e.mask = 0; return false; }
+    for (int p = 0, i = 0; p < NPATTERNS; p++) if (mask >> p & 1) memcpy(&e.pats[i++], &gUndoBase.pat[p], sizeof(Pattern));
+    memcpy(e.g, gUndoBase.g, sizeof e.g);
+    e.song = gUndoBase.song;
+    return true;
+}
+static void undoRebase(uint32_t mask) {
+    for (int p = 0; p < NPATTERNS; p++) {
+        if (!(mask >> p & 1)) continue;
+        lockA(); memcpy(&gUndoBase.pat[p], &gEng.P.pat[p], sizeof(Pattern)); unlockA();
+    }
+    lockA();
+    memcpy(gUndoBase.g, gEng.P.g, sizeof gUndoBase.g);
+    gUndoBase.song = gEng.P.song;
+    unlockA();
+    gUndoBaseHash = gUndoHash = undoHashOf(gUndoBase, false);
+    gUndoPending = false;
+}
+// Nach Laden, Neu, Demo: der Verlauf beginnt beim neuen Projekt
+static void undoReset() {
+    undoClear(gUndo); undoClear(gRedo);
+    undoRebase(~0u);
+    gUndoReady = true;
+}
+static void undoCommit() {
+    if (!gUndoPending) return;
+    uint32_t mask = 0;
+    for (int p = 0; p < NPATTERNS; p++) {
+        lockA(); bool d = memcmp(&gUndoBase.pat[p], &gEng.P.pat[p], sizeof(Pattern)) != 0; unlockA();
+        if (d) mask |= 1u << p;
+    }
+    lockA();
+    bool other = memcmp(gUndoBase.g, gEng.P.g, sizeof gUndoBase.g) || memcmp(&gUndoBase.song, &gEng.P.song, sizeof(Song));
+    unlockA();
+    UndoEntry e;
+    if ((mask || other) && undoFill(e, mask)) { undoPush(gUndo, e); undoClear(gRedo); }
+    undoRebase(mask);
+}
+// Im Hauptfaden je Bild: hoechstens alle 250 ms eine Pruefsumme (~1,4 MB lesen)
+static void undoPoll(bool now = false) {
+    if (!gUndoReady) undoReset();
+    if (!now && U.now - gUndoPollAt < UNDO_POLL_MS) return;
+    gUndoPollAt = U.now;
+    uint64_t h = undoHashOf(gEng.P, true);
+    if (h != gUndoHash) {
+        if (!gUndoPending) gUndoBurstAt = U.now;
+        gUndoHash = h; gUndoChangedAt = U.now;
+        gUndoPending = h != gUndoBaseHash;
+    }
+    if (gUndoPending && (now || U.now - gUndoChangedAt >= UNDO_QUIET_MS || U.now - gUndoBurstAt >= UNDO_MAX_MS)) undoCommit();
+}
+static bool undoMove(UndoStack& from, UndoStack& to) {
+    undoPoll(true);                        // was gerade erst geaendert wurde, ist zuerst dran
+    if (!from.n) return false;
+    UndoEntry e = from.e[--from.n];
+    UndoEntry back;
+    if (!undoFill(back, e.mask)) { from.n++; return false; }
+    for (int p = 0, i = 0; p < NPATTERNS; p++) {
+        if (!(e.mask >> p & 1)) continue;
+        lockA(); memcpy(&gEng.P.pat[p], &e.pats[i++], sizeof(Pattern)); unlockA();
+    }
+    lockA();
+    memcpy(gEng.P.g, e.g, sizeof gEng.P.g);
+    gEng.P.song = e.song;
+    if (e.mask >> gEng.pat & 1) gEng.resetTrackValues();
+    gEng.setTempo(gEng.effTempo(gEng.pat));
+    unlockA();
+    undoPush(to, back);
+    undoRebase(e.mask);
+    undoFree(e);
+    touched();
+    return true;
+}
+static void undoLast() {
+    if (undoMove(gUndo, gRedo)) toast("Undo  (%d more)", gUndo.n);
+    else toast("Nothing to undo");
+}
+static void redoLast() {
+    if (undoMove(gRedo, gUndo)) toast("Redo  (%d more)", gRedo.n);
+    else toast("Nothing to redo");
+}
 
 // --- Parameter, wie die Web-Oberflaeche sie ordnet -----------------------------------------
 static int P_MACHINE, P_SMP, P_SAMPLE_MODE, P_SAMPLE_BPM, P_NOTE, P_QUANT;
@@ -1322,11 +1469,11 @@ static void togglePlayback() {
 
 // --- Menue (SELECT) -------------------------------------------------------------------------
 enum { MI_PATTERN, MI_SECTIONS, MI_VALUE, MI_MASTER_EQ, MI_SAVE, MI_COPYPAT, MI_PASTEPAT, MI_CLEARPAT, MI_COPYTRK, MI_PASTETRIG, MI_PASTEALL, MI_CLEARTRIG,
-       MI_COPYSTEP, MI_PASTESTEP, MI_LOADSMP, MI_LENGTH, MI_SCENE_A, MI_SCENE_B, MI_SCENE_CLR, MI_HELP, MI_SLICE, MI_RECORD, MI_N };
+       MI_COPYSTEP, MI_PASTESTEP, MI_LOADSMP, MI_LENGTH, MI_SCENE_A, MI_SCENE_B, MI_SCENE_CLR, MI_HELP, MI_SLICE, MI_RECORD, MI_UNDO, MI_REDO, MI_N };
 static const char* MENU[MI_N] = {"Select pattern...", "Parameter sections...", "Choose value...", "Visual Master EQ...", "Save project", "Copy pattern", "Paste pattern", "Clear pattern",
     "Copy track", "Paste trigs", "Paste track (with sound)", "Clear trigs", "Copy step", "Paste step",
     "Load sample into slot...", "Track length...",
-    "Edit scene A (on/off)", "Edit scene B (on/off)", "Clear the scene being edited", "Help", "Sample editor...", "Recorder..."};
+    "Edit scene A (on/off)", "Edit scene B (on/off)", "Clear the scene being edited", "Help", "Sample editor...", "Recorder...", "Undo  (SELECT+L1)", "Redo  (SELECT+R1)"};
 static void openSamples();
 static void openSampleEditor();
 static int smpTargetSlot();
@@ -1371,6 +1518,8 @@ static void menuDo(int i) {
     case MI_RECORD:
         if (U.sel >= FXT) { toast("Select an audio track first"); return; }
         U.modal = M_RECORDER; return;
+    case MI_UNDO: undoLast(); return;
+    case MI_REDO: redoLast(); return;
     }
     touched();
 }
@@ -1652,6 +1801,7 @@ static void keysDone() {
         if (U.dirty && !prjSave()) { toast("Could not save %s", gPrjName); return; }
         if (prjExists(n)) { toast("%s exists - open it with OPEN PROJECT", n); return; }
         lockA(); scStop(); scSmpClear(); scLoad(""); unlockA();
+        undoReset();
         snprintf(gPrjName, sizeof gPrjName, "%s", n);
         prjSave();
         U.dirty = false;
@@ -1700,6 +1850,7 @@ static void prAction() {
     case PR_NEW: openKeys(KM_NEW, ""); break;
     case PR_DEMO:
         lockA(); scStop(); scDemo(); unlockA();
+        undoReset();
         toast("Demo loaded into %s", gPrjName); touched(); break;
     case PR_EXPORT:
         if (U.recTarget >= 0) toast("Stop the recorder first");
@@ -2295,7 +2446,13 @@ static void handleInput() {
         if (canPickValue(param)) { openValuePicker(param); selUsed = true; return; }
         if (DetailKind kind = detailKind(param)) { exitStepLock(); openDetail(kind, param); selUsed = true; return; }
     }
-    if (IN.down[BT_SELECT] && IN.heldMs(BT_SELECT, U.now) > 500) { U.modal = M_HELP; selUsed = true; return; }
+    // SELECT + L1 / R1: rueckgaengig / wiederholen
+    if (IN.down[BT_SELECT] && (IN.pressed(BT_L1) || IN.pressed(BT_R1))) {
+        exitStepLock();
+        if (IN.pressed(BT_L1)) undoLast(); else redoLast();
+        selUsed = true; return;
+    }
+    if (IN.down[BT_SELECT] && !selUsed && IN.heldMs(BT_SELECT, U.now) > 500) { U.modal = M_HELP; selUsed = true; return; }
     if (IN.released(BT_SELECT) && !selUsed) { U.modal = M_MENU; return; }
     // START: Play/Stop (im Song: Song), B+START gehalten = FILL
     if (IN.pressed(BT_START)) {
@@ -2901,7 +3058,7 @@ static void drawLength() {
     textC(SW / 2, y + 82, "A or B to close", C_DIM);
 }
 static void drawMenu() {
-    const int rowH = 19;
+    const int rowH = 18;
     int w = 340, h = 30 + MI_N * rowH + 8, x = (SW - w) / 2, y = (SH - h) / 2;
     char t[64]; snprintf(t, sizeof t, "MENU - %s", U.sel == FXT ? "FX TRACK" : "TRACK");
     box(x, y, w, h, t);
@@ -3055,9 +3212,9 @@ static void drawHelp() {
         "B + L1 / R1    jump 16 steps",             "START          play / stop  (SONG view: song)",
         "B + START      fill while held",           "SELECT tap     menu (pattern, sample, copy...)",
         "B + SELECT     jump to a parameter section",
-        "FN + arrows    select steps / tracks",
-        "FN + X / Y     copy / paste selected steps",
+        "FN + arrows    select steps / tracks  (+X/Y copy / paste)",
         "SELECT hold    this help",                 "right stick    scene crossfader A <-> B",
+        "SELECT + L1/R1 undo / redo",
         "menu > Edit scene A/B   X/Y then set scene values",
     };
     int y = 66;
@@ -3406,6 +3563,7 @@ static void simFrame(unsigned mask) {
     IN.mask = 0;
     U.now += 16;
     handleInput();
+    undoPoll();
     drawAll();
 }
 static void tap(int b, unsigned hold = 0) { simFrame(hold | 1u << b); simFrame(hold); }
@@ -3871,6 +4029,48 @@ static int selfTest(const char* shotDir) {
     CHECK(U.modal == M_HELP, "SELECT halten: Hilfe");
     shot("08-help");
     simFrame(0); tap(BT_B);
+    // Rueckgaengig / Wiederholen: jede Aenderung ein Schritt, ein Drehen am Regler auch nur einer
+    {
+        idle(90);
+        const int pat = scPattern(), n0 = gUndo.n;
+        const int bs = slotOf(pIndex("bpm")), b0 = scGet(-1, bs);
+        lockA(); const int on0 = gEng.P.pat[pat].t[0].s[5].on; gEng.P.pat[pat].t[0].s[5].on = !on0; unlockA();
+        idle(90);
+        CHECK(gUndo.n == n0 + 1 && gRedo.n == 0, "Undo: a step edit becomes one undo step");
+        for (int i = 0; i < 30; i++) { scSet(-1, bs, b0 + 1 + i % 7); idle(); }
+        scSet(-1, bs, b0 + 5);
+        idle(90);
+        CHECK(gUndo.n == n0 + 2, "Undo: turning a knob for half a second is a single step");
+        tap(BT_L1, 1u << BT_SELECT); simFrame(0);
+        CHECK(scGet(-1, bs) == b0 && gRedo.n == 1 && U.modal == M_NONE, "SELECT+L1 undoes the tempo, no menu opens");
+        tap(BT_L1, 1u << BT_SELECT); simFrame(0);
+        CHECK(gEng.P.pat[pat].t[0].s[5].on == on0 && gRedo.n == 2, "SELECT+L1 undoes the step");
+        tap(BT_R1, 1u << BT_SELECT); simFrame(0);
+        CHECK(gEng.P.pat[pat].t[0].s[5].on == !on0 && scGet(-1, bs) == b0, "SELECT+R1 redoes the step");
+        tap(BT_SELECT); U.menuSel = MI_REDO; tap(BT_A);
+        CHECK(scGet(-1, bs) == b0 + 5 && gRedo.n == 0 && U.modal == M_NONE, "Menu > Redo redoes the tempo");
+        tap(BT_R1, 1u << BT_SELECT); simFrame(0);
+        CHECK(!strcmp(U.toast, "Nothing to redo"), "Redo with nothing left says so");
+        // gleich nach einer Aenderung (vor der Ruhezeit): Undo nimmt genau diese zurueck
+        scSet(-1, bs, b0 + 9); idle(2);
+        tap(BT_L1, 1u << BT_SELECT); simFrame(0);
+        CHECK(scGet(-1, bs) == b0 + 5 && gRedo.n == 1, "Undo right after an edit takes back that edit");
+        // eine neue Aenderung verwirft, was wiederholt werden koennte
+        const int on1 = gEng.P.pat[pat].t[1].s[3].on;
+        lockA(); gEng.P.pat[pat].t[1].s[3].on = !on1; unlockA();
+        idle(90);
+        CHECK(gRedo.n == 0, "A new edit clears redo");
+        tap(BT_L1, 1u << BT_SELECT); simFrame(0);
+        tap(BT_L1, 1u << BT_SELECT); simFrame(0);
+        tap(BT_L1, 1u << BT_SELECT); simFrame(0);
+        CHECK(scGet(-1, bs) == b0 && gEng.P.pat[pat].t[0].s[5].on == on0, "Undo walks back to the start");
+        for (int i = 0; i < 40; i++) simFrame(1u << BT_SELECT | (i == 2 ? 1u << BT_L1 : 0));
+        CHECK(U.modal == M_NONE, "Holding SELECT after an undo does not open help");
+        simFrame(0);
+        for (int i = 0; i < 4; i++) { tap(BT_R1, 1u << BT_SELECT); simFrame(0); }
+        CHECK(U.modal == M_NONE && scGet(-1, bs) == b0 + 5 && gEng.P.pat[pat].t[0].s[5].on == !on0
+              && gEng.P.pat[pat].t[1].s[3].on == !on1 && gRedo.n == 0, "Redo walks forward to the last edit");
+    }
     // Speichern + Laden: das Dokument kommt unveraendert zurueck
     snprintf(gPrjName, sizeof gPrjName, "selftest");
     static TextBuf beforeBuf;
@@ -3880,6 +4080,7 @@ static int selfTest(const char* shotDir) {
     CHECK(prjSave(), "Projekt gespeichert");
     lockA(); scLoad(""); unlockA();
     CHECK(prjLoad("selftest"), "Projekt geladen");
+    CHECK(gUndo.n == 0 && gRedo.n == 0, "Loading a project starts a fresh undo history");
     CHECK(!strcmp(before, scSave()), "Dokument nach Laden gleich");
     CHECK(!strcmp(snapshotDoc(), scSave()), "Speichern aus der Kopie = Dokument des Kerns");
     prjPath("selftest", p, sizeof p); remove(p);
@@ -4243,6 +4444,7 @@ int main(int argc, char** argv) {
         lockA();
         handleInput();
         unlockA();
+        undoPoll();
         finishTake();
         if (gExp.on) exportStep(gRate / 5);
         pollPower();
