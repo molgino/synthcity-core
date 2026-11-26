@@ -346,7 +346,7 @@ static void* acceptThread(void* arg) {
         setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof idle);
         setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &intv, sizeof intv);
         setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &cnt, sizeof cnt);
-        if (g_conns >= 16) { close(fd); continue; }
+        if (__atomic_load_n(&g_conns, __ATOMIC_RELAXED) >= 16) { close(fd); continue; }
         __sync_fetch_and_add(&g_conns, 1);
         pthread_attr_t at; pthread_attr_init(&at);
         pthread_attr_setstacksize(&at, 128 * 1024);
