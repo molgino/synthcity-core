@@ -152,6 +152,25 @@ const grp = n => console.log('- ' + n);
   const sortiert = t => t.trim().split('\n').sort().join('\n');
   chk(sortiert(str(x.scSave())) === sortiert(save), 'nach dem Rundlauf steht etwas anderes da');
 
+  grp('Klaenge und Kits');
+  {
+    const put = text => { const b = new TextEncoder().encode(text + '\0'); const q = x.scScratch(b.length);
+                          new Uint8Array(x.memory.buffer, q, b.length).set(b); return q; };
+    x.scDemo();
+    x.scSet(2, t0, 33);
+    const sound = str(x.scSoundSave(2));
+    chk(sound.includes('kind = sound'), 'Klang ohne Kennung');
+    x.scStepSet(5, 4, 1);
+    chk(x.scSoundLoad(5, put(sound)) >= 1, 'Klang laesst sich nicht laden');
+    chk(x.scGet(5, t0) === 33 && x.scStepGet(5, 4) === 1, 'Klang nicht auf Spur 6 oder Steps verloren');
+    chk(str(x.scSoundSave(5)) === sound, 'Klang kommt nicht gleich zurueck');
+    chk(x.scSoundLoad(1, put('kind = kit')) === 0, 'Kit als Klang angenommen');
+    const kit = str(x.scKitSave());
+    x.scSet(0, t0, 7); x.scSet(7, t0, 9);
+    chk(x.scKitLoad(put(kit)) >= 1, 'Kit laesst sich nicht laden');
+    chk(str(x.scKitSave()) === kit, 'Kit kommt nicht gleich zurueck');
+  }
+
   grp('Steps und Locks');
   x.scStepSet(3, 5, 1);
   chk(x.scStepGet(3, 5) === 1, 'Step nicht gesetzt');

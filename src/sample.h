@@ -251,59 +251,74 @@ struct SamplePool {
 // Geschrieben werden NAMEN, nicht Klaenge: eine Projektdatei bleibt klein, und wer sie
 // oeffnet, sieht, welche Samples sie verlangt. Das Suchen ist Sache der Huelle - am Geraet
 // die Karte, im Browser der eigene Speicher.
-inline void poolToDoc(const SamplePool& p, Doc& d) {
+// Ein Platz unter einem Schluessel-Stamm ("smp.3" im Projekt, "smp" in einem Klang-Preset)
+inline void slotToDoc(const SamplePool& p, int i, Doc& d, const char* base) {
     char k[DOC_KEY];
+    snprintf(k, sizeof k, "%s.name", base);   d.setStr(k, p.s[i].name);
+    snprintf(k, sizeof k, "%s.rate", base);   d.set(k, (int32_t)p.s[i].rate);
+    snprintf(k, sizeof k, "%s.ch", base);     d.set(k, p.s[i].ch);
+    for (int j = 0; j < p.s[i].cutCount; j++) {
+        snprintf(k, sizeof k, "%s.cut.%d", base, j);
+        d.set(k, p.s[i].cuts[j]);
+    }
+    if (p.s[i].loop) { snprintf(k, sizeof k, "%s.loop", base); d.set(k, 1); }
+    if (p.s[i].a)    { snprintf(k, sizeof k, "%s.a", base);    d.set(k, p.s[i].a); }
+    if (p.s[i].b)    { snprintf(k, sizeof k, "%s.b", base);    d.set(k, p.s[i].b); }
+    if (p.s[i].la)   { snprintf(k, sizeof k, "%s.la", base);   d.set(k, p.s[i].la); }
+}
+inline void poolToDoc(const SamplePool& p, Doc& d) {
+    char b[16];
     for (int i = 0; i < SMP_SLOTS; i++) {
         if (p.s[i].n <= 0 && !p.s[i].name[0]) continue;
-        snprintf(k, sizeof k, "smp.%d.name", i);   d.setStr(k, p.s[i].name);
-        snprintf(k, sizeof k, "smp.%d.rate", i);   d.set(k, (int32_t)p.s[i].rate);
-        snprintf(k, sizeof k, "smp.%d.ch", i);     d.set(k, p.s[i].ch);
-        for (int j = 0; j < p.s[i].cutCount; j++) {
-            snprintf(k, sizeof k, "smp.%d.cut.%d", i, j);
-            d.set(k, p.s[i].cuts[j]);
-        }
-        if (p.s[i].loop) { snprintf(k, sizeof k, "smp.%d.loop", i); d.set(k, 1); }
-        if (p.s[i].a)    { snprintf(k, sizeof k, "smp.%d.a", i);    d.set(k, p.s[i].a); }
-        if (p.s[i].b)    { snprintf(k, sizeof k, "smp.%d.b", i);    d.set(k, p.s[i].b); }
-        if (p.s[i].la)   { snprintf(k, sizeof k, "smp.%d.la", i);   d.set(k, p.s[i].la); }
+        snprintf(b, sizeof b, "smp.%d", i);
+        slotToDoc(p, i, d, b);
     }
 }
 // Beim Laden bleibt ein Sample liegen, das schon da ist und denselben Namen traegt.
 // Alle anderen Plaetze werden zu Wuenschen: Name bekannt, Klang fehlt.
-inline void poolFromDoc(const Doc& d, SamplePool& p) {
+// Ein Platz aus dem Dokument (Name nicht leer): liegt dort schon dasselbe Sample, bleibt es
+// und bekommt nur den Ausschnitt; sonst wird der Platz zum Wunsch, den die Huelle erfuellt.
+inline void slotFromDoc(const Doc& d, const char* base, SamplePool& p, int i) {
     char k[DOC_KEY];
+    snprintf(k, sizeof k, "%s.name", base);
+    char nm[SMP_NAME]; snprintf(nm, sizeof nm, "%s", d.getStr(k, ""));
+    p.s[i].cutCount = 0;
+    for (int j = 0, prev = 0; j < SMP_SLICES - 1; j++) {
+        snprintf(k, sizeof k, "%s.cut.%d", base, j);
+        int frame = d.get(k, 0);
+        if (frame <= prev) break;
+        p.s[i].cuts[p.s[i].cutCount++] = frame;
+        prev = frame;
+    }
+    if (p.s[i].n > 0 && !strcmp(p.s[i].name, nm)) {             // schon da: nur Ausschnitt
+        snprintf(k, sizeof k, "%s.a", base);  int32_t a = d.get(k, 0);
+        snprintf(k, sizeof k, "%s.b", base);  int32_t b = d.get(k, 0);
+        snprintf(k, sizeof k, "%s.la", base); int32_t la = d.get(k, 0);
+        snprintf(k, sizeof k, "%s.loop", base);
+        p.setTrim(i, a, b, la, d.get(k, 0) != 0);
+        return;
+    }
+    p.s[i].n = 0;
+    p.s[i].estimatedBpm = 0;
+    snprintf(p.s[i].name, SMP_NAME, "%s", nm);
+    snprintf(k, sizeof k, "%s.rate", base); p.s[i].rate = (float)d.get(k, 48000);
+    snprintf(k, sizeof k, "%s.ch", base);   p.s[i].ch = (uint8_t)d.get(k, 1);
+    snprintf(k, sizeof k, "%s.loop", base); p.s[i].loop = (uint8_t)d.get(k, 0);
+    // Der Ausschnitt wartet mit, bis der Klang da ist - dann wird er angewendet.
+    snprintf(k, sizeof k, "%s.a", base);  p.s[i].a = d.get(k, 0);
+    snprintf(k, sizeof k, "%s.b", base);  p.s[i].b = d.get(k, 0);
+    snprintf(k, sizeof k, "%s.la", base); p.s[i].la = d.get(k, 0);
+}
+inline void poolFromDoc(const Doc& d, SamplePool& p) {
+    char k[DOC_KEY], b[16];
     for (int i = 0; i < SMP_SLOTS; i++) {
-        snprintf(k, sizeof k, "smp.%d.name", i);
-        const char* nm = d.getStr(k, "");
-        p.s[i].cutCount = 0;
-        if (!nm[0]) {
+        snprintf(b, sizeof b, "smp.%d", i);
+        snprintf(k, sizeof k, "%s.name", b);
+        if (!d.getStr(k, "")[0]) {
+            p.s[i].cutCount = 0;
             if (p.s[i].n <= 0) p.s[i].name[0] = 0;
             continue;
         }
-        for (int j = 0, prev = 0; j < SMP_SLICES - 1; j++) {
-            snprintf(k, sizeof k, "smp.%d.cut.%d", i, j);
-            int frame = d.get(k, 0);
-            if (frame <= prev) break;
-            p.s[i].cuts[p.s[i].cutCount++] = frame;
-            prev = frame;
-        }
-        if (p.s[i].n > 0 && !strcmp(p.s[i].name, nm)) {             // schon da: nur Ausschnitt
-            snprintf(k, sizeof k, "smp.%d.a", i);  int32_t a = d.get(k, 0);
-            snprintf(k, sizeof k, "smp.%d.b", i);  int32_t b = d.get(k, 0);
-            snprintf(k, sizeof k, "smp.%d.la", i); int32_t la = d.get(k, 0);
-            snprintf(k, sizeof k, "smp.%d.loop", i);
-            p.setTrim(i, a, b, la, d.get(k, 0) != 0);
-            continue;
-        }
-        p.s[i].n = 0;
-        p.s[i].estimatedBpm = 0;
-        snprintf(p.s[i].name, SMP_NAME, "%s", nm);
-        snprintf(k, sizeof k, "smp.%d.rate", i); p.s[i].rate = (float)d.get(k, 48000);
-        snprintf(k, sizeof k, "smp.%d.ch", i);   p.s[i].ch = (uint8_t)d.get(k, 1);
-        snprintf(k, sizeof k, "smp.%d.loop", i); p.s[i].loop = (uint8_t)d.get(k, 0);
-        // Der Ausschnitt wartet mit, bis der Klang da ist - dann wird er angewendet.
-        snprintf(k, sizeof k, "smp.%d.a", i);  p.s[i].a = d.get(k, 0);
-        snprintf(k, sizeof k, "smp.%d.b", i);  p.s[i].b = d.get(k, 0);
-        snprintf(k, sizeof k, "smp.%d.la", i); p.s[i].la = d.get(k, 0);
+        slotFromDoc(d, b, p, i);
     }
 }

@@ -590,6 +590,7 @@ Gerät und umgekehrt.
 | SELECT + X | Bei Condition, DEST oder NT2–NT4 die Werteliste öffnen. Links/rechts wechselt die Gruppe, hoch/runter den Wert, L1/R1 die Seite. X wechselt zwischen Grundwert und Step-Lock. A übernimmt, B schließt die Auswahl. Auch unter SELECT → Choose value. |
 | START | Play/Stop (in SONG: Song) · B + START: FILL, solange gehalten |
 | SELECT | Menü: Pattern-Auswahl, Parameterbereiche, kopieren/einfügen (Pattern, Spur, Step), Sample laden, Spurlänge, Scene A/B bearbeiten |
+| SELECT → Sounds & kits | Klänge (eine Spur) und Kits (alle 8 Spuren des Patterns) sichern und laden. Links/rechts wechselt zwischen SOUNDS und KITS, A auf der ersten Zeile sichert unter neuem Namen, A auf einem Eintrag lädt. |
 | Track length | X/Y ändern die Länge der gewählten Spur um 1, Rechts/Links um 16 Steps. Bereich 1–128. |
 | rechter Stick ◀▶ | Scene-Crossfader A ↔ B |
 
@@ -793,6 +794,25 @@ vor den Inserts ihrer Quellspur ab. Die Sends bleiben vor den Inserts, damit bes
 Send-Locks pro Stimme erhalten bleiben. Der Einzelspur-Recorder nimmt hinter den Inserts
 und ohne Send-Effekte auf. Einstellungen sind pro Pattern und Spur gespeichert. Beide
 Inserts sind beim Laden alter Projekte aus.
+
+## Klänge und Kits
+
+**SELECT → Sounds & kits** öffnet die Bibliothek. Ein **Sound** ist der Klang einer Spur: alle
+Spurparameter, also Machine, Quelle, Filter, Hüllkurven, LFOs, Modulation, Pegel, Sends und
+Inserts. Ein **Kit** sind die Klänge aller acht Spuren des aktiven Patterns. Laden wirkt auf
+die gewählte Spur bzw. das aktive Pattern; Steps, Locks, Spurlänge und Tempo bleiben, wie sie
+sind. Rückgängig geht mit SELECT + L1.
+
+Spielt die Spur ein Sample, steht es mit Namen, Slices, Loop und Ausschnitt im Sound. Beim
+Laden bekommt die Spur den Platz, auf dem dieses Sample im Projekt schon liegt, sonst den
+ersten freien; das Sample wird dann wie beim Projekt-Laden per Name von der Karte geholt.
+Zwei Spuren eines Kits mit demselben Sample teilen sich einen Platz. Ist kein Platz frei,
+behält die Spur ihren bisherigen Platz und das Gerät meldet es.
+
+Die Dateien liegen als Text unter `sounds/NAME.snd` und `kits/NAME.kit` neben `projects/`.
+Gespeichert wird nach Parameter-ID und nur, was vom Standard abweicht; Sounds und Kits aus
+älteren Versionen laden also auch, wenn Parameter dazugekommen sind. Im Kern stehen dafür
+`scSoundSave/scSoundLoad` und `scKitSave/scKitLoad` (Gerät, Web-App und Plugin teilen sie).
 
 ## SAMPLE, Sample-Editor und Recorder
 

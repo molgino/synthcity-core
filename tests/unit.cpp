@@ -3,6 +3,7 @@
 #include "../src/seq.h"
 #include "../src/queue.h"
 #include "../src/sample.h"
+#include "../src/preset.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <vector>
@@ -375,6 +376,73 @@ static void testSampleDoc() {
     CHECK(pool.s[2].n == 32 && !pool.wanted(2), "ein vorhandenes Sample wird weggeworfen");
 }
 
+// Klaenge und Kits: Rundlauf, Sequenz bleibt, Sample-Platz wird gefunden oder gewuenscht
+static void testPresets() {
+    curCase = "Klaenge und Kits";
+    static int SL_FREQ = paramSlot(paramFind("trk.flt.freq")), SL_SMP = paramSlot(paramFind("trk.smp"));
+    static int SL_INS = paramSlot(paramFind("trk.ins1.type")), SL_NOTE = paramSlot(paramFind("trk.note"));
+    static Project P; projectInit(P);
+    static SamplePool pool; pool.clear();
+    static float wav[64];
+    pool.set(5, wav, 32, 48000.0f, "kick 909", false, 1);
+    pool.s[5].cuts[0] = 10; pool.s[5].cutCount = 1;
+    Track& src = P.pat[0].t[0];
+    machineSelect(src.p, MACHINE_SAMPLE);
+    src.p[SL_SMP] = 5; src.p[SL_FREQ] = 33; src.p[SL_INS] = INS_CRUSH; src.p[SL_NOTE] = 50;
+    static Doc d; d.clear(); d.setStr("kind", "sound");
+    soundToDoc(src, pool, d, "");
+    CHECK(!d.has("trk.smp") || d.get("trk.smp", -1) == 5, "Platznummer");
+    CHECK(!strcmp(d.getStr("smp.name", ""), "kick 909") && d.get("smp.cut.0", 0) == 10, "Sample fehlt im Klang");
+
+    // Auf eine andere Spur mit Steps und Locks: Klang kommt, Sequenz bleibt.
+    Track& dst = P.pat[1].t[3];
+    dst.len = 12; dst.s[2].on = 1; dst.s[2].setLock(SL_FREQ, 99, 0); dst.p[SL_FREQ] = 120;
+    uint64_t taken = 0;
+    int r = soundFromDoc(d, "", dst, pool, taken);
+    CHECK(r == SOUND_OK, "vorhandenes Sample nicht gefunden (%d)", r);
+    CHECK(dst.p[SL_FREQ] == 33 && dst.p[SL_INS] == INS_CRUSH && dst.p[SL_NOTE] == 50 && dst.p[SL_SMP] == 5, "Klang nicht uebernommen");
+    CHECK(!memcmp(dst.p, src.p, sizeof dst.p), "Klang nicht bitgleich");
+    CHECK(dst.len == 12 && dst.s[2].on && dst.s[2].findLock(SL_FREQ) && dst.s[2].findLock(SL_FREQ)->val == 99,
+          "Steps/Locks/Laenge veraendert");
+
+    // In ein Projekt ohne das Sample: erster freier Platz wird zum Wunsch, mit Slices.
+    static SamplePool other; other.clear();
+    other.set(0, wav, 32, 48000.0f, "hat", false, 1);
+    Track fresh; projectInit(P); fresh = P.pat[0].t[1];
+    taken = 0;
+    r = soundFromDoc(d, "", fresh, other, taken);
+    CHECK(r == SOUND_SAMPLE_WANTED && fresh.p[SL_SMP] == 1, "Wunsch nicht auf Platz 1 (%d, %d)", r, fresh.p[SL_SMP]);
+    CHECK(other.wanted(1) && !strcmp(other.s[1].name, "kick 909") && other.s[1].cutCount == 1, "Wunsch unvollstaendig");
+    CHECK(other.s[0].n == 32, "belegter Platz ueberschrieben");
+
+    // Vorrat voll: Spur behaelt ihren Platz.
+    static SamplePool full; full.clear();
+    for (int i = 0; i < SMP_SLOTS; i++) { char n[8]; snprintf(n, sizeof n, "s%d", i); full.set(i, wav, 8, 48000.0f, n, false, 1); }
+    fresh.p[SL_SMP] = 7; taken = 0;
+    CHECK(soundFromDoc(d, "", fresh, full, taken) == SOUND_NO_SLOT && fresh.p[SL_SMP] == 7, "voller Vorrat falsch behandelt");
+
+    // Alter Klang ohne neuere Parameter: Fehlendes bekommt den Standard.
+    static Doc old; old.clear(); old.set("trk.flt.freq", 40);
+    taken = 0;
+    soundFromDoc(old, "", fresh, other, taken);
+    CHECK(fresh.p[SL_FREQ] == 40 && fresh.p[SL_INS] == PARAMS[paramFind("trk.ins1.type")].def, "Standardwerte fehlen");
+
+    // Kit: acht Spuren, zwei mit demselben Sample bekommen denselben Platz.
+    projectInit(P);
+    for (int t = 0; t < NTRACKS; t++) P.pat[0].t[t].p[SL_FREQ] = (int16_t)(10 + t);
+    machineSelect(P.pat[0].t[2].p, MACHINE_SAMPLE); P.pat[0].t[2].p[SL_SMP] = 5;
+    machineSelect(P.pat[0].t[6].p, MACHINE_SAMPLE); P.pat[0].t[6].p[SL_SMP] = 5;
+    static Doc kd; kd.clear();
+    kitToDoc(P.pat[0], pool, kd);
+    static SamplePool empty; empty.clear();
+    r = kitFromDoc(kd, P.pat[4], empty);
+    bool same = true;
+    for (int t = 0; t < NTRACKS; t++) if (memcmp(P.pat[4].t[t].p, P.pat[0].t[t].p, sizeof P.pat[0].t[t].p) && t != 2 && t != 6) same = false;
+    CHECK(same, "Kit-Spuren nicht gleich");
+    CHECK(r == SOUND_SAMPLE_WANTED && P.pat[4].t[2].p[SL_SMP] == 0 && P.pat[4].t[6].p[SL_SMP] == 0 && !empty.s[1].name[0],
+          "Kit belegt fuer dasselbe Sample zwei Plaetze");
+}
+
 // Tonart: einrasten und stufenweise gehen.
 static void testScale() {
     curCase = "Tonart";
@@ -417,6 +485,7 @@ int main() {
     testRatchet();
     testScenes();
     testSampleDoc();
+    testPresets();
     testScale();
     testQueue();
     printf("%s: %d Pruefungen ok, %d Fehler\n", fail ? "FEHLGESCHLAGEN" : "OK", pass, fail);
