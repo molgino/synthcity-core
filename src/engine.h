@@ -249,14 +249,18 @@ struct Voice {
 
     // Drei Ziele: trocken, Sende A, Sende B. Die Sende-Anteile gehoeren zur Stimme,
     // damit ein P-Lock auf S.A auch wirklich nur diesen Anschlag weiterschickt.
-    struct Mix { float *dL, *dR, *aL, *aR, *bL, *bR; };
+    // Hat die Spur Inserts, schickt die Stimme nichts direkt: sie meldet in w/wa/wb ihre
+    // Huellkurve und ihre Send-Anteile, und die Engine schickt das Signal NACH den Inserts
+    // mit dem so gewichteten Anteil weiter (eine Stimme: genau ihr S.A/S.B).
+    struct Mix { float *dL, *dR, *aL, *aR, *bL, *bR; float *w = nullptr, *wa = nullptr, *wb = nullptr; };
 
     void run(const Mix& mx, int n, float sr, const float* live) {
         if (!used) return;
         static const int slotSA = paramSlot(paramFind("trk.send.a"));
         static const int slotSB = paramSlot(paramFind("trk.send.b"));
         float sa = pLevel(pm[slotSA]), sb = pLevel(pm[slotSB]);
-        float buf[MACH_CHUNK], bufR[MACH_CHUNK], oL[MACH_CHUNK], oR[MACH_CHUNK];
+        float buf[MACH_CHUNK], bufR[MACH_CHUNK], oL[MACH_CHUNK], oR[MACH_CHUNK], egs[MACH_CHUNK];
+        const bool weigh = mx.w != nullptr;
         const bool st = mach->stereo(pf, *pool);
         const bool aligned = ModState::extended(pf, 0) || ModState::extended(pf, 1) || pf[modSlots().eMode] > 0.5f;
         const bool machineEnv = mach->usesGate(ms);
@@ -294,6 +298,7 @@ struct Voice {
                 }
                 age++;
                 float eg = e * gain;
+                if (weigh) egs[i] = eg;
                 float xl, xr;
                 if (st) {
                     float l = ft == FLT_LADDER ? lad.run(buf[i]) : flt.run(buf[i], ft);
@@ -310,6 +315,13 @@ struct Voice {
             // Mischen: Sende-Wege nur, wenn sie offen sind (x * 0 dazuzaehlen aendert nichts)
             float* dL = mx.dL + done; float* dR = mx.dR + done;
             for (int i = 0; i < c; i++) { dL[i] += oL[i]; dR[i] += oR[i]; }
+            if (weigh) {
+                float* w = mx.w + done; float* wa = mx.wa + done; float* wb = mx.wb + done;
+                for (int i = 0; i < c; i++) { w[i] += egs[i]; wa[i] += egs[i] * sa; wb[i] += egs[i] * sb; }
+                done += c;
+                if (env.done()) { used = false; return; }
+                continue;
+            }
             if (sa != 0.0f) { float* aL = mx.aL + done; float* aR = mx.aR + done; for (int i = 0; i < c; i++) { aL[i] += oL[i] * sa; aR[i] += oR[i] * sa; } }
             if (sb != 0.0f) { float* bL = mx.bL + done; float* bR = mx.bR + done; for (int i = 0; i < c; i++) { bL[i] += oL[i] * sb; bR[i] += oR[i] * sb; } }
             done += c;
@@ -389,7 +401,9 @@ struct Engine : Sink {
     bool masteringExport = false;
     int64_t sampleClock = 0, modulationOffset = 0;
     float trackDry[2][NTRACKS][2][4096];
-    unsigned trackCapture = 0;
+    float trackSend[2][NTRACKS][3][4096];   // Gewicht, Gewicht*S.A, Gewicht*S.B je Haelfte
+    float sendHold[NTRACKS][2] = {};        // letzter Anteil, falls nur noch der Insert klingt
+    unsigned trackCapture = 0, insertTracks = 0;
     VoiceHelper* helper = nullptr;
     int jobC = 0;                  // Laenge des laufenden Teilblocks
     // Eine Haelfte der Stimmen rechnen (0 = gerade in bufD/A/B, 1 = ungerade in bufD2/A2/B2).
@@ -404,6 +418,8 @@ struct Engine : Sink {
             if (!(trackCapture & (1u << track))) continue;
             memset(trackDry[parity][track][0], 0, sizeof(float) * c);
             memset(trackDry[parity][track][1], 0, sizeof(float) * c);
+            if (insertTracks & (1u << track))
+                for (int k = 0; k < 3; k++) memset(trackSend[parity][track][k], 0, sizeof(float) * c);
         }
         for (int i = parity; i < NVOICES; i += 2) {
             Voice& voice = v[i];
@@ -411,12 +427,18 @@ struct Engine : Sink {
             if (!voice.preview && (trackCapture & (1u << voice.track))) {
                 target.dL = trackDry[parity][voice.track][0];
                 target.dR = trackDry[parity][voice.track][1];
+                if (insertTracks & (1u << voice.track)) {
+                    target.w = trackSend[parity][voice.track][0];
+                    target.wa = trackSend[parity][voice.track][1];
+                    target.wb = trackSend[parity][voice.track][2];
+                }
             }
             voice.run(target, c, sr, live[voice.track]);
         }
     }
     void resetInserts() {
         for (auto& track : inserts) for (StereoInsert& stage : track) stage.reset();
+        for (auto& h : sendHold) h[0] = h[1] = 0.0f;
     }
     void configureInserts() {
         const Pattern& pattern = P.pat[pat];
@@ -424,11 +446,12 @@ struct Engine : Sink {
             for (int slot = 0; slot < INSERT_STAGES; slot++)
                 inserts[t][slot].configure(pattern.t[t].p + insertParamSlot(slot), sr);
     }
-    unsigned trackCaptureMask() const {
+    unsigned trackCaptureMask() {
         unsigned mask = recOn && recSource >= 0 ? 1u << recSource : 0;
+        insertTracks = 0;
         for (int t = 0; t < NTRACKS; t++)
             for (const StereoInsert& stage : inserts[t])
-                if (stage.processing()) mask |= (1u << t) | stage.sources();
+                if (stage.processing()) { mask |= (1u << t) | stage.sources(); insertTracks |= 1u << t; }
         return mask;
     }
     void mixInserts(int frames) {
@@ -446,6 +469,11 @@ struct Engine : Sink {
             bool recording = recOn && recSource == t;
             StereoInsert* slots = inserts[t];
             bool processFirst = slots[0].processing(), processSecond = slots[1].processing();
+            const bool sends = insertTracks & (1u << t);
+            float* w0 = trackSend[0][t][0]; float* w1 = trackSend[1][t][0];
+            float* a0 = trackSend[0][t][1]; float* a1 = trackSend[1][t][1];
+            float* b0 = trackSend[0][t][2]; float* b1 = trackSend[1][t][2];
+            float& holdA = sendHold[t][0]; float& holdB = sendHold[t][1];
             for (int i = 0; i < frames; i++) {
                 float l = trackDry[0][t][0][i], r = trackDry[0][t][1][i];
                 auto insert = [&](StereoInsert& stage) {
@@ -458,6 +486,12 @@ struct Engine : Sink {
                 if (processSecond) insert(slots[1]);
                 bufD[0][i] += l;
                 bufD[1][i] += r;
+                if (sends) {   // Sends hinter den Inserts
+                    const float w = w0[i] + w1[i];
+                    if (w > 1e-9f) { holdA = (a0[i] + a1[i]) / w; holdB = (b0[i] + b1[i]) / w; }
+                    if (holdA != 0.0f) { bufA[0][i] += l * holdA; bufA[1][i] += r * holdA; }
+                    if (holdB != 0.0f) { bufB[0][i] += l * holdB; bufB[1][i] += r * holdB; }
+                }
                 if (recording) { recStereo[2 * i] = l; recStereo[2 * i + 1] = r; }
             }
         }

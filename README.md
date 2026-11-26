@@ -789,8 +789,13 @@ und **Ensemble** (zwei versetzte Abgriffe pro Seite). Rate, Depth, Width, Mix un
 sind einstellbar. Bei Width = 0 bleibt ein Mono-Signal in der Mitte.
 
 Die Inserts bearbeiten die Summe der Stimmen einer Spur. Eine externe Sidechain greift
-vor den Inserts ihrer Quellspur ab. Die Sends bleiben vor den Inserts, damit bestehende
-Send-Locks pro Stimme erhalten bleiben. Der Einzelspur-Recorder nimmt hinter den Inserts
+vor den Inserts ihrer Quellspur ab. **Die Sends liegen hinter den Inserts:** Delay und Reverb
+bekommen das bearbeitete Signal, ein Crush wird also mitverhallt, ein Kompressor duckt auch den
+Hall-Anteil. Send-Locks pro Step gelten weiter: Jede Stimme meldet ihre Hüllkurve und ihre
+Send-Anteile, und das Signal hinter den Inserts geht mit dem danach gewichteten Anteil in die
+Sends. Bei einer Stimme ist das genau ihr S.A/S.B, überlappen Stimmen mit verschiedenen Locks,
+mischt sich der Anteil nach ihrer Lautstärke. Spuren ohne aktiven Insert klingen bitgleich wie
+bisher. Der Einzelspur-Recorder nimmt hinter den Inserts
 und ohne Send-Effekte auf. Einstellungen sind pro Pattern und Spur gespeichert. Beide
 Inserts sind beim Laden alter Projekte aus.
 
