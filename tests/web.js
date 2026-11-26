@@ -215,6 +215,43 @@ const grp = n => console.log('- ' + n);
     while (x.scSongN()) x.scSongDel(0);
   }
 
+  grp('Grosses Projekt: alle Patterns, Spuren und Steps mit 12 Locks');
+  {
+    // Frueher war das Dokument bei 48 000 Eintraegen voll; im Browser waechst es jetzt mit.
+    const lockSlots = [];
+    for (let i = 0; i < x.scNParams() && lockSlots.length < 12; i++)
+      if (x.scParamScope(i) === 1 && (x.scParamFlags(i) & 1)) lockSlots.push(x.scParamSlot(i));
+    const patterns = x.scNPatterns(), tracks = x.scNTracks(), steps = x.scNSteps();
+    for (let pt = 0; pt < patterns; pt++) {
+      x.scSetPattern(pt);
+      for (let t = 0; t < tracks; t++) {
+        x.scSetTrackLen(t, steps);
+        for (let s = 0; s < steps; s++) {
+          x.scStepSet(t, s, 1);
+          lockSlots.forEach((sl, l) => x.scLockSet(t, s, sl, 1 + (s + l + pt) % 100, 1));
+        }
+      }
+    }
+    x.scSetPattern(0);
+    const p0 = x.scSave();
+    chk(p0 !== 0, 'grosses Projekt laesst sich nicht speichern');
+    const big = p0 ? str(p0) : '';
+    const zeilen = big.split('\n').length;
+    console.log(`  ${zeilen} Zeilen, ${(big.length / 1048576).toFixed(1)} MB`);
+    chk(zeilen > 400000, 'grosses Projekt unvollstaendig: ' + zeilen + ' Zeilen');
+    const b2 = new TextEncoder().encode(big + '\0');
+    const q = x.scScratch(b2.length);
+    chk(q !== 0, 'kein Speicher fuer das grosse Projekt');
+    if (q) {
+      new Uint8Array(x.memory.buffer, q, b2.length).set(b2);
+      x.scSetPattern(3); x.scLockSet(2, 7, lockSlots[0], 5, 0);          // etwas aendern
+      chk(x.scLoad(q) === 1, 'grosses Projekt laesst sich nicht laden');
+      const back = str(x.scSave());
+      const sortiert = t => t.trim().split('\n').sort().join('\n');
+      chk(sortiert(back) === sortiert(big), 'grosses Projekt kommt nicht unveraendert zurueck');
+    }
+  }
+
   console.log(fails ? `\nFEHLGESCHLAGEN: ${fails} von ${checks} Pruefungen`
                     : `\nOK: ${checks} Pruefungen ok, 0 Fehler`);
   process.exit(fails ? 1 : 0);
