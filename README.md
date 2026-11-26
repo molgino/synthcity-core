@@ -581,8 +581,9 @@ Gerät und umgekehrt.
 | FN + Pfeile | Step-Bereich markieren. Links/rechts erweitert über Steps, hoch/runter über Audiospuren. Auf der FX-Spur springt hoch/runter in 16er-Schritten. |
 | FN + X / Y | Bereich kopieren / ab Cursor einfügen. Ohne Auswahl kopiert FN + X den aktuellen Step. FN + B hebt die Auswahl auf. |
 | X / Y | Wert hoch / runter (B gehalten = grob, lange halten = schneller) |
-| A antippen | Trig an/aus |
-| A halten + X/Y | Lock auf dem Step (auf leerem Step: trigless) · A halten + B: Locks des Steps löschen |
+| A antippen | Trig an/aus im normalen Modus |
+| A ca. 350 ms halten, dann loslassen | **STEP LOCK** rastet ein. ▲▼ wählt den Parameter, X/Y ändert seinen Lock-Wert und ◀▶ wechselt den Step. Auf einem leeren Step entsteht ein trigless Lock. B beendet den Modus. Beim Spur-, Pattern- oder Ansichtswechsel endet er ebenfalls. |
+| A halten + X/Y oder B | Schnellweg vor dem Einrasten: X/Y setzt einen Lock, B löscht die Locks des Steps. |
 | B + A | Spur stumm |
 | SELECT → Select pattern | Alle 16 Patterns im Raster. Steuerkreuz wählt, A bestätigt und B schließt. Bei Wiedergabe wartet der Wechsel bis zur Pattern-Grenze. |
 | B + SELECT | Direkt zu einem Parameterbereich springen, etwa LFO 2, Insert 2 oder Master EQ. Auch im SELECT-Menü unter Parameter sections. |
