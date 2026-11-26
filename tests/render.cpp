@@ -1592,6 +1592,31 @@ int main() {
         chk(rms(enabled + 24000, 12000) > rms(blocks + 24000, 12000) * 1.2f,
             "slot 2 does not process the signal coming from slot 1");
 
+        // Sends hinter den Inserts: -24 dB im Insert machen auch den Hall 24 dB leiser.
+        {
+            static float a[frames * 2], b[frames * 2];
+            auto sendReturn = [&](bool quiet) {
+                auto setup = [&](int send) {
+                    toneSetup();
+                    e.P.pat[0].t[0].p[SL("trk.send.b")] = (int16_t)send;
+                    if (quiet) {
+                        auto* level = e.P.pat[0].t[0].p + insertParamSlot(0);
+                        level[INS_TYPE] = INS_CRUSH;
+                        level[INS_TRIM] = -24;
+                    }
+                };
+                setup(127); render(a, 977);
+                setup(0);   render(b, 977);
+                double sum = 0;
+                for (int i = 0; i < frames * 2; i++) sum += (double)(a[i] - b[i]) * (a[i] - b[i]);
+                return sqrt(sum / (frames * 2));
+            };
+            const double open = sendReturn(false), quiet = sendReturn(true);
+            printf("  Hall-Ruecklauf ohne Insert %.5f, mit -24 dB im Insert %.5f\n", open, quiet);
+            chk(open > 1e-3, "send B reaches the reverb");
+            chk(quiet < open * 0.12 && quiet > open * 0.03, "sends do not follow the track inserts");
+        }
+
         compress(true);
         static Doc doc;
         static Project reloaded;
