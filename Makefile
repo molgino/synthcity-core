@@ -66,10 +66,25 @@ device: build/synthcity-device
 build/synthcity-device: $(DEVSRC) device/*.h web/bridge.cpp $(HDRS)
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -fno-exceptions -fno-rtti -Wno-missing-field-initializers -Wno-format-truncation -DWITH_MIDI $(SDL_CFLAGS) -o $@ $(DEVSRC) $(SDL_LIBS) -lasound -lpthread $(LDLIBS)
+# Dasselbe Programm mit Sanitizern: Speicherfehler/undefiniertes Verhalten bzw. Datenrennen
+# (zweiter Rechenkern, Webserver, MIDI). Beide laufen auch in der CI.
+DEVFLAGS = -std=c++17 -fno-exceptions -fno-rtti -Wno-format-truncation -DWITH_MIDI $(SDL_CFLAGS)
+build/synthcity-device-asan: $(DEVSRC) device/*.h web/bridge.cpp $(HDRS)
+	@mkdir -p build
+	$(CXX) -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer $(DEVFLAGS) -o $@ $(DEVSRC) $(SDL_LIBS) -lasound -lpthread $(LDLIBS)
+build/synthcity-device-tsan: $(DEVSRC) device/*.h web/bridge.cpp $(HDRS)
+	@mkdir -p build
+	$(CXX) -O1 -g -fsanitize=thread $(DEVFLAGS) -o $@ $(DEVSRC) $(SDL_LIBS) -lasound -lpthread $(LDLIBS)
+devtest-asan: build/synthcity-device-asan
+	@rm -rf build/devhome-asan && mkdir -p build/devhome-asan
+	SC_HOME=build/devhome-asan ASAN_OPTIONS=detect_leaks=0:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/synthcity-device-asan --selftest
+devtest-tsan: build/synthcity-device-tsan
+	@rm -rf build/devhome-tsan && mkdir -p build/devhome-tsan
+	SC_HOME=build/devhome-tsan TSAN_OPTIONS=halt_on_error=1 ./build/synthcity-device-tsan --selftest
 devtest: build/synthcity-device
-	@mkdir -p build/shots
+	@rm -rf build/devhome && mkdir -p build/devhome build/shots
 	SC_HOME=build/devhome ./build/synthcity-device --shots build/shots
 # Cross-Build fuer den R36S (aarch64, ohne libstdc++): siehe tools/r36s-build.sh
 r36s:
 	./tools/r36s-build.sh
-.PHONY: device devtest r36s
+.PHONY: device devtest devtest-asan devtest-tsan r36s

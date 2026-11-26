@@ -32,6 +32,32 @@ jobs:
             web/synthcity.wasm
           if-no-files-found: error
 
+  device:
+    name: R36S device self-test (native, ASan/UBSan, TSan)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SDL2 and ALSA headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsdl2-dev libasound2-dev
+      # Dieselbe Geraete-Huelle wie auf dem R36S, nur nativ: Tasten, Locks, Song, Speichern/Laden,
+      # Samples, Export, MIDI, Webserver ueber echtes HTTP, zwei Rechenkerne bitgleich.
+      - name: Device self-test with screenshots
+        run: make -B device devtest
+      - name: Device self-test under AddressSanitizer and UBSan
+        run: make devtest-asan
+      - name: Device self-test under ThreadSanitizer
+        run: make devtest-tsan
+      - name: Upload device screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthcity-core-device-shots
+          path: build/shots/*.bmp
+          if-no-files-found: ignore
+
   r36s:
     name: R36S arm64 packages
     runs-on: ubuntu-24.04
