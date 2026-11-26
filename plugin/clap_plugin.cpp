@@ -210,16 +210,23 @@ static bool stSave(const clap_plugin_t* pl, const clap_ostream_t* os) {
 }
 static bool stLoad(const clap_plugin_t* pl, const clap_istream_t* is) {
     Plug* P = self(pl);
-    static char text[DOC_MAX * 48];
+    // Der Zustand ist so gross wie das Projekt - der Puffer waechst beim Lesen mit.
+    static TextBuf buf;
     size_t got = 0;
-    while (got + 1 < sizeof text) {
-        int64_t r = is->read(is, text + got, sizeof text - got - 1);
+    for (;;) {
+        char* t = buf.p;
+        if (got + 65536 + 1 > buf.cap) {
+            TextBuf bigger;
+            if (!bigger.reserve(got + 65536)) return false;
+            if (got) memcpy(bigger.p, t, got);
+            free(buf.p); buf = bigger; bigger.p = nullptr;
+        }
+        int64_t r = is->read(is, buf.p + got, buf.cap - got - 1);
         if (r < 0) return false;
         if (r == 0) break;
         got += (size_t)r;
     }
-    char extra;
-    if (got == sizeof text - 1 && is->read(is, &extra, 1) != 0) return false;
+    char* text = buf.p;
     text[got] = 0;
     static Doc d; d.clear();
     char* line = text;

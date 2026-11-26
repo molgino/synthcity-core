@@ -417,7 +417,6 @@ static const char* snapshotDoc() {
     static Project snap;
     static SamplePool* poolSnap = (SamplePool*)calloc(1, sizeof(SamplePool));   // nur die Slot-Angaben
     static Doc d;
-    static char out[DOC_MAX * 48];
     int pat;
     char* src = (char*)&gEng.P; char* dst = (char*)&snap;
     size_t a = (size_t)((char*)&gEng.P.pat[0] - src), b = a + sizeof gEng.P.pat;
@@ -432,7 +431,7 @@ static const char* snapshotDoc() {
     projectToDoc(snap, d);
     if (poolSnap) poolToDoc(*poolSnap, d);
     d.set("prj.pat", pat);
-    return d.writeText(out, sizeof out) ? out : nullptr;
+    return d.text();
 }
 static bool prjSave(const char* name = gPrjName) {
     NoLock nl;
@@ -452,9 +451,14 @@ static bool prjLoad(const char* name) {
     char p[800]; prjPath(name, p, sizeof p);
     FILE* f = fopen(p, "r");
     if (!f) return false;
-    static char buf[DOC_MAX * 48];
-    size_t n = fread(buf, 1, sizeof buf - 1, f);
-    bool ok = (n < sizeof buf - 1 || fgetc(f) == EOF) && !ferror(f);
+    // Die Datei ist so gross wie das Projekt: ganz lesen, der Puffer waechst mit.
+    static TextBuf text;
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char* buf = size >= 0 ? text.reserve((size_t)size) : nullptr;
+    size_t n = buf ? fread(buf, 1, (size_t)size, f) : 0;
+    bool ok = buf && n == (size_t)size && fgetc(f) == EOF && !ferror(f);
     fclose(f);
     if (!ok) return false;
     buf[n] = 0;
@@ -4069,8 +4073,10 @@ static int selfTest(const char* shotDir) {
     }
     // Speichern + Laden: das Dokument kommt unveraendert zurueck
     snprintf(gPrjName, sizeof gPrjName, "selftest");
-    static char before[DOC_MAX * 48];
-    snprintf(before, sizeof before, "%s", scSave());
+    static TextBuf beforeBuf;
+    const char* now0 = scSave();
+    char* before = beforeBuf.reserve(strlen(now0));
+    memcpy(before, now0, strlen(now0) + 1);
     CHECK(prjSave(), "Projekt gespeichert");
     lockA(); scLoad(""); unlockA();
     CHECK(prjLoad("selftest"), "Projekt geladen");

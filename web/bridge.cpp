@@ -8,7 +8,6 @@
 
 static Engine  gEng;
 static char    gBuf[4096];
-static char    gDoc[DOC_MAX * 48];
 
 extern "C" {
 
@@ -654,13 +653,14 @@ const char* scSave() {
     projectToDoc(gEng.P, d);
     poolToDoc(gEng.pool, d);
     d.set("prj.pat", gEng.pat);          // mit welchem Pattern das Projekt aufgeht
-    return d.writeText(gDoc, sizeof gDoc) ? gDoc : nullptr;
+    return d.text();
 }
 static bool readProjectText(const char* text, Doc& d) {
     d.clear();
-    static char tmp[DOC_MAX * 48];
+    static TextBuf buf;
     size_t len = strlen(text);
-    if (len >= sizeof tmp) return false;
+    char* tmp = buf.reserve(len);
+    if (!tmp) return false;
     memcpy(tmp, text, len + 1);
     char* line = tmp;
     while (line && *line) {
