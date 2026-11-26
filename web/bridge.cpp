@@ -4,6 +4,7 @@
 #include "../src/engine.h"
 #include "../src/text.h"
 #include "../src/demo.h"
+#include "../src/preset.h"
 #include <string.h>
 
 static Engine  gEng;
@@ -704,6 +705,44 @@ int scLoad(const char* text) {
     if (!readProjectText(text, d)) return 0;
     applyProjectDoc(d);
     return 1;
+}
+
+// --- Klaenge und Kits (src/preset.h): wirken auf das aktive Pattern ----------------------------
+// Rueckgabe beim Laden: 0 = kein Klang/Kit, 1 = geladen, 2 = geladen, Sample muss nachgeladen
+// werden (scSmpWanted), 3 = geladen, aber kein freier Sample-Platz (Spur behaelt ihren).
+const char* scSoundSave(int t) {
+    if (t < 0 || t >= NTRACKS) return "";
+    static Doc d;
+    d.clear();
+    d.setStr("kind", "sound");
+    soundToDoc(gEng.P.pat[gEng.pat].t[t], gEng.pool, d, "");
+    const char* text = d.text();
+    return text ? text : "";
+}
+int scSoundLoad(int t, const char* text) {
+    if (t < 0 || t >= NTRACKS) return 0;
+    static Doc d;
+    if (!readProjectText(text, d) || strcmp(d.getStr("kind", ""), "sound")) return 0;
+    uint64_t taken = 0;
+    int r = soundFromDoc(d, "", gEng.P.pat[gEng.pat].t[t], gEng.pool, taken);
+    gEng.P.pat[gEng.pat].used = 1;
+    gEng.resetTrackValues();
+    return r;
+}
+const char* scKitSave() {
+    static Doc d;
+    d.clear();
+    kitToDoc(gEng.P.pat[gEng.pat], gEng.pool, d);
+    const char* text = d.text();
+    return text ? text : "";
+}
+int scKitLoad(const char* text) {
+    static Doc d;
+    if (!readProjectText(text, d) || strcmp(d.getStr("kind", ""), "kit")) return 0;
+    int r = kitFromDoc(d, gEng.P.pat[gEng.pat], gEng.pool);
+    gEng.P.pat[gEng.pat].used = 1;
+    gEng.resetTrackValues();
+    return r;
 }
 
 // --- Ein Pattern zum Anfangen (steht in src/demo.h) -------------------------------------------

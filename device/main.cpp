@@ -185,7 +185,7 @@ static int gJack = -1;                    // -1 unbekannt, 0 Lautsprecher, 1 Kop
 static void unlockA();
 static void pathOf(char* out, size_t n, const char* rel) { snprintf(out, n, "%s%s", gBase, rel); }
 static void mkdirs() {
-    const char* d[] = {"projects", "samples", "samples/export"};
+    const char* d[] = {"projects", "samples", "samples/export", "sounds", "kits"};
     for (const char* s : d) { char p[700]; pathOf(p, sizeof p, s); mkdir(p, 0755); }
 }
 // Einstellungen des alten SYNTH CITY (gleicher Ordner, settings.cfg): USB-Modus, Lautstaerke, Ausgang
@@ -733,7 +733,7 @@ enum { V_TRACK, V_SONG, V_PROJECT, V_SYSTEM, V_N };
 static const char* VIEWNAME[V_N] = {"TRACK", "SONG", "PROJ", "SYSTEM"};
 enum { TAB_TRIG, TAB_CHRD, TAB_SRC, TAB_FLTR, TAB_AMP, TAB_MIX, TAB_MOD, TAB_INSERT, TAB_N };
 static const char* TABNAME[TAB_N] = {"TRIG", "CHRD", "SRC", "FLTR", "AMP", "MIX", "MOD", "INS"};
-enum { M_NONE, M_MENU, M_SAMPLES, M_HELP, M_KEYS, M_SLICE, M_RECORDER, M_LENGTH, M_PATTERNS, M_SECTIONS, M_VALUE, M_MASTER_EQ, M_DETAIL, M_SAMPLE_BPM };
+enum { M_NONE, M_MENU, M_SAMPLES, M_HELP, M_KEYS, M_SLICE, M_RECORDER, M_LENGTH, M_PATTERNS, M_SECTIONS, M_VALUE, M_MASTER_EQ, M_DETAIL, M_SAMPLE_BPM, M_LIBRARY };
 static constexpr int PATTERN_COLUMNS = 4;
 static constexpr uint32_t STEP_LOCK_HOLD_MS = 350;
 static const int FXT = NTRACKS;   // die FX-Spur des Patterns
@@ -757,6 +757,7 @@ struct UI {
     int songRow = 0, songField = 0;
     int prjRow = 0, sysRow = 0;
     int keyRow = 0, keyCol = 0, keyMode = 0; char keyBuf[32] = "";   // Bildschirmtastatur
+    int libKind = 0, libSel = 0;                                       // Klaenge (0) / Kits (1)
     char toast[96] = ""; uint32_t toastUntil = 0;
     bool dirty = false; uint32_t editAt = 0;
     bool quit = false;
@@ -1322,11 +1323,11 @@ static void togglePlayback() {
 
 // --- Menue (SELECT) -------------------------------------------------------------------------
 enum { MI_PATTERN, MI_SECTIONS, MI_VALUE, MI_MASTER_EQ, MI_SAVE, MI_COPYPAT, MI_PASTEPAT, MI_CLEARPAT, MI_COPYTRK, MI_PASTETRIG, MI_PASTEALL, MI_CLEARTRIG,
-       MI_COPYSTEP, MI_PASTESTEP, MI_LOADSMP, MI_LENGTH, MI_SCENE_A, MI_SCENE_B, MI_SCENE_CLR, MI_HELP, MI_SLICE, MI_RECORD, MI_N };
+       MI_COPYSTEP, MI_PASTESTEP, MI_LOADSMP, MI_LENGTH, MI_SCENE_A, MI_SCENE_B, MI_SCENE_CLR, MI_HELP, MI_SLICE, MI_RECORD, MI_LIBRARY, MI_N };
 static const char* MENU[MI_N] = {"Select pattern...", "Parameter sections...", "Choose value...", "Visual Master EQ...", "Save project", "Copy pattern", "Paste pattern", "Clear pattern",
     "Copy track", "Paste trigs", "Paste track (with sound)", "Clear trigs", "Copy step", "Paste step",
     "Load sample into slot...", "Track length...",
-    "Edit scene A (on/off)", "Edit scene B (on/off)", "Clear the scene being edited", "Help", "Sample editor...", "Recorder..."};
+    "Edit scene A (on/off)", "Edit scene B (on/off)", "Clear the scene being edited", "Help", "Sample editor...", "Recorder...", "Sounds & kits..."};
 static void openSamples();
 static void openSampleEditor();
 static int smpTargetSlot();
@@ -1371,6 +1372,7 @@ static void menuDo(int i) {
     case MI_RECORD:
         if (U.sel >= FXT) { toast("Select an audio track first"); return; }
         U.modal = M_RECORDER; return;
+    case MI_LIBRARY: U.modal = M_LIBRARY; U.libSel = 0; return;
     }
     touched();
 }
@@ -1632,7 +1634,8 @@ static bool nameOk(const char* n) {
     for (const char* c = n; *c; c++) if (!isalnum((unsigned char)*c) && !strchr(" -_", *c)) return false;
     return true;
 }
-enum { KM_SAVEAS = 1, KM_NEW };
+enum { KM_SAVEAS = 1, KM_NEW, KM_SOUND, KM_KIT };
+static void libSave(int kind, const char* name);
 static void openKeys(int mode, const char* start) {
     U.modal = M_KEYS; U.keyMode = mode; U.keyRow = 0; U.keyCol = 0;
     snprintf(U.keyBuf, sizeof U.keyBuf, "%s", start);
@@ -1642,6 +1645,7 @@ static void keysDone() {
     int l = (int)strlen(n); while (l > 0 && n[l - 1] == ' ') n[--l] = 0;
     if (!nameOk(n)) { toast("Name: letters, digits, space, - and _"); return; }
     U.modal = M_NONE;
+    if (U.keyMode == KM_SOUND || U.keyMode == KM_KIT) { libSave(U.keyMode == KM_KIT, n); return; }
     if (U.keyMode == KM_NEW && U.recTarget >= 0) { toast("Stop the recorder first"); return; }
     if (U.keyMode == KM_SAVEAS) {
         if (!prjSave(n)) { toast("Could not save %s", n); return; }
@@ -2126,6 +2130,132 @@ static void handleLength() {
     if (U.cur >= len) U.cur = len - 1;
     touched();
 }
+// --- Klaenge und Kits: sounds/NAME.snd (eine Spur), kits/NAME.kit (alle acht Spuren) ---------
+// Laden wirkt auf das aktive Pattern; Steps, Locks und Laenge bleiben. Ein Sample, das noch
+// nicht im Projekt liegt, wird wie beim Projekt-Laden per Name von der Karte geholt.
+static void box(int x, int y, int w, int h, const char* title);
+enum { MAX_LIB = 256 };
+static char gLib[MAX_LIB][32];
+static int gNLib = 0;
+static const char* libDir(int kind) { return kind ? "kits" : "sounds"; }
+static const char* libExt(int kind) { return kind ? ".kit" : ".snd"; }
+static void scanLibrary(int kind) {
+    gNLib = 0;
+    char d[700]; pathOf(d, sizeof d, libDir(kind));
+    DIR* dir = opendir(d);
+    if (!dir) return;
+    struct dirent* e;
+    while ((e = readdir(dir)) && gNLib < MAX_LIB) {
+        size_t l = strlen(e->d_name);
+        if (e->d_name[0] == '.' || l < 5 || l - 4 >= sizeof gLib[0] || strcasecmp(e->d_name + l - 4, libExt(kind))) continue;
+        snprintf(gLib[gNLib], sizeof gLib[0], "%.*s", (int)(l - 4), e->d_name);
+        gNLib++;
+    }
+    closedir(dir);
+    qsort(gLib, gNLib, sizeof gLib[0], cmpStr);
+}
+static void libPath(int kind, const char* name, char* out, size_t n) {
+    char rel[120]; snprintf(rel, sizeof rel, "%s/%s%s", libDir(kind), name, libExt(kind));
+    pathOf(out, n, rel);
+}
+static void libSave(int kind, const char* name) {
+    if (!kind && U.sel >= FXT) { toast("Select an audio track first"); return; }
+    static TextBuf text;
+    const char* doc = kind ? scKitSave() : scSoundSave(U.sel);        // unter der Sperre: kurz
+    size_t len = strlen(doc);
+    char* copy = text.reserve(len);
+    if (!copy) { toast("Out of memory"); return; }
+    memcpy(copy, doc, len + 1);
+    char p[800], tmp[820]; libPath(kind, name, p, sizeof p);
+    snprintf(tmp, sizeof tmp, "%s.tmp", p);
+    bool existed, ok;
+    {
+        NoLock nl;
+        struct stat st; existed = stat(p, &st) == 0;
+        FILE* f = fopen(tmp, "w");
+        ok = f && fputs(kind ? "# synthcity kit 1\n" : "# synthcity sound 1\n", f) >= 0 && fputs(copy, f) >= 0;
+        if (f) ok = (fclose(f) == 0) && ok;
+        if (ok) ok = rename(tmp, p) == 0;
+        if (ok) sync(); else remove(tmp);
+    }
+    if (!ok) { toast("Could not save %s", name); return; }
+    toast("%s %s %s", existed ? "Replaced" : "Saved", kind ? "kit" : "sound", name);
+    scanLibrary(kind);
+}
+static bool libLoad(int kind, const char* name) {
+    if (!kind && U.sel >= FXT) { toast("Select an audio track first"); return false; }
+    static TextBuf text;
+    char p[800]; libPath(kind, name, p, sizeof p);
+    bool ok;
+    {
+        NoLock nl;
+        FILE* f = fopen(p, "r");
+        ok = f != nullptr;
+        if (ok) {
+            fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
+            char* b = n >= 0 ? text.reserve((size_t)n) : nullptr;
+            ok = b && fread(b, 1, (size_t)n, f) == (size_t)n;
+            if (ok) b[n] = 0;
+            fclose(f);
+        }
+    }
+    if (!ok) { toast("Could not open %s", name); return false; }
+    exitStepLock();
+    int r = kind ? scKitLoad(text.p) : scSoundLoad(U.sel, text.p);
+    if (!r) { toast("%s is not a %s", name, kind ? "kit" : "sound"); return false; }
+    int missing = 0;
+    if (r == SOUND_SAMPLE_WANTED) {
+        poolResolveWanted();
+        for (int i = 0; i < SMP_SLOTS; i++) if (scSmpWanted(i)) missing++;
+    }
+    touched();
+    if (r == SOUND_NO_SLOT) toast("Loaded %s - no free sample slot", name);
+    else if (missing) toast("Loaded %s - sample not found on the card", name);
+    else if (kind) toast("Kit %s loaded into P%02d", name, scPattern() + 1);
+    else toast("Sound %s loaded on track %d", name, U.sel + 1);
+    return true;
+}
+static void handleLibrary() {
+    if (IN.pressed(BT_B) || IN.pressed(BT_SELECT)) { U.modal = M_NONE; return; }
+    if (IN.pressed(BT_LEFT) || IN.pressed(BT_RIGHT) || IN.pressed(BT_L1) || IN.pressed(BT_R1)) { U.libKind ^= 1; U.libSel = 0; }
+    static int scannedKind = -1; static uint32_t scannedAt = 0;
+    if (scannedKind != U.libKind || U.now - scannedAt > 2000) { NoLock nl; scanLibrary(U.libKind); scannedKind = U.libKind; scannedAt = U.now; }
+    const int rows = gNLib + 1;                          // Zeile 0: aktuellen Klang/Kit sichern
+    if (IN.repeat(BT_UP, U.now)) U.libSel = (U.libSel + rows - 1) % rows;
+    if (IN.repeat(BT_DOWN, U.now)) U.libSel = (U.libSel + 1) % rows;
+    U.libSel = clampi(U.libSel, 0, rows - 1);
+    if (!IN.pressed(BT_A)) return;
+    if (U.libSel == 0) {
+        if (!U.libKind && U.sel >= FXT) { toast("Select an audio track first"); return; }
+        char start[32];
+        if (U.libKind) snprintf(start, sizeof start, "%s P%02d", gPrjName, scPattern() + 1);
+        else snprintf(start, sizeof start, "%s", scMachName(machOf(U.sel)));
+        start[24] = 0;
+        openKeys(U.libKind ? KM_KIT : KM_SOUND, start);
+        return;
+    }
+    if (libLoad(U.libKind, gLib[U.libSel - 1])) U.modal = M_NONE;
+}
+static void drawLibrary() {
+    const int w = 420, rowH = 19, visible = 16, h = 70 + visible * rowH, x = (SW - w) / 2, y = (SH - h) / 2;
+    char t[64];
+    if (U.libKind) snprintf(t, sizeof t, "KITS  -  all 8 tracks of P%02d", scPattern() + 1);
+    else if (U.sel < FXT) snprintf(t, sizeof t, "SOUNDS  -  track %d", U.sel + 1);
+    else snprintf(t, sizeof t, "SOUNDS  -  select an audio track");
+    box(x, y, w, h, t);
+    text(x + 14, y + 30, U.libKind ? "SOUNDS  [KITS]" : "[SOUNDS]  KITS", C_DIM);
+    const int rows = gNLib + 1;
+    int first = U.libSel - visible / 2; if (first > rows - visible) first = rows - visible; if (first < 0) first = 0;
+    for (int i = first; i < rows && i < first + visible; i++) {
+        int ry = y + 52 + (i - first) * rowH;
+        bool sel = i == U.libSel;
+        if (sel) fill(x + 4, ry - 1, w - 8, rowH - 1, C_LINE);
+        if (i == 0) text(x + 14, ry, U.libKind ? "+ Save this pattern's kit..." : "+ Save this track's sound...", sel ? C_TXT : C_PLAY);
+        else text(x + 14, ry, gLib[i - 1], sel ? C_TXT : C_DIM, 46);
+    }
+    if (!gNLib) text(x + 14, y + 52 + 2 * rowH, U.libKind ? "No kits saved yet" : "No sounds saved yet", C_FAINT);
+}
+
 static void handlePatterns() {
     if (IN.pressed(BT_B)) { U.modal = M_NONE; return; }
     int p = U.patternSel;
@@ -2210,6 +2340,7 @@ static void handleModal() {
     }
     if (U.modal == M_VALUE) { handleValuePicker(); return; }
     if (U.modal == M_PATTERNS) { handlePatterns(); return; }
+    if (U.modal == M_LIBRARY) { handleLibrary(); return; }
     if (U.modal == M_SECTIONS) { handleSections(); return; }
     if (U.modal == M_LENGTH) { handleLength(); return; }
     if (U.modal == M_SLICE) { handleSlices(); return; }
@@ -2759,7 +2890,8 @@ static void drawSystem() {
 }
 static void drawKeys() {
     int w = 500, h = 250, x = (SW - w) / 2, y = 90;
-    box(x, y, w, h, U.keyMode == KM_NEW ? "NEW PROJECT - NAME" : "SAVE AS - NAME");
+    box(x, y, w, h, U.keyMode == KM_NEW ? "NEW PROJECT - NAME" : U.keyMode == KM_SOUND ? "SAVE SOUND - NAME"
+                    : U.keyMode == KM_KIT ? "SAVE KIT - NAME" : "SAVE AS - NAME");
     fill(x + 16, y + 34, w - 32, 26, C_BG);
     frame(x + 16, y + 34, w - 32, 26, C_LINE);
     text(x + 24, y + 39, U.keyBuf, C_TXT);
@@ -2785,6 +2917,7 @@ static const char* helpLine() {
     if (U.modal == M_KEYS) return "D-pad choose  A type  B delete  START done  SELECT cancel";
     if (U.modal == M_MENU) return "UP/DOWN choose   A do it   B close";
     if (U.modal == M_PATTERNS || U.modal == M_SECTIONS) return "";
+    if (U.modal == M_LIBRARY) return "UP/DN choose  L/R sounds/kits  A load/save  B close";
     if (U.modal == M_VALUE) return "";
     if (U.modal == M_SAMPLES) return "A open/load  LEFT up  L1/R1 page  X preview  Y editor  B close";
     if (U.modal == M_HELP) return "any of A / B / SELECT closes";
@@ -2901,12 +3034,19 @@ static void drawLength() {
     textC(SW / 2, y + 82, "A or B to close", C_DIM);
 }
 static void drawMenu() {
-    const int rowH = 19;
-    int w = 340, h = 30 + MI_N * rowH + 8, x = (SW - w) / 2, y = (SH - h) / 2;
+    const int rowH = 17;
+    // Passt das Menue nicht auf den Schirm, rollt es mit der Auswahl.
+    const int rows = MI_N < (SH - 44) / rowH ? MI_N : (SH - 44) / rowH;
+    int first = U.menuSel - rows / 2;
+    if (first > MI_N - rows) first = MI_N - rows;
+    if (first < 0) first = 0;
+    int w = 340, h = 30 + rows * rowH + 8, x = (SW - w) / 2, y = (SH - h) / 2;
     char t[64]; snprintf(t, sizeof t, "MENU - %s", U.sel == FXT ? "FX TRACK" : "TRACK");
     box(x, y, w, h, t);
-    for (int i = 0; i < MI_N; i++) {
-        int ry = y + 30 + i * rowH;
+    if (first > 0) textR(x + w - 10, y + 4, "^", C_DIM);
+    if (first + rows < MI_N) textR(x + w - 10, y + h - 18, "v", C_DIM);
+    for (int i = first; i < first + rows; i++) {
+        int ry = y + 30 + (i - first) * rowH;
         if (i == U.menuSel) fill(x + 4, ry - 1, w - 8, rowH - 1, C_LINE);
         text(x + 14, ry, MENU[i], i == U.menuSel ? C_TXT : C_DIM);
     }
@@ -3215,6 +3355,7 @@ static void drawAll() {
     else if (U.modal == M_RECORDER) drawRecorder();
     else if (U.modal == M_LENGTH) drawLength();
     else if (U.modal == M_PATTERNS) drawPatterns();
+    else if (U.modal == M_LIBRARY) drawLibrary();
     else if (U.modal == M_SECTIONS) drawSections();
     else if (U.modal == M_VALUE) drawValuePicker();
     if (gExp.on) {
@@ -3871,6 +4012,45 @@ static int selfTest(const char* shotDir) {
     CHECK(U.modal == M_HELP, "SELECT halten: Hilfe");
     shot("08-help");
     simFrame(0); tap(BT_B);
+    // Klaenge und Kits: ueber das Menue sichern und wieder laden
+    {
+        U.sel = 0;
+        const int fs = slotOf(pIndex("trk.flt.freq"));
+        scSet(0, fs, 21);
+        tap(BT_SELECT); U.menuSel = MI_LIBRARY; tap(BT_A);
+        CHECK(U.modal == M_LIBRARY && U.libKind == 0 && U.libSel == 0, "Menu > Sounds & kits opens the sound list");
+        tap(BT_A);
+        CHECK(U.modal == M_KEYS && U.keyMode == KM_SOUND, "Save sound asks for a name");
+        snprintf(U.keyBuf, sizeof U.keyBuf, "zz selftest");
+        tap(BT_START);
+        char sp[800]; libPath(0, "zz selftest", sp, sizeof sp);
+        struct stat st;
+        CHECK(stat(sp, &st) == 0, "Sound file written to sounds/");
+        scSet(0, fs, 90);
+        tap(BT_SELECT); U.menuSel = MI_LIBRARY; tap(BT_A);
+        int k = -1; for (int i = 0; i < gNLib; i++) if (!strcmp(gLib[i], "zz selftest")) k = i;
+        CHECK(k >= 0, "Saved sound appears in the list");
+        shot("09-sounds");
+        U.libSel = k + 1; tap(BT_A);
+        CHECK(U.modal == M_NONE && scGet(0, fs) == 21, "Loading the sound restores the track");
+        // dasselbe als Klang auf Spur 4
+        U.sel = 3; scSet(3, fs, 77);
+        tap(BT_SELECT); U.menuSel = MI_LIBRARY; tap(BT_A); U.libSel = k + 1; tap(BT_A);
+        CHECK(scGet(3, fs) == 21, "A sound loads onto any track");
+        // Kit: alle Spuren
+        tap(BT_SELECT); U.menuSel = MI_LIBRARY; tap(BT_A); tap(BT_RIGHT);
+        CHECK(U.libKind == 1, "RIGHT switches to kits");
+        tap(BT_A); snprintf(U.keyBuf, sizeof U.keyBuf, "zz kit"); tap(BT_START);
+        scSet(0, fs, 5); scSet(3, fs, 6);
+        tap(BT_SELECT); U.menuSel = MI_LIBRARY; tap(BT_A);
+        CHECK(U.libKind == 1, "The list remembers kits");
+        k = -1; for (int i = 0; i < gNLib; i++) if (!strcmp(gLib[i], "zz kit")) k = i;
+        U.libSel = k + 1; tap(BT_A);
+        CHECK(k >= 0 && scGet(0, fs) == 21 && scGet(3, fs) == 21, "Loading the kit restores all tracks");
+        tap(BT_SELECT); U.menuSel = MI_LIBRARY; tap(BT_A); tap(BT_LEFT); tap(BT_B);
+        remove(sp); libPath(1, "zz kit", sp, sizeof sp); remove(sp);
+        U.sel = 0;
+    }
     // Speichern + Laden: das Dokument kommt unveraendert zurueck
     snprintf(gPrjName, sizeof gPrjName, "selftest");
     static TextBuf beforeBuf;
@@ -4008,6 +4188,21 @@ static int selfTest(const char* shotDir) {
         lockA(); scSmpClear(); scLoad(""); unlockA();
         CHECK(prjLoad("selftest") && scSmpFrames(slot) == 4800, "Sample nach Laden wieder da");
         CHECK(scSmpCutCount(slot) == 7, "Slice markers restored after sample reload");
+        // Ein Sample-Klang in ein leeres Projekt: das Sample kommt per Name von der Karte, mit Slices
+        {
+            libSave(0, "zz smp");
+            lockA(); scSmpClear(); scLoad(""); unlockA();
+            CHECK(scSmpFrames(slot) == 0, "Empty project has no sample");
+            U.sel = 2;
+            CHECK(libLoad(0, "zz smp"), "Sample sound loads into an empty project");
+            const int got = scGet(2, slotOf(P_SMP));
+            CHECK(scMachUsesSmp(machOf(2)) && scSmpFrames(got) == 4800 && !strcmp(scSmpName(got), "zz-selftest")
+                  && scSmpCutCount(got) == 7, "Sound fetches its sample from the card, with slices");
+            char sp[800]; libPath(0, "zz smp", sp, sizeof sp); remove(sp);
+            U.sel = 0;
+            lockA(); scSmpClear(); scLoad(""); unlockA();
+            CHECK(prjLoad("selftest") && scSmpFrames(slot) == 4800, "Project reloads after the sound test");
+        }
         int takeSlot = (slot + 1) % SMP_SLOTS;
         static float recorded[64 * 2];
         for (float& value : recorded) value = 0.25f;
